@@ -1,0 +1,98 @@
+22:22:05 - ============================================================
+22:22:05 - SCHEMALABSAI V1 - BASE MODEL TRAINING
+22:22:05 - 50 Sectors x 50 Subsectors = 2500 Classes
+22:22:05 - 10M rows (200K per sector)
+22:22:05 - ============================================================
+22:22:05 - 
+[1/6] Loading data...
+22:24:16 - Data: 10,000,000 rows, 50 sectors, 2499 subsectors
+22:24:16 - Labeled: 8,000,000, Unlabeled: 2,000,000
+22:24:16 - 
+[2/6] Initializing models...
+22:24:16 - Total params: 5,478,591
+22:24:16 - 
+[3/6] MIDAS Pretraining (50 epochs)...
+22:24:29 -   MIDAS Ep 10: Loss=0.4326
+22:24:41 -   MIDAS Ep 20: Loss=0.3922
+22:24:54 -   MIDAS Ep 30: Loss=0.3631
+22:25:06 -   MIDAS Ep 40: Loss=0.3521
+22:25:18 -   MIDAS Ep 50: Loss=0.3459
+22:25:18 - 
+[4/6] Hierarchical Training (40 epochs)...
+23:06:51 -   Hier Ep 10: Sector=100.0% Combined=99.4%
+23:58:09 -   Hier Ep 20: Sector=100.0% Combined=99.6%
+00:57:49 -   Hier Ep 30: Sector=100.0% Combined=99.7%
+01:57:28 -   Hier Ep 40: Sector=100.0% Combined=99.6%
+01:57:28 - 
+[5/6] Self-Learning (5 rounds)...
+02:20:03 -   SL Round 1: +1,979,284 pseudo | Sector=100.0% Combined=99.7%
+03:17:11 -   SL Round 2: +1,982,318 pseudo | Sector=100.0% Combined=99.7%
+04:43:46 -   SL Round 3: +1,978,370 pseudo | Sector=100.0% Combined=99.7%
+05:52:13 -   SL Round 4: +1,976,559 pseudo | Sector=100.0% Combined=99.8%
+06:14:09 - ============================================================
+06:14:09 - SCHEMALABSAI V1 - BASE MODEL TRAINING
+06:14:09 - 50 Sectors x 50 Subsectors = 2500 Classes
+06:14:09 - 10M rows (200K per sector)
+06:14:09 - ============================================================
+06:14:09 - 
+[1/6] Loading data...
+06:16:23 - Data: 10,000,000 rows, 50 sectors, 2499 subsectors
+06:16:23 - Labeled: 8,000,000, Unlabeled: 2,000,000
+06:16:23 - 
+[2/6] Initializing models...
+06:16:23 - Total params: 5,478,591
+06:16:23 - 
+[3/6] MIDAS Pretraining (50 epochs)...
+06:16:38 -   MIDAS Ep 10: Loss=0.4597
+06:16:54 -   MIDAS Ep 20: Loss=0.3915
+06:17:09 -   MIDAS Ep 30: Loss=0.3655
+06:17:25 -   MIDAS Ep 40: Loss=0.3503
+06:17:39 -   MIDAS Ep 50: Loss=0.3455
+06:17:39 - 
+[4/6] Hierarchical Training (40 epochs)...
+06:18:41 - ============================================================
+06:18:41 - SCHEMALABSAI V1 - BASE MODEL TRAINING
+06:18:41 - 50 Sectors x 50 Subsectors = 2500 Classes
+06:18:41 - 10M rows (200K per sector)
+06:18:41 - ============================================================
+06:18:41 - 
+[1/6] Loading data...
+06:20:53 - Data: 10,000,000 rows, 50 sectors, 2499 subsectors
+06:20:53 - Labeled: 8,000,000, Unlabeled: 2,000,000
+06:20:53 - 
+[2/6] Initializing models...
+06:20:53 - Total params: 5,478,591
+06:20:53 - 
+[3/6] MIDAS Pretraining (50 epochs)...
+06:21:08 -   MIDAS Ep 10: Loss=0.4198
+06:21:22 -   MIDAS Ep 20: Loss=0.3972
+06:21:36 -   MIDAS Ep 30: Loss=0.3619
+06:21:50 -   MIDAS Ep 40: Loss=0.3486
+06:22:05 -   MIDAS Ep 50: Loss=0.3454
+06:22:05 - 
+[4/6] Hierarchical Training (40 epochs)...
+07:19:56 -   Hier Ep 10: Sector=100.0% Combined=99.8%
+08:17:51 -   Hier Ep 20: Sector=100.0% Combined=99.9%
+09:15:57 -   Hier Ep 30: Sector=100.0% Combined=99.9%
+10:14:07 -   Hier Ep 40: Sector=100.0% Combined=100.0%
+10:14:07 - 
+[5/6] Self-Learning (5 rounds)...
+10:36:13 -   SL Round 1: +1,986,687 pseudo | Sector=100.0% Combined=99.9%
+10:58:21 -   SL Round 2: +1,977,488 pseudo | Sector=100.0% Combined=99.8%
+11:20:28 -   SL Round 3: +1,984,792 pseudo | Sector=100.0% Combined=99.8%
+11:42:31 -   SL Round 4: +1,980,184 pseudo | Sector=100.0% Combined=99.8%
+12:18:10 -   SL Round 5: +1,983,897 pseudo | Sector=100.0% Combined=99.8%
+12:18:10 - 
+[6/6] Saving model...
+12:18:10 - Saved: ../checkpoints/schemalabsai_v1.pt
+12:18:10 - 
+=== FINAL TEST ===
+12:18:10 -   0% missing: Sector=100.0% Combined=99.8%
+12:18:10 -   20% missing: Sector=76.2% Combined=61.3%
+12:18:10 -   40% missing: Sector=54.1% Combined=30.4%
+12:18:10 - 
+============================================================
+12:18:10 - SCHEMALABSAI V1 TAMAMLANDI!
+12:18:10 - Sure: 359.5 dakika (5.99 saat)
+12:18:10 - Model: ../checkpoints/schemalabsai_v1.pt
+12:18:10 - ============================================================

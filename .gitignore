@@ -1,0 +1,30 @@
+# Secrets
+.env
+google_credentials.json
+
+# Dependencies
+node_modules/
+venv/
+__pycache__/
+
+# Build
+.next/
+*.pyc
+schemalabsai
+
+# Data
+data/
+scripts/
+uploads/
+checkpoints/*.pt
+!checkpoints/.gitkeep
+
+# Logs & DB
+*.log
+*.db
+*.rdb
+*_backup.sql
+test_data*.csv
+
+# OS
+.DS_Store
