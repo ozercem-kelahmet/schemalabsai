@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: schemalabsai
+  labels:
+    app: schemalabsai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: schemalabsai
+  template:
+    metadata:
+      labels:
+        app: schemalabsai
+    spec:
+      containers:
+      - name: schemalabsai
+        image: gcr.io/schema-478207/schemalabsai:latest
+        ports:
+        - containerPort: 8080
+        - containerPort: 3000
+        - containerPort: 6000
+        envFrom:
+        - secretRef:
+            name: schemalabsai-secrets
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: schemalabsai
+spec:
+  selector:
+    app: schemalabsai
+  ports:
+  - name: api
+    port: 8080
+    targetPort: 8080
+  - name: frontend
+    port: 3000
+    targetPort: 3000
+  type: LoadBalancer
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: schemalabsai-secrets
+type: Opaque
+stringData:
+  DATABASE_URL: "postgresql://schemalabs:SchemaLabs2024!@34.9.180.204:5432/schemalabs"
+  REDIS_URL: "34.9.180.204:6379"
+  REDIS_PASSWORD: "SchemaLabs2024!"

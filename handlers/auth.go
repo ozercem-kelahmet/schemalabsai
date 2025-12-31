@@ -45,7 +45,9 @@ type User struct {
 	Email     string    `gorm:"unique" json:"email"`
 	Password  string    `json:"-"`
 	Image     string    `json:"image"`
-	Role      string    `json:"role"`
+	Role string `json:"role"`
+	Plan string `json:"plan"`
+	MaxTeams int `json:"max_teams"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

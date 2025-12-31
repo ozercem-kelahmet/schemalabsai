@@ -201,6 +201,20 @@ resp, err := http.Get(flaskURL)
 	http.HandleFunc("/api/admin/endpoints", enableCORS(handlers.AuthMiddleware(handlers.AdminEndpointsHandler)))
 	http.HandleFunc("/api/admin/config", enableCORS(handlers.AuthMiddleware(handlers.AdminConfigHandler)))
 
+	// Organization routes
+	http.HandleFunc("/api/organizations", enableCORS(handlers.AuthMiddleware(handlers.OrganizationsHandler)))
+	http.HandleFunc("/api/organizations/invite/", enableCORS(handlers.AuthMiddleware(handlers.AcceptInviteHandler)))
+	http.HandleFunc("/api/organizations/", enableCORS(handlers.AuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		if strings.Contains(path, "/members/") {
+			handlers.OrganizationMemberHandler(w, r)
+		} else if strings.Contains(path, "/members") {
+			handlers.OrganizationMembersHandler(w, r)
+		} else {
+			handlers.OrganizationHandler(w, r)
+		}
+	})))
+
 
 	// Serve uploaded files
 	// Frontend routes with auth check
