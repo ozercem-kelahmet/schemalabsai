@@ -28,3 +28,5 @@ test_data*.csv
 
 # OS
 .DS_Store
+main
+server
