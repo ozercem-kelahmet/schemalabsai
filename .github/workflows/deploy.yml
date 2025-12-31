@@ -1,0 +1,25 @@
+name: Deploy to GCP
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Deploy to GCP
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: 34.9.180.204
+          username: ozercemkelahmet
+          key: ${{ secrets.GCP_SSH_KEY }}
+          script: |
+            cd /opt/schemalabsai
+            git pull origin main
+            go mod tidy
+            go build -o schemalabsai main.go
+            cd frontend && npm run build && cd ..
+            sudo systemctl restart schemalabs-go
