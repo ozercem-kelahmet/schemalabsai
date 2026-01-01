@@ -1,0 +1,7 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/schema-478207/schemalabsai:latest', '.']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/schema-478207/schemalabsai:latest']
+images:
+  - 'gcr.io/schema-478207/schemalabsai:latest'

@@ -69,7 +69,7 @@ export function Sidebar({ children }: SidebarProps) {
   const fetchPlaygrounds = async () => {
     try {
       const res = await fetch("/api/playgrounds", { credentials: "include" })
-      const data = await res.json()
+      if (!res.ok) return; const data = await res.json()
       setPlaygrounds(Array.isArray(data) ? data : [])
     } catch (e) { console.error(e) }
   }
@@ -77,7 +77,7 @@ export function Sidebar({ children }: SidebarProps) {
   const fetchOrganizations = async () => {
     try {
       const res = await fetch("/api/organizations", { credentials: "include" })
-      const data = await res.json()
+      if (!res.ok) return; const data = await res.json()
       setOrganizations(Array.isArray(data) ? data : [])
     } catch (e) { console.error(e) }
   }
@@ -90,7 +90,7 @@ export function Sidebar({ children }: SidebarProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: "New Playground" })
       })
-      const data = await res.json()
+      if (!res.ok) return; const data = await res.json()
       if (data.id) {
         fetchPlaygrounds()
         router.push(`/playground/${data.id}`)

@@ -61,3 +61,61 @@
 06:22:04 -   MIDAS Ep 50: Loss=0.3449
 06:22:04 - 
 [4/6] MIRAS Training (40 epochs)...
+15:35:31 - ============================================================
+15:35:31 - SCHEMALABSAI V2 - MIRAS + MIDAS + SL
+15:35:31 - 50 Sectors x 50 Subsectors = 2500 Classes
+15:35:31 - 10M rows (200K per sector)
+15:35:31 - ============================================================
+15:35:31 - 
+[1/6] Loading data...
+15:37:42 - Data: 10,000,000 rows, 50 sectors, 2500 subsectors
+15:37:42 - Labeled: 8,000,000, Unlabeled: 2,000,000
+15:37:42 - 
+[2/6] Initializing models...
+15:37:42 - MIDAS: 170,058, MIRAS: 3,910,775, Total: 4,080,833
+15:37:42 - 
+[3/6] MIDAS Pretraining (50 epochs)...
+15:38:00 -   MIDAS Ep 10: Loss=0.4369
+15:38:14 -   MIDAS Ep 20: Loss=0.4323
+15:38:30 -   MIDAS Ep 30: Loss=0.3949
+15:38:46 -   MIDAS Ep 40: Loss=0.3845
+15:39:01 -   MIDAS Ep 50: Loss=0.3837
+15:39:01 - 
+[4/6] MIRAS Training (40 epochs)...
+16:44:59 - ============================================================
+16:44:59 - SCHEMALABSAI V2 - MIRAS + MIDAS + SL
+16:44:59 - 50 Sectors x 50 Subsectors = 2500 Classes
+16:44:59 - 10M rows (200K per sector)
+16:44:59 - ============================================================
+16:44:59 - 
+[1/6] Loading data...
+16:47:13 - Data: 10,000,000 rows, 50 sectors, 2500 subsectors
+16:47:13 - Labeled: 8,000,000, Unlabeled: 2,000,000
+16:47:13 - 
+[2/6] Initializing models...
+16:47:13 - MIDAS: 170,058, MIRAS: 3,910,775, Total: 4,080,833
+16:47:13 - 
+[3/6] MIDAS Pretraining (50 epochs)...
+16:47:31 -   MIDAS Ep 10: Loss=0.1430
+16:47:46 -   MIDAS Ep 20: Loss=0.1422
+16:48:01 -   MIDAS Ep 30: Loss=0.0770
+16:48:17 -   MIDAS Ep 40: Loss=0.0588
+16:48:32 -   MIDAS Ep 50: Loss=0.0570
+16:48:32 - 
+[4/6] MIRAS Training (40 epochs)...
+02:21:33 - ============================================================
+02:21:33 - SCHEMALABSAI V2 - MIRAS + MIDAS + SELF-LEARNING
+02:21:33 - 50 Sectors x 50 Subsectors = 2500 Classes
+02:21:33 - ============================================================
+02:21:33 - 
+[1/5] Loading data...
+02:23:49 - Data: 10,000,000 rows, 50 sectors, 2500 subsectors
+02:23:49 - Labeled: 8,000,000, Unlabeled: 2,000,000
+02:23:49 - 
+[2/5] Initializing models...
+02:23:49 - MIDAS: 203,914, MIRAS: 3,975,543, Total: 4,179,457
+02:23:49 - 
+[3/5] Joint Training (40 epochs)...
+04:19:07 -   Ep 10: Sector=80.9% Combined=80.6%
+09:14:34 -   Ep 20: Sector=81.6% Combined=81.4%
+12:12:02 -   Ep 30: Sector=82.4% Combined=82.2%

@@ -1,7 +1,4 @@
 import torch
-import warnings; warnings.filterwarnings("ignore")
-import warnings
-warnings.filterwarnings("ignore")
 import torch.nn as nn
 from torch.optim import AdamW
 from torch.utils.data import DataLoader, TensorDataset
@@ -41,22 +38,20 @@ class MIDAS(nn.Module):
     def __init__(self, input_dim=10, hidden_dim=256):
         super().__init__()
         self.encoder = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim), nn.ReLU(), nn.Dropout(0.1),
+            nn.Linear(input_dim, hidden_dim), nn.ReLU(), nn.BatchNorm1d(hidden_dim),
             nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
-            nn.Linear(hidden_dim, 64)
+            nn.Linear(hidden_dim, 128)
         )
         self.decoder = nn.Sequential(
-            nn.Linear(64, hidden_dim), nn.ReLU(), nn.Dropout(0.1),
+            nn.Linear(128, hidden_dim), nn.ReLU(), nn.BatchNorm1d(hidden_dim),
             nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
             nn.Linear(hidden_dim, input_dim)
         )
     def forward(self, x, mask=None):
-        if mask is not None:
-            x = x * mask
+        if mask is not None: x = x * mask
         return self.decoder(self.encoder(x))
     def impute(self, x, mask):
-        recon = self.forward(x, mask)
-        return x * mask + recon * (1 - mask)
+        return x * mask + self.forward(x, mask) * (1 - mask)
 
 class MLPMemory(nn.Module):
     def __init__(self, dim, expansion=4):
@@ -65,47 +60,42 @@ class MLPMemory(nn.Module):
         self.w1 = nn.Linear(dim, hidden, bias=False)
         self.w2 = nn.Linear(hidden, dim, bias=False)
         self.w3 = nn.Linear(dim, hidden, bias=False)
-        self.norm = RMSNorm(dim)
     def forward(self, x):
-        h = silu(self.w1(x)) * self.w3(x)
-        return self.norm(x + self.w2(h))
+        return self.w2(silu(self.w1(x)) * self.w3(x))
 
 class GlobalReasoningLayer(nn.Module):
-    def __init__(self, dim, n_latents=64, n_heads=4):
+    def __init__(self, dim, n_latents=64):
         super().__init__()
-        self.n_latents = n_latents
-        self.dim = dim
         self.latents = nn.Parameter(torch.randn(n_latents, dim) * 0.02)
-        self.cross_attn_q = nn.Linear(dim, dim)
-        self.cross_attn_k = nn.Linear(dim, dim)
-        self.cross_attn_v = nn.Linear(dim, dim)
-        self.n_heads = n_heads
-        self.head_dim = dim // n_heads
+        self.to_q = nn.Linear(dim, dim, bias=False)
+        self.to_kv = nn.Linear(dim, dim * 2, bias=False)
+        self.to_out = nn.Linear(dim, dim, bias=False)
         self.gate = nn.Parameter(torch.zeros(1))
-        self.mlp_memory = MLPMemory(dim, expansion=4)
-        self.norm = RMSNorm(dim)
-        self.memory_alpha = 0.7
-        self.persistent_memory = None
+        self.norm1 = RMSNorm(dim)
+        self.norm2 = RMSNorm(dim)
+        self.mlp = MLPMemory(dim)
     
     def forward(self, x):
-        B = x.shape[0]
-        latents = self.latents.unsqueeze(0).expand(B, -1, -1)
-        if self.persistent_memory is not None and self.persistent_memory.shape[0] == B:
-            latents = self.memory_alpha * latents + (1 - self.memory_alpha) * self.persistent_memory
-        Q = self.cross_attn_q(latents).view(B, self.n_latents, self.n_heads, self.head_dim).transpose(1, 2)
-        K = self.cross_attn_k(x.unsqueeze(1)).view(B, 1, self.n_heads, self.head_dim).transpose(1, 2)
-        V = self.cross_attn_v(x.unsqueeze(1)).view(B, 1, self.n_heads, self.head_dim).transpose(1, 2)
-        attn = torch.softmax(Q @ K.transpose(-2, -1) / (self.head_dim ** 0.5), dim=-1)
-        out = (attn @ V).transpose(1, 2).reshape(B, self.n_latents, self.dim)
-        gate = torch.sigmoid(self.gate)
-        out = gate * out + (1 - gate) * latents
-        out = self.mlp_memory(out)
-        self.persistent_memory = out.detach()
-        pooled = out.mean(dim=1)
-        return self.norm(pooled)
+        b = x.shape[0] if x.dim() > 1 else 1
+        if x.dim() == 1: x = x.unsqueeze(0)
+        latents = self.latents.unsqueeze(0).expand(b, -1, -1)
+        q = self.to_q(latents)
+        x_for_kv = x.unsqueeze(1) if x.dim() == 2 else x
+        kv = self.to_kv(x_for_kv)
+        k, v = kv.chunk(2, dim=-1)
+        attn = torch.softmax(q @ k.transpose(-2, -1) / (q.shape[-1] ** 0.5), dim=-1)
+        out = attn @ v
+        out = out.mean(dim=1)
+        x_out = x.squeeze(1) if x.dim() == 3 and x.shape[1] == 1 else x
+        if x_out.dim() == 3: x_out = x_out.mean(dim=1)
+        x_out = x_out + self.gate * self.to_out(out)
+        x_out = self.norm1(x_out)
+        x_out = x_out + self.mlp(x_out)
+        x_out = self.norm2(x_out)
+        return x_out
 
 class MIRASModel(nn.Module):
-    def __init__(self, input_dim=10, hidden_dim=256, n_sectors=50, n_subsectors=2500, n_latents=64):
+    def __init__(self, input_dim=10, hidden_dim=256, n_latents=64, n_sectors=50, n_subsectors=2500):
         super().__init__()
         self.input_proj = nn.Linear(input_dim, hidden_dim)
         self.reasoning = GlobalReasoningLayer(hidden_dim, n_latents=n_latents)
@@ -118,48 +108,53 @@ class MIRASModel(nn.Module):
     def forward(self, x):
         h = self.input_proj(x)
         h = self.reasoning(h)
-        sector_logits = self.sector_head(h)
-        return sector_logits, h
+        return self.sector_head(h), h
     
     def predict_subsector(self, h, sector_ids):
         emb = self.subsector_emb(sector_ids)
         return self.subsector_head(torch.cat([h, emb], dim=1))
 
-def self_learning_batch(model, X_unlab, threshold=0.9, batch_size=50000):
-    model.eval()
+def self_learning_round(midas, model, X_unlab, threshold=0.7, batch_size=50000):
+    midas.eval(); model.eval()
     all_X, all_sec, all_sub = [], [], []
+    
     with torch.no_grad():
         for i in range(0, len(X_unlab), batch_size):
             batch = X_unlab[i:i+batch_size]
-            sec_logits, h = model(batch)
+            mask = (torch.rand_like(batch) > 0.3).float()
+            X_imp = midas.impute(batch * mask, mask)
+            
+            sec_logits, h = model(X_imp)
             sec_probs = torch.softmax(sec_logits, dim=1)
             sec_conf, sec_pred = sec_probs.max(dim=1)
+            
             sub_logits = model.predict_subsector(h, sec_pred)
             sub_probs = torch.softmax(sub_logits, dim=1)
             sub_conf, sub_pred = sub_probs.max(dim=1)
-            mask = (sec_conf * sub_conf) > threshold
-            all_X.append(batch[mask])
-            all_sec.append(sec_pred[mask])
-            all_sub.append(sub_pred[mask])
+            
+            high_conf = (sec_conf * sub_conf) > threshold
+            all_X.append(X_imp[high_conf])
+            all_sec.append(sec_pred[high_conf])
+            all_sub.append(sub_pred[high_conf])
+    
     return torch.cat(all_X), torch.cat(all_sec), torch.cat(all_sub)
 
 if __name__ == "__main__":
     log("=" * 60)
-    log("SCHEMALABSAI V2 - MIRAS + MIDAS + SL")
+    log("SCHEMALABSAI V2 - MIRAS + MIDAS + SELF-LEARNING")
     log("50 Sectors x 50 Subsectors = 2500 Classes")
-    log("10M rows (200K per sector)")
     log("=" * 60)
     
     start_time = time.time()
     
-    log("\n[1/6] Loading data...")
+    log("\n[1/5] Loading data...")
     all_X, all_sec, all_sub = [], [], []
     sector_to_id, subsector_to_id = {}, {}
     id_to_sector, id_to_subsector = {}, {}
     
     files = sorted(DATA_DIR.glob('*.parquet'))
     for f in tqdm(files, desc="Loading"):
-        df = pd.read_parquet(f).sample(n=200000, random_state=42)
+        df = pd.read_parquet(f).sample(n=min(200000, len(pd.read_parquet(f))), random_state=42)
         sector = df['sector'].iloc[0]
         if sector not in sector_to_id:
             sid = len(sector_to_id)
@@ -180,8 +175,10 @@ if __name__ == "__main__":
     mean, std = X.mean(0), X.std(0) + 1e-8
     X_norm = (X - mean) / std
     y_sec, y_sub = np.array(all_sec), np.array(all_sub)
+    
     perm = np.random.permutation(len(X))
     X_norm, y_sec, y_sub = X_norm[perm], y_sec[perm], y_sub[perm]
+    
     n_sectors = len(sector_to_id)
     n_subsectors = len(subsector_to_id)
     log(f"Data: {len(X):,} rows, {n_sectors} sectors, {n_subsectors} subsectors")
@@ -192,81 +189,98 @@ if __name__ == "__main__":
     y_sec_unlab, y_sub_unlab = y_sec[split:], y_sub[split:]
     log(f"Labeled: {len(X_lab):,}, Unlabeled: {len(X_unlab):,}")
     
-    log("\n[2/6] Initializing models...")
+    log("\n[2/5] Initializing models...")
     midas = MIDAS(10, 256)
-    model = MIRASModel(10, 256, n_sectors, n_subsectors, n_latents=64)
+    model = MIRASModel(10, 256, 64, n_sectors, n_subsectors)
+    
     midas_params = sum(p.numel() for p in midas.parameters())
     miras_params = sum(p.numel() for p in model.parameters())
-    log(f"MIDAS: {midas_params:,}, MIRAS: {miras_params:,}, Total: {midas_params+miras_params:,}")
+    log(f"MIDAS: {midas_params:,}, MIRAS: {miras_params:,}, Total: {midas_params + miras_params:,}")
     
-    log("\n[3/6] MIDAS Pretraining (50 epochs)...")
+    log("\n[3/5] Joint Training (40 epochs)...")
     X_t = torch.FloatTensor(X_lab)
-    opt_midas = AdamW(midas.parameters(), lr=0.001)
-    for ep in tqdm(range(50), desc="MIDAS"):
-        midas.train()
-        indices = np.random.permutation(len(X_t))[:500000]
-        batch = X_t[indices]
-        mask = (torch.rand_like(batch) > 0.3).float()
-        recon = midas(batch, mask)
-        loss = ((recon - batch)**2 * (1-mask)).sum() / (1-mask).sum()
-        opt_midas.zero_grad()
-        loss.backward()
-        opt_midas.step()
-        if ep % 10 == 9:
-            log(f"  MIDAS Ep {ep+1}: Loss={loss.item():.4f}")
-    
-    log("\n[4/6] MIRAS Training (40 epochs)...")
-    Xt = torch.FloatTensor(X_lab)
     yst = torch.LongTensor(y_sec_lab)
     ysub = torch.LongTensor(y_sub_lab)
-    loader = DataLoader(TensorDataset(Xt, yst, ysub), batch_size=4096, shuffle=True)
-    opt = AdamW(model.parameters(), lr=1e-4, weight_decay=0.01)
+    
+    loader = DataLoader(TensorDataset(X_t, yst, ysub), batch_size=8192, shuffle=True)
     loss_fn = nn.CrossEntropyLoss()
+    opt = AdamW(list(midas.parameters()) + list(model.parameters()), lr=0.001)
     
-    for ep in tqdm(range(20), desc="MIRAS"):
-        model.train()
+    for ep in tqdm(range(40), desc="Joint Training"):
+        midas.train(); model.train()
         for bx, bs, bsub in loader:
+            if np.random.random() > 0.5:
+                miss_rate = np.random.uniform(0.1, 0.5)
+                mask = (torch.rand_like(bx) > miss_rate).float()
+                recon = midas(bx, mask)
+                bx_input = bx * mask + recon * (1 - mask)
+                recon_loss = ((recon - bx)**2 * (1-mask)).sum() / ((1-mask).sum() + 1e-8)
+            else:
+                bx_input = bx
+                recon_loss = torch.tensor(0.0)
+            
+            sec_logits, h = model(bx_input)
+            sub_logits = model.predict_subsector(h, bs)
+            cls_loss = loss_fn(sec_logits, bs) + loss_fn(sub_logits, bsub)
+            
             opt.zero_grad()
-            sec_logits, h = model(bx)
-            loss = loss_fn(sec_logits, bs) + loss_fn(model.predict_subsector(h, bs), bsub)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            (recon_loss + cls_loss).backward()
             opt.step()
+        
         if ep % 10 == 9:
-            model.eval()
+            midas.eval(); model.eval()
             with torch.no_grad():
-                xt = Xt[:10000]
-                sec_logits, h = model(xt)
-                sec_acc = 100*(sec_logits.argmax(-1) == yst[:10000]).float().mean()
-                comb = 100*(model.predict_subsector(h, sec_logits.argmax(-1)).argmax(-1) == ysub[:10000]).float().mean()
-            log(f"  MIRAS Ep {ep+1}: Sector={sec_acc:.1f}% Combined={comb:.1f}%")
+                test_X = torch.FloatTensor(X_unlab[:10000])
+                sec_logits, h = model(test_X)
+                sec_pred = sec_logits.argmax(-1)
+                sec_acc = 100 * (sec_pred == torch.LongTensor(y_sec_unlab[:10000])).float().mean()
+                comb = 100 * (model.predict_subsector(h, sec_pred).argmax(-1) == torch.LongTensor(y_sub_unlab[:10000])).float().mean()
+            log(f"  Ep {ep+1}: Sector={sec_acc:.1f}% Combined={comb:.1f}%")
     
-    log("\n[5/6] Self-Learning (5 rounds)...")
+    log("\n[4/5] Self-Learning (5 rounds)...")
     X_unlab_t = torch.FloatTensor(X_unlab)
-    for sl_round in tqdm(range(5), desc="SL"):
-        X_pseudo, sec_pseudo, sub_pseudo = self_learning_batch(model, X_unlab_t, threshold=0.85)
-        if len(X_pseudo) < 1000:
-            log(f"  SL {sl_round+1}: Only {len(X_pseudo)}, stopping")
-            break
-        X_comb = torch.cat([Xt, X_pseudo])
-        y_sec_comb = torch.cat([yst, sec_pseudo])
-        y_sub_comb = torch.cat([ysub, sub_pseudo])
-        loader_sl = DataLoader(TensorDataset(X_comb, y_sec_comb, y_sub_comb), batch_size=4096, shuffle=True)
-        model.train()
-        for _ in range(3):
-            for bx, bs, bsub in loader_sl:
-                opt.zero_grad()
-                sec_logits, h = model(bx)
-                loss = loss_fn(sec_logits, bs) + loss_fn(model.predict_subsector(h, bs), bsub)
-                loss.backward()
-                opt.step()
-        model.eval()
-        with torch.no_grad():
-            sec_logits, h = model(X_unlab_t[:10000])
-            comb = 100*(model.predict_subsector(h, sec_logits.argmax(-1)).argmax(-1) == torch.LongTensor(y_sec_unlab[:10000])).float().mean()
-        log(f"  SL {sl_round+1}: +{len(X_pseudo):,} | Combined={comb:.1f}%")
     
-    log("\n[6/6] Saving...")
+    for sl_round in tqdm(range(5), desc="Self-Learning"):
+        X_pseudo, y_sec_pseudo, y_sub_pseudo = self_learning_round(midas, model, X_unlab_t, threshold=0.7)
+        
+        if len(X_pseudo) == 0:
+            log(f"  Round {sl_round+1}: No pseudo labels")
+            continue
+        
+        X_comb = torch.cat([X_t, X_pseudo])
+        y_sec_comb = torch.cat([yst, y_sec_pseudo])
+        y_sub_comb = torch.cat([ysub, y_sub_pseudo])
+        
+        loader_sl = DataLoader(TensorDataset(X_comb, y_sec_comb, y_sub_comb), batch_size=8192, shuffle=True)
+        
+        for _ in range(5):
+            midas.train(); model.train()
+            for bx, bs, bsub in loader_sl:
+                if np.random.random() > 0.5:
+                    miss_rate = np.random.uniform(0.1, 0.5)
+                    mask = (torch.rand_like(bx) > miss_rate).float()
+                    recon = midas(bx, mask)
+                    bx_input = bx * mask + recon * (1 - mask)
+                    recon_loss = ((recon - bx)**2 * (1-mask)).sum() / ((1-mask).sum() + 1e-8)
+                else:
+                    bx_input = bx
+                    recon_loss = torch.tensor(0.0)
+                
+                sec_logits, h = model(bx_input)
+                cls_loss = loss_fn(sec_logits, bs) + loss_fn(model.predict_subsector(h, bs), bsub)
+                opt.zero_grad()
+                (recon_loss + cls_loss).backward()
+                opt.step()
+        
+        midas.eval(); model.eval()
+        with torch.no_grad():
+            test_X = torch.FloatTensor(X_unlab[:10000])
+            sec_logits, h = model(test_X)
+            sec_pred = sec_logits.argmax(-1)
+            comb = 100 * (model.predict_subsector(h, sec_pred).argmax(-1) == torch.LongTensor(y_sub_unlab[:10000])).float().mean()
+        log(f"  Round {sl_round+1}: +{len(X_pseudo):,} pseudo | Combined={comb:.1f}%")
+    
+    log("\n[5/5] Saving model...")
     checkpoint = {
         'midas': midas.state_dict(),
         'miras_model': model.state_dict(),
@@ -285,26 +299,27 @@ if __name__ == "__main__":
     log(f"Saved: {save_path}")
     
     log("\n=== FINAL TEST ===")
-    midas.eval()
-    model.eval()
-    X_test = torch.FloatTensor(X_unlab[:5000])
-    y_test_sec = torch.LongTensor(y_sec_unlab[:5000])
-    y_test_sub = torch.LongTensor(y_sub_unlab[:5000])
+    midas.eval(); model.eval()
+    test_X = torch.FloatTensor(X_unlab[:5000])
+    test_sec = torch.LongTensor(y_sec_unlab[:5000])
+    test_sub = torch.LongTensor(y_sub_unlab[:5000])
     
-    for miss in [0.0, 0.2, 0.4]:
-        if miss > 0:
-            mask = (torch.rand_like(X_test) > miss).float()
-            X_imp = midas.impute(X_test * mask, mask)
+    for miss_rate in [0.0, 0.2, 0.4, 0.6]:
+        if miss_rate > 0:
+            mask = (torch.rand_like(test_X) > miss_rate).float()
+            with torch.no_grad():
+                X_imp = midas.impute(test_X * mask, mask)
         else:
-            X_imp = X_test
+            X_imp = test_X
+        
         with torch.no_grad():
             sec_logits, h = model(X_imp)
             sec_pred = sec_logits.argmax(-1)
-            sec_acc = 100*(sec_pred == y_test_sec).float().mean()
-            comb = 100*(model.predict_subsector(h, sec_pred).argmax(-1) == y_test_sub).float().mean()
-        log(f"  {int(miss*100)}% missing: Sector={sec_acc:.1f}% Combined={comb:.1f}%")
+            sec_acc = 100 * (sec_pred == test_sec).float().mean()
+            comb = 100 * (model.predict_subsector(h, sec_pred).argmax(-1) == test_sub).float().mean()
+        log(f"  {int(miss_rate*100)}% missing: Sector={sec_acc:.1f}% Combined={comb:.1f}%")
     
     elapsed = time.time() - start_time
     log(f"\n{'='*60}")
-    log(f"V2 MIRAS TAMAMLANDI! Sure: {elapsed/60:.1f} dk")
+    log(f"TAMAMLANDI! Sure: {elapsed/60:.1f} dk")
     log(f"{'='*60}")
