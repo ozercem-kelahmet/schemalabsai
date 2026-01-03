@@ -1,166 +1,52 @@
-22:22:05 - ============================================================
-22:22:05 - SCHEMALABSAI V1 - BASE MODEL TRAINING
-22:22:05 - 50 Sectors x 50 Subsectors = 2500 Classes
-22:22:05 - 10M rows (200K per sector)
-22:22:05 - ============================================================
-22:22:05 - 
-[1/6] Loading data...
-22:24:16 - Data: 10,000,000 rows, 50 sectors, 2499 subsectors
-22:24:16 - Labeled: 8,000,000, Unlabeled: 2,000,000
-22:24:16 - 
-[2/6] Initializing models...
-22:24:16 - Total params: 5,478,591
-22:24:16 - 
-[3/6] MIDAS Pretraining (50 epochs)...
-22:24:29 -   MIDAS Ep 10: Loss=0.4326
-22:24:41 -   MIDAS Ep 20: Loss=0.3922
-22:24:54 -   MIDAS Ep 30: Loss=0.3631
-22:25:06 -   MIDAS Ep 40: Loss=0.3521
-22:25:18 -   MIDAS Ep 50: Loss=0.3459
-22:25:18 - 
-[4/6] Hierarchical Training (40 epochs)...
-23:06:51 -   Hier Ep 10: Sector=100.0% Combined=99.4%
-23:58:09 -   Hier Ep 20: Sector=100.0% Combined=99.6%
-00:57:49 -   Hier Ep 30: Sector=100.0% Combined=99.7%
-01:57:28 -   Hier Ep 40: Sector=100.0% Combined=99.6%
-01:57:28 - 
-[5/6] Self-Learning (5 rounds)...
-02:20:03 -   SL Round 1: +1,979,284 pseudo | Sector=100.0% Combined=99.7%
-03:17:11 -   SL Round 2: +1,982,318 pseudo | Sector=100.0% Combined=99.7%
-04:43:46 -   SL Round 3: +1,978,370 pseudo | Sector=100.0% Combined=99.7%
-05:52:13 -   SL Round 4: +1,976,559 pseudo | Sector=100.0% Combined=99.8%
-06:14:09 - ============================================================
-06:14:09 - SCHEMALABSAI V1 - BASE MODEL TRAINING
-06:14:09 - 50 Sectors x 50 Subsectors = 2500 Classes
-06:14:09 - 10M rows (200K per sector)
-06:14:09 - ============================================================
-06:14:09 - 
-[1/6] Loading data...
-06:16:23 - Data: 10,000,000 rows, 50 sectors, 2499 subsectors
-06:16:23 - Labeled: 8,000,000, Unlabeled: 2,000,000
-06:16:23 - 
-[2/6] Initializing models...
-06:16:23 - Total params: 5,478,591
-06:16:23 - 
-[3/6] MIDAS Pretraining (50 epochs)...
-06:16:38 -   MIDAS Ep 10: Loss=0.4597
-06:16:54 -   MIDAS Ep 20: Loss=0.3915
-06:17:09 -   MIDAS Ep 30: Loss=0.3655
-06:17:25 -   MIDAS Ep 40: Loss=0.3503
-06:17:39 -   MIDAS Ep 50: Loss=0.3455
-06:17:39 - 
-[4/6] Hierarchical Training (40 epochs)...
-06:18:41 - ============================================================
-06:18:41 - SCHEMALABSAI V1 - BASE MODEL TRAINING
-06:18:41 - 50 Sectors x 50 Subsectors = 2500 Classes
-06:18:41 - 10M rows (200K per sector)
-06:18:41 - ============================================================
-06:18:41 - 
-[1/6] Loading data...
-06:20:53 - Data: 10,000,000 rows, 50 sectors, 2499 subsectors
-06:20:53 - Labeled: 8,000,000, Unlabeled: 2,000,000
-06:20:53 - 
-[2/6] Initializing models...
-06:20:53 - Total params: 5,478,591
-06:20:53 - 
-[3/6] MIDAS Pretraining (50 epochs)...
-06:21:08 -   MIDAS Ep 10: Loss=0.4198
-06:21:22 -   MIDAS Ep 20: Loss=0.3972
-06:21:36 -   MIDAS Ep 30: Loss=0.3619
-06:21:50 -   MIDAS Ep 40: Loss=0.3486
-06:22:05 -   MIDAS Ep 50: Loss=0.3454
-06:22:05 - 
-[4/6] Hierarchical Training (40 epochs)...
-07:19:56 -   Hier Ep 10: Sector=100.0% Combined=99.8%
-08:17:51 -   Hier Ep 20: Sector=100.0% Combined=99.9%
-09:15:57 -   Hier Ep 30: Sector=100.0% Combined=99.9%
-10:14:07 -   Hier Ep 40: Sector=100.0% Combined=100.0%
-10:14:07 - 
-[5/6] Self-Learning (5 rounds)...
-10:36:13 -   SL Round 1: +1,986,687 pseudo | Sector=100.0% Combined=99.9%
-10:58:21 -   SL Round 2: +1,977,488 pseudo | Sector=100.0% Combined=99.8%
-11:20:28 -   SL Round 3: +1,984,792 pseudo | Sector=100.0% Combined=99.8%
-11:42:31 -   SL Round 4: +1,980,184 pseudo | Sector=100.0% Combined=99.8%
-12:18:10 -   SL Round 5: +1,983,897 pseudo | Sector=100.0% Combined=99.8%
-12:18:10 - 
-[6/6] Saving model...
-12:18:10 - Saved: ../checkpoints/schemalabsai_v1.pt
-12:18:10 - 
-=== FINAL TEST ===
-12:18:10 -   0% missing: Sector=100.0% Combined=99.8%
-12:18:10 -   20% missing: Sector=76.2% Combined=61.3%
-12:18:10 -   40% missing: Sector=54.1% Combined=30.4%
-12:18:10 - 
-============================================================
-12:18:10 - SCHEMALABSAI V1 TAMAMLANDI!
-12:18:10 - Sure: 359.5 dakika (5.99 saat)
-12:18:10 - Model: ../checkpoints/schemalabsai_v1.pt
-12:18:10 - ============================================================
-15:35:25 - ============================================================
-15:35:25 - SCHEMALABSAI V1 - BASE MODEL TRAINING
-15:35:25 - 50 Sectors x 50 Subsectors = 2500 Classes
-15:35:25 - 10M rows (200K per sector)
-15:35:25 - ============================================================
-15:35:25 - 
-[1/6] Loading data...
-15:37:37 - Data: 10,000,000 rows, 50 sectors, 2500 subsectors
-15:37:37 - Labeled: 8,000,000, Unlabeled: 2,000,000
-15:37:37 - 
-[2/6] Initializing models...
-15:37:37 - Total params: 5,480,640
-15:37:37 - 
-[3/6] MIDAS Pretraining (50 epochs)...
-15:37:55 -   MIDAS Ep 10: Loss=0.4584
-15:38:10 -   MIDAS Ep 20: Loss=0.4297
-15:38:25 -   MIDAS Ep 30: Loss=0.3976
-15:38:41 -   MIDAS Ep 40: Loss=0.3869
-15:38:56 -   MIDAS Ep 50: Loss=0.3852
-15:38:56 - 
-[4/6] Hierarchical Training (40 epochs)...
-16:44:55 - ============================================================
-16:44:55 - SCHEMALABSAI V1 - BASE MODEL TRAINING
-16:44:55 - 50 Sectors x 50 Subsectors = 2500 Classes
-16:44:55 - 10M rows (200K per sector)
-16:44:55 - ============================================================
-16:44:55 - 
-[1/6] Loading data...
-16:47:06 - Data: 10,000,000 rows, 50 sectors, 2500 subsectors
-16:47:06 - Labeled: 8,000,000, Unlabeled: 2,000,000
-16:47:06 - 
-[2/6] Initializing models...
-16:47:06 - Total params: 5,480,640
-16:47:06 - 
-[3/6] MIDAS Pretraining (50 epochs)...
-16:47:23 -   MIDAS Ep 10: Loss=0.1944
-16:47:39 -   MIDAS Ep 20: Loss=0.1419
-16:47:54 -   MIDAS Ep 30: Loss=0.0801
-16:48:09 -   MIDAS Ep 40: Loss=0.0609
-16:48:25 -   MIDAS Ep 50: Loss=0.0574
-16:48:25 - 
-[4/6] Hierarchical Training (40 epochs)...
-17:47:09 -   Hier Ep 10: Sector=60.6% Combined=56.3%
-18:45:50 -   Hier Ep 20: Sector=66.1% Combined=61.9%
-19:44:33 -   Hier Ep 30: Sector=68.4% Combined=64.3%
-02:20:24 - ============================================================
-02:20:24 - SCHEMALABSAI V1 - MIDAS + HIERARCHICAL + SELF-LEARNING
-02:20:24 - 50 Sectors x 50 Subsectors = 2500 Classes
-02:20:24 - ============================================================
-02:20:24 - 
+2026-01-02 08:05:48 - ======================================================================
+2026-01-02 08:05:48 - SCHEMALABSAI V1 - Hierarchical MLP + MIDAS + Self-Learning
+2026-01-02 08:05:48 - 50 Sectors x 50 Subsectors = 2500 Classes
+2026-01-02 08:05:48 - NEW: Sector-base subtraction + Global MinMax normalization
+2026-01-02 08:05:48 - ======================================================================
+2026-01-02 08:05:48 - 
 [1/5] Loading data...
-02:22:35 - Data: 10,000,000 rows, 50 sectors, 2500 subsectors
-02:22:35 - Labeled: 8,000,000, Unlabeled: 2,000,000
-02:22:35 - 
+2026-01-02 08:08:05 - Total data: 10,000,000 rows
+2026-01-02 08:08:05 - Sectors: 50, Subsectors per sector: 50
+2026-01-02 08:08:06 - Labeled: 6,000,000, Unlabeled: 2,000,000, Test: 2,000,000
+2026-01-02 08:08:06 - 
 [2/5] Initializing models...
-02:22:35 - Total params: 5,514,496
-02:22:35 - 
-[3/5] Joint Training (40 epochs)...
-03:08:45 -   Ep 10: Sector=42.5% Combined=42.6%
-03:55:09 -   Ep 20: Sector=46.3% Combined=46.3%
-04:41:40 -   Ep 30: Sector=48.2% Combined=48.2%
-06:20:21 -   Ep 40: Sector=49.0% Combined=48.9%
-06:20:21 - 
-[4/5] Self-Learning (5 rounds)...
-08:20:28 -   Round 1: +117,284 pseudo | Combined=49.6%
-09:25:50 -   Round 2: +119,446 pseudo | Combined=49.9%
-10:51:44 -   Round 3: +134,217 pseudo | Combined=50.3%
-11:21:21 -   Round 4: +138,011 pseudo | Combined=50.5%
+2026-01-02 08:08:06 - Total params: 1,181,806
+2026-01-02 08:08:06 - 
+[3/5] Classification Training...
+2026-01-02 08:25:27 -   Ep 10: Sector=94.2% Subsector=96.9% (best=98.7%)
+2026-01-02 08:32:13 -   🎉 Reached 99%+ at ep 14
+2026-01-02 08:32:13 -   Classification complete: 99.0%
+2026-01-02 08:32:13 - 
+[4/5] Self-Learning (5 rounds, threshold=0.95)...
+2026-01-02 08:43:37 -   Round 1: +1,825,879 pseudo | acc=98.8% (best=99.0%)
+2026-01-02 08:54:58 -   Round 2: +1,818,199 pseudo | acc=99.2% (best=99.2%)
+2026-01-02 09:06:08 -   Round 3: +1,753,377 pseudo | acc=99.2% (best=99.2%)
+2026-01-02 09:13:44 -   Round 4: +1,805,278 pseudo | acc=99.6% (best=99.6%)
+2026-01-02 09:21:13 -   Round 5: +1,723,711 pseudo | acc=99.9% (best=99.9%)
+2026-01-02 09:21:13 -   Self-Learning complete: 99.9%
+2026-01-02 09:21:13 - 
+[5/5] MIDAS Training (300 epochs)...
+2026-01-02 10:41:52 -   Ep 50 (30% miss): 90.7% (best=90.7%)
+2026-01-02 12:40:41 -   Ep 100 (30% miss): 93.3% (best=93.3%)
+2026-01-02 14:16:44 -   Ep 150 (30% miss): 96.4% (best=96.4%)
+2026-01-02 15:47:10 -   Ep 200 (30% miss): 92.4% (best=96.4%)
+2026-01-02 17:15:29 -   Ep 250 (30% miss): 95.8% (best=96.4%)
+2026-01-02 18:42:35 -   Ep 300 (30% miss): 94.0% (best=96.4%)
+2026-01-02 18:42:35 - 
+Saving model...
+2026-01-02 18:42:35 - Saved: ../checkpoints/schemalabsai_v1.pt
+2026-01-02 18:42:35 - 
+======================================================================
+2026-01-02 18:42:35 - FINAL TEST RESULTS
+2026-01-02 18:42:35 - ======================================================================
+2026-01-02 18:42:35 -   0% missing: Sector=95.6% Subsector=99.9%
+2026-01-02 18:42:35 -   10% missing: Sector=93.9% Subsector=99.3%
+2026-01-02 18:42:35 -   20% missing: Sector=91.9% Subsector=98.3%
+2026-01-02 18:42:36 -   30% missing: Sector=88.3% Subsector=96.3%
+2026-01-02 18:42:36 -   40% missing: Sector=82.2% Subsector=93.3%
+2026-01-02 18:42:36 -   50% missing: Sector=72.6% Subsector=87.3%
+2026-01-02 18:42:37 -   60% missing: Sector=59.2% Subsector=78.1%
+2026-01-02 18:42:37 - 
+======================================================================
+2026-01-02 18:42:37 - TRAINING COMPLETE! Duration: 636.8 minutes
+2026-01-02 18:42:37 - ======================================================================

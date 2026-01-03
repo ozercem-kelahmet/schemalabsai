@@ -1,121 +1,27 @@
-23:31:37 - ============================================================
-23:31:37 - SCHEMALABSAI V2 - MIRAS + MIDAS + SL
-23:31:37 - 50 Sectors x 50 Subsectors = 2500 Classes
-23:31:37 - 10M rows (200K per sector)
-23:31:37 - ============================================================
-23:31:37 - 
-[1/6] Loading data...
-23:33:55 - Data: 10,000,000 rows, 50 sectors, 2499 subsectors
-23:33:55 - Labeled: 8,000,000, Unlabeled: 2,000,000
-23:33:55 - 
-[2/6] Initializing models...
-23:33:55 - MIDAS: 170,058, MIRAS: 3,909,750, Total: 4,079,808
-23:33:55 - 
-[3/6] MIDAS Pretraining (50 epochs)...
-23:34:09 -   MIDAS Ep 10: Loss=0.4175
-23:34:22 -   MIDAS Ep 20: Loss=0.4003
-23:34:36 -   MIDAS Ep 30: Loss=0.3514
-23:34:49 -   MIDAS Ep 40: Loss=0.3507
-23:35:03 -   MIDAS Ep 50: Loss=0.3452
-23:35:03 - 
-[4/6] MIRAS Training (40 epochs)...
-06:14:14 - ============================================================
-06:14:14 - SCHEMALABSAI V2 - MIRAS + MIDAS + SL
-06:14:14 - 50 Sectors x 50 Subsectors = 2500 Classes
-06:14:14 - 10M rows (200K per sector)
-06:14:14 - ============================================================
-06:14:14 - 
-[1/6] Loading data...
-06:16:28 - Data: 10,000,000 rows, 50 sectors, 2499 subsectors
-06:16:28 - Labeled: 8,000,000, Unlabeled: 2,000,000
-06:16:28 - 
-[2/6] Initializing models...
-06:16:28 - MIDAS: 170,058, MIRAS: 3,909,750, Total: 4,079,808
-06:16:28 - 
-[3/6] MIDAS Pretraining (50 epochs)...
-06:16:44 -   MIDAS Ep 10: Loss=0.4287
-06:17:00 -   MIDAS Ep 20: Loss=0.3981
-06:17:15 -   MIDAS Ep 30: Loss=0.3617
-06:17:31 -   MIDAS Ep 40: Loss=0.3485
-06:17:46 -   MIDAS Ep 50: Loss=0.3459
-06:17:46 - 
-[4/6] MIRAS Training (40 epochs)...
-06:18:43 - ============================================================
-06:18:43 - SCHEMALABSAI V2 - MIRAS + MIDAS + SL
-06:18:43 - 50 Sectors x 50 Subsectors = 2500 Classes
-06:18:43 - 10M rows (200K per sector)
-06:18:43 - ============================================================
-06:18:43 - 
-[1/6] Loading data...
-06:20:53 - Data: 10,000,000 rows, 50 sectors, 2499 subsectors
-06:20:53 - Labeled: 8,000,000, Unlabeled: 2,000,000
-06:20:53 - 
-[2/6] Initializing models...
-06:20:53 - MIDAS: 170,058, MIRAS: 3,909,750, Total: 4,079,808
-06:20:53 - 
-[3/6] MIDAS Pretraining (50 epochs)...
-06:21:08 -   MIDAS Ep 10: Loss=0.3888
-06:21:22 -   MIDAS Ep 20: Loss=0.4061
-06:21:36 -   MIDAS Ep 30: Loss=0.3521
-06:21:50 -   MIDAS Ep 40: Loss=0.3486
-06:22:04 -   MIDAS Ep 50: Loss=0.3449
-06:22:04 - 
-[4/6] MIRAS Training (40 epochs)...
-15:35:31 - ============================================================
-15:35:31 - SCHEMALABSAI V2 - MIRAS + MIDAS + SL
-15:35:31 - 50 Sectors x 50 Subsectors = 2500 Classes
-15:35:31 - 10M rows (200K per sector)
-15:35:31 - ============================================================
-15:35:31 - 
-[1/6] Loading data...
-15:37:42 - Data: 10,000,000 rows, 50 sectors, 2500 subsectors
-15:37:42 - Labeled: 8,000,000, Unlabeled: 2,000,000
-15:37:42 - 
-[2/6] Initializing models...
-15:37:42 - MIDAS: 170,058, MIRAS: 3,910,775, Total: 4,080,833
-15:37:42 - 
-[3/6] MIDAS Pretraining (50 epochs)...
-15:38:00 -   MIDAS Ep 10: Loss=0.4369
-15:38:14 -   MIDAS Ep 20: Loss=0.4323
-15:38:30 -   MIDAS Ep 30: Loss=0.3949
-15:38:46 -   MIDAS Ep 40: Loss=0.3845
-15:39:01 -   MIDAS Ep 50: Loss=0.3837
-15:39:01 - 
-[4/6] MIRAS Training (40 epochs)...
-16:44:59 - ============================================================
-16:44:59 - SCHEMALABSAI V2 - MIRAS + MIDAS + SL
-16:44:59 - 50 Sectors x 50 Subsectors = 2500 Classes
-16:44:59 - 10M rows (200K per sector)
-16:44:59 - ============================================================
-16:44:59 - 
-[1/6] Loading data...
-16:47:13 - Data: 10,000,000 rows, 50 sectors, 2500 subsectors
-16:47:13 - Labeled: 8,000,000, Unlabeled: 2,000,000
-16:47:13 - 
-[2/6] Initializing models...
-16:47:13 - MIDAS: 170,058, MIRAS: 3,910,775, Total: 4,080,833
-16:47:13 - 
-[3/6] MIDAS Pretraining (50 epochs)...
-16:47:31 -   MIDAS Ep 10: Loss=0.1430
-16:47:46 -   MIDAS Ep 20: Loss=0.1422
-16:48:01 -   MIDAS Ep 30: Loss=0.0770
-16:48:17 -   MIDAS Ep 40: Loss=0.0588
-16:48:32 -   MIDAS Ep 50: Loss=0.0570
-16:48:32 - 
-[4/6] MIRAS Training (40 epochs)...
-02:21:33 - ============================================================
-02:21:33 - SCHEMALABSAI V2 - MIRAS + MIDAS + SELF-LEARNING
-02:21:33 - 50 Sectors x 50 Subsectors = 2500 Classes
-02:21:33 - ============================================================
-02:21:33 - 
+2026-01-02 21:16:59 - ======================================================================
+2026-01-02 21:16:59 - SCHEMALABSAI V2 - MIRAS + MIDAS + Self-Learning
+2026-01-02 21:16:59 - 50 Sectors x 50 Subsectors = 2500 Classes
+2026-01-02 21:16:59 - NEW: Sector-base subtraction + Global MinMax normalization
+2026-01-02 21:16:59 - ======================================================================
+2026-01-02 21:16:59 - 
 [1/5] Loading data...
-02:23:49 - Data: 10,000,000 rows, 50 sectors, 2500 subsectors
-02:23:49 - Labeled: 8,000,000, Unlabeled: 2,000,000
-02:23:49 - 
+2026-01-02 21:19:16 - Total data: 10,000,000 rows
+2026-01-02 21:19:16 - Sectors: 50, Subsectors per sector: 50
+2026-01-02 21:19:17 - Labeled: 6,000,000, Unlabeled: 2,000,000, Test: 2,000,000
+2026-01-02 21:19:17 - 
 [2/5] Initializing models...
-02:23:49 - MIDAS: 203,914, MIRAS: 3,975,543, Total: 4,179,457
-02:23:49 - 
-[3/5] Joint Training (40 epochs)...
-04:19:07 -   Ep 10: Sector=80.9% Combined=80.6%
-09:14:34 -   Ep 20: Sector=81.6% Combined=81.4%
-12:12:02 -   Ep 30: Sector=82.4% Combined=82.2%
+2026-01-02 21:19:17 - Total params: 2,400,110
+2026-01-02 21:19:17 - 
+[3/5] MIRAS Classification Training...
+2026-01-02 21:50:19 -   🎉 Reached 99%+ at ep 3
+2026-01-02 21:50:19 -   MIRAS Classification complete: 99.6%
+2026-01-02 21:50:19 - 
+[4/5] Self-Learning (5 rounds, threshold=0.95)...
+2026-01-02 22:45:40 -   Round 1: +310,120 pseudo | acc=97.5% (best=99.6%)
+2026-01-02 23:47:17 -   Round 2: +1,187,951 pseudo | acc=95.4% (best=99.6%)
+2026-01-03 00:58:45 -   Round 3: +1,764,346 pseudo | acc=95.2% (best=99.6%)
+2026-01-03 02:25:33 -   Round 4: +1,822,447 pseudo | acc=94.5% (best=99.6%)
+2026-01-03 04:04:03 -   Round 5: +1,777,787 pseudo | acc=92.8% (best=99.6%)
+2026-01-03 04:04:03 -   Self-Learning complete: 99.6%
+2026-01-03 04:04:03 - 
+[5/5] MIDAS Training (300 epochs)...

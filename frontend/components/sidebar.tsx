@@ -5,7 +5,6 @@ import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/lib/auth"
-import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import {
@@ -19,32 +18,20 @@ import {
   ChevronDown,
   ChevronRight,
   Folder,
-  FileText,
   Shield,
   Building2,
-  Users,
-  Check,
-  ChevronsUpDown
+  CreditCard,
+  BarChart3
 } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 
 interface SidebarProps {
   children: React.ReactNode
-}
-
-interface Organization {
-  id: string
-  name: string
-  slug: string
-  role: string
-  is_owner: boolean
-  member_count: number
 }
 
 interface Playground {
@@ -57,28 +44,18 @@ export function Sidebar({ children }: SidebarProps) {
   const router = useRouter()
   const { user, logout } = useAuth()
   const [playgrounds, setPlaygrounds] = useState<Playground[]>([])
-  const [organizations, setOrganizations] = useState<Organization[]>([])
-  const [selectedOrg, setSelectedOrg] = useState<Organization | null>(null)
   const [playgroundsOpen, setPlaygroundsOpen] = useState(true)
 
   useEffect(() => {
     fetchPlaygrounds()
-    fetchOrganizations()
   }, [])
 
   const fetchPlaygrounds = async () => {
     try {
       const res = await fetch("/api/playgrounds", { credentials: "include" })
-      if (!res.ok) return; const data = await res.json()
+      if (!res.ok) return
+      const data = await res.json()
       setPlaygrounds(Array.isArray(data) ? data : [])
-    } catch (e) { console.error(e) }
-  }
-
-  const fetchOrganizations = async () => {
-    try {
-      const res = await fetch("/api/organizations", { credentials: "include" })
-      if (!res.ok) return; const data = await res.json()
-      setOrganizations(Array.isArray(data) ? data : [])
     } catch (e) { console.error(e) }
   }
 
@@ -90,7 +67,7 @@ export function Sidebar({ children }: SidebarProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: "New Playground" })
       })
-      if (!res.ok) return; const data = await res.json()
+      const data = await res.json()
       if (data.id) {
         fetchPlaygrounds()
         router.push(`/playground/${data.id}`)
@@ -114,53 +91,18 @@ export function Sidebar({ children }: SidebarProps) {
 
   return (
     <div className="flex h-screen bg-background">
-      {/* Sidebar */}
       <div className="w-56 border-r flex flex-col bg-muted/30">
-        {/* Logo & Team Switcher */}
+        {/* Logo */}
         <div className="p-3 border-b">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button className="w-full flex items-center gap-2 p-2 rounded-lg hover:bg-muted transition-colors">
-                <div className="h-8 w-8 rounded-lg bg-primary text-primary-foreground flex items-center justify-center font-bold text-sm">
-                  SL
-                </div>
-                <div className="flex-1 text-left">
-                  <p className="text-sm font-semibold">Schema Labs</p>
-                  <p className="text-xs text-muted-foreground">{selectedOrg?.name || "Personal"}</p>
-                </div>
-                <ChevronsUpDown className="h-4 w-4 text-muted-foreground" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-52">
-              <DropdownMenuItem onClick={() => setSelectedOrg(null)} className="gap-2">
-                <div className="h-6 w-6 rounded bg-muted flex items-center justify-center text-xs font-medium">P</div>
-                <span>Personal</span>
-                {!selectedOrg && <Check className="h-4 w-4 ml-auto" />}
-              </DropdownMenuItem>
-              {organizations.length > 0 && (
-                <>
-                  <DropdownMenuSeparator />
-                  <p className="px-2 py-1.5 text-xs font-medium text-muted-foreground">Teams</p>
-                  {organizations.map((org) => (
-                    <DropdownMenuItem key={org.id} onClick={() => setSelectedOrg(org)} className="gap-2">
-                      <div className="h-6 w-6 rounded bg-muted flex items-center justify-center text-xs font-medium">
-                        {org.name.slice(0, 2).toUpperCase()}
-                      </div>
-                      <span className="truncate">{org.name}</span>
-                      {selectedOrg?.id === org.id && <Check className="h-4 w-4 ml-auto" />}
-                    </DropdownMenuItem>
-                  ))}
-                </>
-              )}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem asChild>
-                <Link href="/organizations" className="gap-2">
-                  <Building2 className="h-4 w-4" />
-                  Manage Teams
-                </Link>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <Link href="/" className="flex items-center gap-2 p-2">
+            <div className="h-8 w-8 rounded-lg bg-primary text-primary-foreground flex items-center justify-center font-bold text-sm">
+              SL
+            </div>
+            <div>
+              <p className="text-sm font-semibold">Schema Labs</p>
+              <p className="text-xs text-muted-foreground">Pro</p>
+            </div>
+          </Link>
         </div>
 
         <ScrollArea className="flex-1">
@@ -247,7 +189,7 @@ export function Sidebar({ children }: SidebarProps) {
           </div>
         </ScrollArea>
 
-        {/* User */}
+        {/* User Dropdown */}
         <div className="p-3 border-t">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -262,21 +204,32 @@ export function Sidebar({ children }: SidebarProps) {
                 <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-48">
+            <DropdownMenuContent align="start" side="top" className="w-52">
               <DropdownMenuItem asChild>
-                <Link href="/settings">
-                  <Settings className="h-4 w-4 mr-2" />
-                  Settings
+                <Link href="/account" className="cursor-pointer">
+                  <Building2 className="h-4 w-4 mr-2" />
+                  Account
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuItem asChild>
-                <Link href="/organizations">
+                <Link href="/organizations" className="cursor-pointer">
                   <Building2 className="h-4 w-4 mr-2" />
                   Organizations
                 </Link>
               </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={logout} className="text-destructive">
+              <DropdownMenuItem asChild>
+                <Link href="/billing" className="cursor-pointer">
+                  <CreditCard className="h-4 w-4 mr-2" />
+                  Billing
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <Link href="/usage" className="cursor-pointer">
+                  <BarChart3 className="h-4 w-4 mr-2" />
+                  Usage
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={logout} className="text-destructive cursor-pointer">
                 <LogOut className="h-4 w-4 mr-2" />
                 Log out
               </DropdownMenuItem>

@@ -1,0 +1,101 @@
+============================================================
+V4: MIDAS + Classifier + Self-Learning
+============================================================
+
+[1/5] Generating 10M data...
+  Labeled: 6,000,000, Unlabeled: 2,000,000, Test: 2,000,000
+
+[2/5] Training MIDAS (50 epochs)...
+  MIDAS Ep 1/50: Loss=0.009891 | Clean=39.1% | 50%Missing=34.6%
+  MIDAS Ep 2/50: Loss=0.001742 | Clean=39.1% | 50%Missing=37.2%
+  MIDAS Ep 3/50: Loss=0.001119 | Clean=39.1% | 50%Missing=37.8%
+  MIDAS Ep 4/50: Loss=0.000892 | Clean=39.1% | 50%Missing=37.8%
+  MIDAS Ep 5/50: Loss=0.000776 | Clean=39.1% | 50%Missing=37.8%
+  MIDAS Ep 6/50: Loss=0.000704 | Clean=39.1% | 50%Missing=38.0%
+  MIDAS Ep 7/50: Loss=0.000645 | Clean=39.1% | 50%Missing=37.8%
+  MIDAS Ep 8/50: Loss=0.000606 | Clean=39.1% | 50%Missing=38.3%
+  MIDAS Ep 9/50: Loss=0.000581 | Clean=39.1% | 50%Missing=38.1%
+  MIDAS Ep 10/50: Loss=0.000577 | Clean=39.1% | 50%Missing=38.1%
+  MIDAS Ep 11/50: Loss=0.000582 | Clean=39.1% | 50%Missing=38.2%
+  MIDAS Ep 12/50: Loss=0.000502 | Clean=39.1% | 50%Missing=38.2%
+  MIDAS Ep 13/50: Loss=0.000512 | Clean=39.1% | 50%Missing=38.2%
+  MIDAS Ep 14/50: Loss=0.000500 | Clean=39.1% | 50%Missing=38.1%
+  MIDAS Ep 15/50: Loss=0.000512 | Clean=39.1% | 50%Missing=38.3%
+  MIDAS Ep 16/50: Loss=0.000482 | Clean=39.1% | 50%Missing=38.1%
+  MIDAS Ep 17/50: Loss=0.000481 | Clean=39.1% | 50%Missing=38.2%
+  MIDAS Ep 18/50: Loss=0.000473 | Clean=39.1% | 50%Missing=38.4%
+  MIDAS Ep 19/50: Loss=0.000476 | Clean=39.1% | 50%Missing=38.2%
+  MIDAS Ep 20/50: Loss=0.000457 | Clean=39.1% | 50%Missing=38.2%
+  MIDAS Ep 21/50: Loss=0.000459 | Clean=39.1% | 50%Missing=38.4%
+  MIDAS Ep 22/50: Loss=0.000475 | Clean=39.1% | 50%Missing=38.3%
+  MIDAS Ep 23/50: Loss=0.000439 | Clean=39.1% | 50%Missing=38.2%
+  MIDAS Ep 24/50: Loss=0.000442 | Clean=39.1% | 50%Missing=38.3%
+  MIDAS Ep 25/50: Loss=0.000436 | Clean=39.1% | 50%Missing=38.2%
+  MIDAS Ep 26/50: Loss=0.000428 | Clean=39.1% | 50%Missing=38.2%
+  MIDAS Ep 27/50: Loss=0.000437 | Clean=39.1% | 50%Missing=38.2%
+  MIDAS Ep 28/50: Loss=0.000453 | Clean=39.1% | 50%Missing=38.3%
+  MIDAS Ep 29/50: Loss=0.000431 | Clean=39.1% | 50%Missing=38.2%
+  MIDAS Ep 30/50: Loss=0.000427 | Clean=39.1% | 50%Missing=38.2%
+  MIDAS Ep 31/50: Loss=0.000458 | Clean=39.1% | 50%Missing=38.3%
+  MIDAS Ep 32/50: Loss=0.000429 | Clean=39.1% | 50%Missing=38.2%
+  MIDAS Ep 33/50: Loss=0.000416 | Clean=39.1% | 50%Missing=38.2%
+  MIDAS Ep 34/50: Loss=0.000426 | Clean=39.1% | 50%Missing=38.2%
+  MIDAS Ep 35/50: Loss=0.000438 | Clean=39.1% | 50%Missing=38.1%
+  MIDAS Ep 36/50: Loss=0.000420 | Clean=39.1% | 50%Missing=38.2%
+  MIDAS Ep 37/50: Loss=0.000426 | Clean=39.1% | 50%Missing=38.3%
+  MIDAS Ep 38/50: Loss=0.000411 | Clean=39.1% | 50%Missing=38.4%
+  MIDAS Ep 39/50: Loss=0.000440 | Clean=39.1% | 50%Missing=38.2%
+  MIDAS Ep 40/50: Loss=0.000419 | Clean=39.1% | 50%Missing=38.3%
+  MIDAS Ep 41/50: Loss=0.000417 | Clean=39.1% | 50%Missing=38.2%
+  MIDAS Ep 42/50: Loss=0.000433 | Clean=39.1% | 50%Missing=38.3%
+  MIDAS Ep 43/50: Loss=0.000415 | Clean=39.1% | 50%Missing=38.2%
+  MIDAS Ep 44/50: Loss=0.000423 | Clean=39.1% | 50%Missing=38.3%
+  MIDAS Ep 45/50: Loss=0.000409 | Clean=39.1% | 50%Missing=38.3%
+  MIDAS Ep 46/50: Loss=0.000409 | Clean=39.1% | 50%Missing=38.3%
+  MIDAS Ep 47/50: Loss=0.000423 | Clean=39.1% | 50%Missing=38.3%
+  MIDAS Ep 48/50: Loss=0.000410 | Clean=39.1% | 50%Missing=38.1%
+  MIDAS Ep 49/50: Loss=0.000401 | Clean=39.1% | 50%Missing=38.3%
+  MIDAS Ep 50/50: Loss=0.000425 | Clean=39.1% | 50%Missing=38.3%
+
+[3/5] Extracting features...
+  Shape: torch.Size([6000000, 256])
+
+[4/5] Training Classifier (patience=10)...
+  Classifier Ep 1: Loss=0.0119 | Acc=100.00% | Best=100.00% ✓
+
+[5/5] Self-Learning (5 rounds)...
+  Round 1: +2,000,000 pseudo | Acc=100.00% | Best=100.00%
+  Round 2: +2,000,000 pseudo | Acc=100.00% | Best=100.00%
+  Round 3: +2,000,000 pseudo | Acc=100.00% | Best=100.00%
+  Round 4: +2,000,000 pseudo | Acc=100.00% | Best=100.00%
+  Round 5: +2,000,000 pseudo | Acc=100.00% | Best=100.00%
+
+============================================================
+FINAL: Acc=100.00% | MinClass=100.0% | MeanClass=100.0%
+Saved: ../checkpoints/schemalabsai_agnostic_v4.pt
+============================================================
+   Shape: torch.Size([6000000, 256])
+08:15:44 - 
+[4/5] Training Classifier (patience=10)...
+08:16:38 -   Classifier Ep 1: Loss=0.0119 | Acc=100.00% | Best=100.00% ✓
+08:16:38 - 
+[5/5] Self-Learning (5 rounds)...
+08:17:29 -   Round 1: +2,000,000 pseudo | Acc=100.00% | Best=100.00%
+08:18:30 -   Round 2: +2,000,000 pseudo | Acc=100.00% | Best=100.00%
+08:19:21 -   Round 3: +2,000,000 pseudo | Acc=100.00% | Best=100.00%
+08:20:07 -   Round 4: +2,000,000 pseudo | Acc=100.00% | Best=100.00%
+08:21:07 -   Round 5: +2,000,000 pseudo | Acc=100.00% | Best=100.00%
+08:21:07 - 
+============================================================
+08:21:09 - FINAL: Acc=100.00% | MinClass=100.0% | MeanClass=100.0%
+08:21:09 - Saved: ../checkpoints/schemalabsai_agnostic_v4.pt
+08:21:09 - ============================================================
+12:56:35 - ============================================================
+12:56:35 - V4: MIDAS + Classifier + Self-Learning
+12:56:35 - Target: MIDAS 50% missing >= 90%
+12:56:35 - ============================================================
+12:56:35 - 
+[1/5] Generating 10M data...
+12:56:35 -   Labeled: 300,000, Unlabeled: 100,000, Test: 100,000
+12:56:35 - 
+[2/5] Training MIDAS (until 50% missing >= 90%)...

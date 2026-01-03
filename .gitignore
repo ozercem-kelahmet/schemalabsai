@@ -30,3 +30,4 @@ test_data*.csv
 .DS_Store
 main
 server
+model/finetuned_models/*.pt
