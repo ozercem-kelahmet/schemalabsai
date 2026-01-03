@@ -26,3 +26,4 @@ git push origin main  # Otomatik deploy
 - **SonarCloud:** https://sonarcloud.io/project/overview?id=ozercem-kelahmet_schemalabsai
 
 # test
+
