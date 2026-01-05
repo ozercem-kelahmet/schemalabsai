@@ -147,3 +147,31 @@
   background-color: var(--muted-foreground);
   opacity: 0.5;
 }
+
+/* Force full width cards */
+.flex-1 > div > .bg-card {
+  max-width: 100% !important;
+  width: 100% !important;
+}
+
+/* Sidebar children full width */
+.flex-1.flex.flex-col.overflow-hidden > div {
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+/* FORCE FULLSCREEN LAYOUT */
+[data-slot="card"] {
+  width: 100% !important;
+  max-width: none !important;
+}
+
+/* Main content area - remove any max-width constraints */
+main, 
+.flex-1,
+.overflow-auto,
+.space-y-6,
+.space-y-4 {
+  max-width: none !important;
+}
+[data-slot="card"] { width: 100% !important; }

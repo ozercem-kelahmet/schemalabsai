@@ -255,9 +255,9 @@ export default function EndpointsPage() {
   }
 
   return (
-    <div className="flex min-h-screen">
-      <Sidebar>
-        <div className="p-4 sm:p-6 pt-8 sm:pt-12 space-y-4 sm:space-y-6">
+    <Sidebar>
+      <div className="flex-1 overflow-auto bg-background">
+        <div className="p-8">
           {/* Header Card */}
           <Card className="bg-card border-border">
             <CardHeader className="p-4 sm:p-6">
@@ -515,8 +515,7 @@ export default function EndpointsPage() {
             </CardContent>
           </Card>
         </div>
-      </Sidebar>
-
+      </div>
       {/* Test Modal */}
       <Dialog open={testModalOpen} onOpenChange={setTestModalOpen}>
         <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -655,6 +654,6 @@ export default function EndpointsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </Sidebar>
   )
 }

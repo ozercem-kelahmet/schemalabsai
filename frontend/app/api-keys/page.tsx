@@ -238,20 +238,25 @@ export default function ApiKeysPage() {
   const displayKey = selectedKey?.key && selectedKey.key.length > 20 ? selectedKey.key : "YOUR_API_KEY"
 
   return (
-    <div className="flex min-h-screen">
+    <Sidebar>
       <Toaster position="top-right" />
-      <Sidebar>
-        <div className="p-4 sm:p-6 pt-8 sm:pt-12 space-y-4 sm:space-y-6">
-          <Card className="bg-card border-border">
-            <CardHeader className="p-4 sm:p-6">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex-1 overflow-auto bg-background">
+        <div className="p-8">
+          <div className="mb-8">
+            <h1 className="text-2xl font-semibold text-foreground">API Keys</h1>
+            <p className="text-sm text-muted-foreground mt-1">Manage your API keys for accessing SchemaLabs AI</p>
+          </div>
+
+          <Card className="bg-card border-border mb-6">
+            <CardHeader className="p-6">
+              <div className="flex items-center justify-between">
                 <div>
-                  <CardTitle className="text-foreground text-lg sm:text-xl">API Keys</CardTitle>
-                  <CardDescription className="text-xs sm:text-sm">Manage your API keys for accessing SchemaLabs AI</CardDescription>
+                  <CardTitle className="text-foreground">Your API Keys</CardTitle>
+                  <CardDescription>Manage your API keys for accessing SchemaLabs AI</CardDescription>
                 </div>
                 <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
                   <DialogTrigger asChild>
-                    <Button className="w-full sm:w-auto" disabled={fineTunedModels.length === 0}>
+                    <Button disabled={fineTunedModels.length === 0}>
                       <Plus className="h-4 w-4 mr-2" />
                       Create API Key
                     </Button>
@@ -286,18 +291,12 @@ export default function ApiKeysPage() {
                       <div className="space-y-4">
                         <div className="space-y-2">
                           <Label>Key Name <span className="text-destructive">*</span></Label>
-                          <Input 
-                            placeholder="My API Key" 
-                            value={newKeyName}
-                            onChange={(e) => setNewKeyName(e.target.value)}
-                          />
+                          <Input placeholder="My API Key" value={newKeyName} onChange={(e) => setNewKeyName(e.target.value)} />
                         </div>
                         <div className="space-y-2">
                           <Label>Fine-tuned Model <span className="text-destructive">*</span></Label>
                           <Select value={selectedFineTunedModel} onValueChange={setSelectedFineTunedModel}>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select a model" />
-                            </SelectTrigger>
+                            <SelectTrigger><SelectValue placeholder="Select a model" /></SelectTrigger>
                             <SelectContent>
                               {fineTunedModels.map((model) => (
                                 <SelectItem key={model.id} value={model.id}>
@@ -309,20 +308,12 @@ export default function ApiKeysPage() {
                               ))}
                             </SelectContent>
                           </Select>
-                          {fineTunedModels.length === 0 && (
-                            <p className="text-xs text-muted-foreground">No fine-tuned models available. Train one first.</p>
-                          )}
                         </div>
                         <div className="grid grid-cols-2 gap-4">
                           <div className="space-y-2">
-                            <Label>LLM Provider <span className="text-destructive">*</span></Label>
-                            <Select value={selectedLLMProvider} onValueChange={(v) => {
-                              setSelectedLLMProvider(v)
-                              setSelectedLLMModel(getLLMModels(v)[0]?.value || '')
-                            }}>
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
+                            <Label>LLM Provider</Label>
+                            <Select value={selectedLLMProvider} onValueChange={(v) => { setSelectedLLMProvider(v); setSelectedLLMModel(getLLMModels(v)[0]?.value || ''); }}>
+                              <SelectTrigger><SelectValue /></SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="claude">Claude</SelectItem>
                                 <SelectItem value="openai">OpenAI</SelectItem>
@@ -331,11 +322,9 @@ export default function ApiKeysPage() {
                             </Select>
                           </div>
                           <div className="space-y-2">
-                            <Label>LLM Model <span className="text-destructive">*</span></Label>
+                            <Label>LLM Model</Label>
                             <Select value={selectedLLMModel} onValueChange={setSelectedLLMModel}>
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
+                              <SelectTrigger><SelectValue /></SelectTrigger>
                               <SelectContent>
                                 {getLLMModels(selectedLLMProvider).map((m) => (
                                   <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
@@ -347,9 +336,7 @@ export default function ApiKeysPage() {
                         <div className="space-y-2">
                           <Label>Rate Limit</Label>
                           <Select value={newKeyRateLimit} onValueChange={setNewKeyRateLimit}>
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
                             <SelectContent>
                               <SelectItem value="100/min">100/min</SelectItem>
                               <SelectItem value="1000/min">1000/min</SelectItem>
@@ -363,22 +350,14 @@ export default function ApiKeysPage() {
                           <div className="grid grid-cols-2 gap-2">
                             {Object.entries(permissions).map(([key, value]) => (
                               <div key={key} className="flex items-center space-x-2">
-                                <Checkbox
-                                  id={key}
-                                  checked={value}
-                                  onCheckedChange={(checked) => 
-                                    setPermissions(prev => ({ ...prev, [key]: !!checked }))
-                                  }
-                                />
+                                <Checkbox id={key} checked={value} onCheckedChange={(checked) => setPermissions(prev => ({ ...prev, [key]: !!checked }))} />
                                 <label htmlFor={key} className="text-sm capitalize">{key}</label>
                               </div>
                             ))}
                           </div>
                         </div>
                         <DialogFooter>
-                          <DialogClose asChild>
-                            <Button variant="outline">Cancel</Button>
-                          </DialogClose>
+                          <DialogClose asChild><Button variant="outline">Cancel</Button></DialogClose>
                           <Button onClick={handleGenerateKey} disabled={creating || !selectedFineTunedModel}>
                             {creating ? "Creating..." : "Create Key"}
                           </Button>
@@ -389,7 +368,7 @@ export default function ApiKeysPage() {
                 </Dialog>
               </div>
             </CardHeader>
-            <CardContent className="p-4 sm:p-6 pt-0">
+            <CardContent className="p-6 pt-0">
               {loading ? (
                 <div className="text-center py-8 text-muted-foreground">Loading...</div>
               ) : existingKeys.length === 0 ? (
@@ -404,12 +383,12 @@ export default function ApiKeysPage() {
                       <TableRow className="border-border">
                         <TableHead className="text-muted-foreground">Name</TableHead>
                         <TableHead className="text-muted-foreground">Key</TableHead>
-                        <TableHead className="text-muted-foreground hidden md:table-cell">Fine-tuned Model</TableHead>
-                        <TableHead className="text-muted-foreground hidden lg:table-cell">LLM</TableHead>
-                        <TableHead className="text-muted-foreground hidden sm:table-cell">Permissions</TableHead>
-                        <TableHead className="text-muted-foreground hidden xl:table-cell">Rate Limit</TableHead>
-                        <TableHead className="text-muted-foreground hidden xl:table-cell">Requests</TableHead>
-                        <TableHead className="text-muted-foreground hidden sm:table-cell">Last Used</TableHead>
+                        <TableHead className="text-muted-foreground">Fine-tuned Model</TableHead>
+                        <TableHead className="text-muted-foreground">LLM</TableHead>
+                        <TableHead className="text-muted-foreground">Permissions</TableHead>
+                        <TableHead className="text-muted-foreground">Rate Limit</TableHead>
+                        <TableHead className="text-muted-foreground">Requests</TableHead>
+                        <TableHead className="text-muted-foreground">Last Used</TableHead>
                         <TableHead className="text-muted-foreground text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -431,57 +410,31 @@ export default function ApiKeysPage() {
                               {apiKey.key.slice(0, 12)}...{apiKey.key.slice(-4)}
                             </code>
                           </TableCell>
-                          <TableCell className="hidden md:table-cell">
+                          <TableCell>
                             {apiKey.finetuned_model ? (
                               <div className="flex items-center gap-1">
                                 <Brain className="h-3 w-3 text-primary" />
                                 <span className="text-xs">{getModelName(apiKey.finetuned_model)}</span>
                               </div>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">-</span>
-                            )}
+                            ) : <span className="text-xs text-muted-foreground">-</span>}
                           </TableCell>
-                          <TableCell className="hidden lg:table-cell">
-                            <span className="text-xs">{getLLMDisplayName(apiKey.llm_model)}</span>
-                          </TableCell>
-                          <TableCell className="hidden sm:table-cell">
+                          <TableCell><span className="text-xs">{getLLMDisplayName(apiKey.llm_model)}</span></TableCell>
+                          <TableCell>
                             <div className="flex flex-wrap gap-1">
                               {apiKey.permissions.map((perm) => (
-                                <Badge key={perm} variant="outline" className="text-[10px] px-1.5 py-0">
-                                  {perm}
-                                </Badge>
+                                <Badge key={perm} variant="outline" className="text-[10px] px-1.5 py-0">{perm}</Badge>
                               ))}
                             </div>
                           </TableCell>
-                          <TableCell className="text-muted-foreground text-xs hidden xl:table-cell">
-                            {apiKey.rate_limit}
-                          </TableCell>
-                          <TableCell className="text-muted-foreground text-xs hidden xl:table-cell">
-                            {apiKey.requests.toLocaleString()}
-                          </TableCell>
-                          <TableCell className="text-muted-foreground text-xs hidden sm:table-cell">
-                            {formatLastUsed(apiKey.last_used)}
-                          </TableCell>
+                          <TableCell className="text-muted-foreground text-xs">{apiKey.rate_limit}</TableCell>
+                          <TableCell className="text-muted-foreground text-xs">{apiKey.requests.toLocaleString()}</TableCell>
+                          <TableCell className="text-muted-foreground text-xs">{formatLastUsed(apiKey.last_used)}</TableCell>
                           <TableCell className="text-right">
                             <div className="flex items-center justify-end gap-1">
-                              <Button 
-                                variant="ghost" 
-                                size="icon" 
-                                className="h-8 w-8"
-                                onClick={(e) => { e.stopPropagation(); copyKey(apiKey.id, apiKey.key) }}
-                              >
-                                {copiedKey === apiKey.id ? (
-                                  <Check className="h-4 w-4 text-green-500" />
-                                ) : (
-                                  <Copy className="h-4 w-4" />
-                                )}
+                              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); copyKey(apiKey.id, apiKey.key) }}>
+                                {copiedKey === apiKey.id ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
                               </Button>
-                              <Button 
-                                variant="ghost" 
-                                size="icon" 
-                                className="h-8 w-8 text-destructive hover:text-destructive"
-                                onClick={(e) => { e.stopPropagation(); deleteKey(apiKey.id, apiKey.name) }}
-                              >
+                              <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={(e) => { e.stopPropagation(); deleteKey(apiKey.id, apiKey.name) }}>
                                 <Trash2 className="h-4 w-4" />
                               </Button>
                             </div>
@@ -496,68 +449,50 @@ export default function ApiKeysPage() {
           </Card>
 
           <Card className="bg-card border-border">
-            <CardHeader className="p-4 sm:p-6">
-              <CardTitle className="text-foreground text-base sm:text-lg">Quick Start</CardTitle>
-              <CardDescription className="text-xs sm:text-sm">
-                {selectedKeyId 
-                  ? `Code example for "${existingKeys.find(k => k.id === selectedKeyId)?.name}"`
-                  : "Click on an API key above to see its code example"
-                }
+            <CardHeader className="p-6">
+              <CardTitle className="text-foreground text-lg">Quick Start</CardTitle>
+              <CardDescription>
+                {selectedKeyId ? `Code example for "${existingKeys.find(k => k.id === selectedKeyId)?.name}"` : "Click on an API key above to see its code example"}
               </CardDescription>
             </CardHeader>
-            <CardContent className="p-4 sm:p-6 pt-0 sm:pt-0">
+            <CardContent className="p-6 pt-0">
               {!selectedKey ? (
                 <p className="text-muted-foreground text-sm">Create an API key to see example code</p>
               ) : (
                 <div className="space-y-4">
-                  <div className="rounded-lg bg-muted border border-border p-3 sm:p-4 overflow-x-auto">
+                  <div className="rounded-lg bg-muted border border-border p-4 overflow-x-auto">
                     <div className="flex items-center justify-between mb-2">
-                      <p className="text-[10px] sm:text-xs text-muted-foreground">Chat with LLM + Fine-tuned Model</p>
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
-                        className="h-6 px-2"
-                        onClick={() => {
-                          const cmd = `curl -X POST https://api.schemalabs.ai/v1/chat \\\n  -H "Authorization: Bearer ${displayKey}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"message": "Explain the prediction"}'`
-                          navigator.clipboard.writeText(cmd)
-                          toast.success("Copied!", { description: "cURL command copied to clipboard." })
-                        }}
-                      >
+                      <p className="text-xs text-muted-foreground">Chat with LLM + Fine-tuned Model</p>
+                      <Button variant="ghost" size="sm" className="h-6 px-2" onClick={() => {
+                        navigator.clipboard.writeText(`curl -X POST https://api.schemalabs.ai/v1/chat \\\n  -H "Authorization: Bearer ${displayKey}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"message": "Explain the prediction"}'`)
+                        toast.success("Copied!", { description: "cURL command copied to clipboard." })
+                      }}>
                         <Copy className="h-3 w-3" />
                       </Button>
                     </div>
-                    <pre className="text-xs sm:text-sm font-mono text-foreground whitespace-pre-wrap">{`curl -X POST https://api.schemalabs.ai/v1/chat \\
+                    <pre className="text-sm font-mono text-foreground whitespace-pre-wrap">{`curl -X POST https://api.schemalabs.ai/v1/chat \\
   -H "Authorization: Bearer ${displayKey}" \\
   -H "Content-Type: application/json" \\
   -d '{"message": "Explain the prediction"}'`}</pre>
                   </div>
-                  <div className="rounded-lg bg-muted border border-border p-3 sm:p-4 overflow-x-auto">
+                  <div className="rounded-lg bg-muted border border-border p-4 overflow-x-auto">
                     <div className="flex items-center justify-between mb-2">
-                      <p className="text-[10px] sm:text-xs text-muted-foreground">Prediction Only (No LLM)</p>
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
-                        className="h-6 px-2"
-                        onClick={() => {
-                          const cmd = `curl -X POST https://api.schemalabs.ai/v1/predict \\\n  -H "Authorization: Bearer ${displayKey}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"data": {"feature1": 0.5, "feature2": 1.2}}'`
-                          navigator.clipboard.writeText(cmd)
-                          toast.success("Copied!", { description: "cURL command copied to clipboard." })
-                        }}
-                      >
+                      <p className="text-xs text-muted-foreground">Prediction Only (No LLM)</p>
+                      <Button variant="ghost" size="sm" className="h-6 px-2" onClick={() => {
+                        navigator.clipboard.writeText(`curl -X POST https://api.schemalabs.ai/v1/predict \\\n  -H "Authorization: Bearer ${displayKey}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"data": {"feature1": 0.5, "feature2": 1.2}}'`)
+                        toast.success("Copied!", { description: "cURL command copied to clipboard." })
+                      }}>
                         <Copy className="h-3 w-3" />
                       </Button>
                     </div>
-                    <pre className="text-xs sm:text-sm font-mono text-foreground whitespace-pre-wrap">{`curl -X POST https://api.schemalabs.ai/v1/predict \\
+                    <pre className="text-sm font-mono text-foreground whitespace-pre-wrap">{`curl -X POST https://api.schemalabs.ai/v1/predict \\
   -H "Authorization: Bearer ${displayKey}" \\
   -H "Content-Type: application/json" \\
   -d '{"data": {"feature1": 0.5, "feature2": 1.2}}'`}</pre>
                   </div>
                   {selectedKey.finetuned_model && (
                     <div className="flex items-center gap-4 text-xs text-muted-foreground pt-2 border-t border-border">
-                      <span className="flex items-center gap-1">
-                        <Brain className="h-3 w-3" />
-                        Fine-tuned: {getModelName(selectedKey.finetuned_model)}
-                      </span>
+                      <span className="flex items-center gap-1"><Brain className="h-3 w-3" />Fine-tuned: {getModelName(selectedKey.finetuned_model)}</span>
                       <span>|</span>
                       <span>LLM: {getLLMDisplayName(selectedKey.llm_model)}</span>
                       <span>|</span>
@@ -569,7 +504,7 @@ export default function ApiKeysPage() {
             </CardContent>
           </Card>
         </div>
-      </Sidebar>
-    </div>
+      </div>
+    </Sidebar>
   )
 }

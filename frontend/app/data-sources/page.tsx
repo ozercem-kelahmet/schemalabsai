@@ -128,6 +128,8 @@ const apiConnections = [
 export default function DataSourcesPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [connectedSources, setConnectedSources] = useState<DataSource[]>([])
+  const [searchResults, setSearchResults] = useState<DataSource[]>([])
+  const [isSearching, setIsSearching] = useState(false)
   const [folders, setFolders] = useState<FolderType[]>([])
   const [newFolderName, setNewFolderName] = useState("")
   const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false)
@@ -608,8 +610,56 @@ export default function DataSourcesPage() {
     setApiAuthToken("")
   }
 
-  const filteredSources = (sources: DataSource[]) =>
-    sources.filter((s) => s.name.toLowerCase().includes(searchQuery.toLowerCase()))
+
+  // Elasticsearch search
+  const searchWithElastic = async (query: string) => {
+    if (!query.trim()) {
+      setSearchResults([])
+      return
+    }
+    setIsSearching(true)
+    try {
+      const res = await fetch("/api/search", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query, index: "data_sources", size: 50 })
+      })
+      if (res.ok) {
+        const data = await res.json()
+        const mapped = data.results.map((r: any, idx: number) => ({
+          id: idx + 2000,
+          name: r.name,
+          type: r.type,
+          size: r.size,
+          lastSync: "Just now",
+          uploadedAt: r.metadata?.created_at || new Date().toLocaleString(),
+          status: "active",
+          folderId: r.metadata?.folder_id || null,
+          fileId: r.id,
+          trained: false
+        }))
+        setSearchResults(mapped)
+      }
+    } catch (e) {
+      console.error("Search error:", e)
+    }
+    setIsSearching(false)
+  }
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (searchQuery) searchWithElastic(searchQuery)
+      else setSearchResults([])
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [searchQuery])
+  const filteredSources = (sources: DataSource[]) => {
+    if (searchQuery && searchResults.length > 0) {
+      return searchResults.filter((s) => sources.some((src) => src.fileId === s.fileId))
+    }
+    return sources.filter((s) => s.name.toLowerCase().includes(searchQuery.toLowerCase()))
+  }
 
   const rootSources = connectedSources.filter((s) => s.folderId === null)
 
@@ -729,9 +779,9 @@ export default function DataSourcesPage() {
   )
 
   return (
-    <div className="flex min-h-screen bg-background">
-      <Sidebar>
-        <div className="p-6 pt-12 space-y-6 w-full">
+    <Sidebar>
+      <div className="flex-1 overflow-auto bg-background">
+        <div className="p-8">
           <Card className="bg-card border-border">
             <CardHeader className="p-6">
               <div className="flex items-center justify-between">
@@ -1290,7 +1340,7 @@ export default function DataSourcesPage() {
             </DialogContent>
           </Dialog>
         </div>
-      </Sidebar>
-    </div>
+      </div>
+    </Sidebar>
   )
 }
