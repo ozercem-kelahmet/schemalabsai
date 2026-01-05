@@ -27,7 +27,7 @@ if env_path.exists():
                 os.environ[key] = value
 
 MODEL_PATH = os.getenv('MODEL_PATH', '../checkpoints/model_12sector.pt')
-SERVER_PORT = int(os.getenv('SERVER_PORT', '6000'))
+SERVER_PORT = 6000
 
 print("=" * 60)
 print("SCHEMALABS AI - Loading model...")
