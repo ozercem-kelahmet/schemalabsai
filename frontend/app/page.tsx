@@ -1,7 +1,7 @@
 "use client"
 
 import { Sidebar } from "@/components/sidebar"
-import { QuickActions, TerminalQuickStart } from "@/components/dashboard/quick-actions"
+import { QuickActions } from "@/components/dashboard/quick-actions"
 
 export default function DashboardPage() {
   return (
@@ -17,11 +17,6 @@ export default function DashboardPage() {
           </div>
 
           <QuickActions />
-
-          <div className="space-y-4">
-            <h2 className="text-base sm:text-lg font-semibold text-foreground">Quick Start</h2>
-            <TerminalQuickStart />
-          </div>
         </div>
       </Sidebar>
     </div>
