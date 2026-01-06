@@ -13,6 +13,19 @@ import (
 	"github.com/google/uuid"
 )
 
+
+// sanitizeFilename - Path traversal önlemek için filename sanitize et
+func sanitizeFilename(name string) string {
+	// Path separator ve tehlikeli karakterleri kaldır
+	name = filepath.Base(name)
+	name = strings.ReplaceAll(name, "..", "")
+	name = strings.ReplaceAll(name, "/", "")
+	name = strings.ReplaceAll(name, "\\", "")
+	if name == "" || name == "." {
+		return "unnamed_file"
+	}
+	return name
+}
 func getEnvInt(key string, defaultVal int64) int64 {
 	if val := os.Getenv(key); val != "" {
 		var v int64
@@ -129,7 +142,7 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 		finalFilename = fmt.Sprintf("%s_%s%s", baseName, dateStr, ext)
 	}
 
-	destFilename := fileID + "_" + finalFilename
+	destFilename := fileID + "_" + sanitizeFilename(finalFilename)
 	destPath := filepath.Join(uploadDir, destFilename)
 
 	dest, err := os.Create(destPath)
@@ -264,7 +277,7 @@ func DeleteFileHandler(w http.ResponseWriter, r *http.Request) {
 		DB.Where("source_file_id = ? AND user_id = ?", fileID, userID).Delete(&FineTunedModel{})
 	}
 
-	pattern := "./uploads/" + fileID + "_*"
+	pattern := "./uploads/" + sanitizeFilename(fileID) + "_*"
 	matches, _ := filepath.Glob(pattern)
 	for _, match := range matches {
 		os.Remove(match)

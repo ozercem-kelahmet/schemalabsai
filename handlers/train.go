@@ -15,6 +15,20 @@ import (
 	"github.com/google/uuid"
 )
 
+// sanitizeFileID - Path traversal önlemek için file ID sanitize et
+func sanitizeFileID(id string) string {
+	cleaned := ""
+	for _, c := range id {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' {
+			cleaned += string(c)
+		}
+	}
+	if cleaned == "" {
+		return "invalid"
+	}
+	return cleaned
+}
+
 type TrainRequest struct {
 	FileID       string `json:"file_id"`
 	Filename     string `json:"filename"`
@@ -53,7 +67,7 @@ func TrainHandler(w http.ResponseWriter, r *http.Request) {
 		req.BatchSize = 64
 	}
 
-	pattern := "./uploads/" + req.FileID + "_*"
+	pattern := "./uploads/" + sanitizeFileID(req.FileID) + "_*"
 	matches, err := filepath.Glob(pattern)
 
 	if err != nil || len(matches) == 0 {

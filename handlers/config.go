@@ -42,7 +42,7 @@ func GetDatabaseURL() string {
 	if dsn := os.Getenv("DATABASE_URL"); dsn != "" {
 		return dsn
 	}
-	return "postgresql://schemalabs:SchemaLabs2024!@localhost:5432/schemalabs"
+	return ""
 }
 
 // GetRedisURL returns Redis connection string

@@ -559,11 +559,11 @@ func AcceptInviteHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Update member status
 	now := time.Now()
-	DB.Model(&OrganizationMember{}).Where("organization_id = ? AND email = ?", invite.OrganizationID, invite.Email).Updates(map[string]interface{}{
-		"user_id":   userID,
-		"status":    "active",
-		"joined_at": now,
-	})
+DB.Model(&OrganizationMember{}).Where("organization_id = ? AND email = ?", invite.OrganizationID, invite.Email).Updates(map[string]interface{}{
+	"user_id":   userID,
+	"status":    "active",
+	"joined_at": now,
+})
 
 	// Delete invite
 	DB.Delete(&invite)

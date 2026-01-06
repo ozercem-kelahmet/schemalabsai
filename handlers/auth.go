@@ -35,6 +35,21 @@ import (
 	"gorm.io/gorm/logger"
 )
 
+// sanitizeTableName - SQL injection önlemek için table name validate et
+func sanitizeTableName(name string) string {
+	// Sadece alphanumeric ve underscore izin ver
+	cleaned := ""
+	for _, c := range name {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' {
+			cleaned += string(c)
+		}
+	}
+	if cleaned == "" {
+		return "invalid_table"
+	}
+	return cleaned
+}
+
 var DB *gorm.DB
 var rdb *redis.Client
 var ctx = context.Background()
@@ -1029,7 +1044,7 @@ func ExportTableHandler(w http.ResponseWriter, r *http.Request) {
 		sqlDB, _ = tempDB.DB()
 		defer sqlDB.Close()
 
-		query := fmt.Sprintf("SELECT * FROM %s LIMIT %d", input.TableName, input.Limit)
+		query := fmt.Sprintf("SELECT * FROM %s LIMIT %d", sanitizeTableName(input.TableName), input.Limit)
 		rows, err = sqlDB.Query(query)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1047,7 +1062,7 @@ func ExportTableHandler(w http.ResponseWriter, r *http.Request) {
 		sqlDB, _ = tempDB.DB()
 		defer sqlDB.Close()
 
-		query := fmt.Sprintf("SELECT * FROM %s LIMIT %d", input.TableName, input.Limit)
+		query := fmt.Sprintf("SELECT * FROM %s LIMIT %d", sanitizeTableName(input.TableName), input.Limit)
 		rows, err = sqlDB.Query(query)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1070,7 +1085,7 @@ func ExportTableHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		sqlDB = sfExpDB
 		defer sqlDB.Close()
-		query := fmt.Sprintf("SELECT * FROM %s LIMIT %d", input.TableName, input.Limit)
+		query := fmt.Sprintf("SELECT * FROM %s LIMIT %d", sanitizeTableName(input.TableName), input.Limit)
 		rows, err = sqlDB.Query(query)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1090,7 +1105,7 @@ func ExportTableHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		defer mongoClient.Disconnect(context.Background())
 
-		collection := mongoClient.Database(conn.Database).Collection(input.TableName)
+		collection := mongoClient.Database(conn.Database).Collection(sanitizeTableName(input.TableName))
 		cursor, err := collection.Find(context.Background(), map[string]interface{}{}, options.Find().SetLimit(int64(input.Limit)))
 		if err != nil {
 			http.Error(w, "Query failed: "+err.Error(), http.StatusInternalServerError)
@@ -1105,7 +1120,7 @@ func ExportTableHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		fileID := generateSessionID()[:16]
-		filename := fmt.Sprintf("%s_%s.csv", conn.Database, input.TableName)
+		filename := fmt.Sprintf("%s_%s.csv", sanitizeFilename(conn.Database), sanitizeTableName(input.TableName))
 		filepath := fmt.Sprintf("./uploads/%s_%s", fileID, filename)
 		file, _ := os.Create(filepath)
 		defer file.Close()
@@ -1159,7 +1174,7 @@ func ExportTableHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Create CSV file
 	fileID := generateSessionID()[:16]
-	filename := fmt.Sprintf("%s_%s.csv", conn.Database, input.TableName)
+	filename := fmt.Sprintf("%s_%s.csv", sanitizeFilename(conn.Database), sanitizeTableName(input.TableName))
 	filepath := fmt.Sprintf("./uploads/%s_%s", fileID, filename)
 
 	file, err := os.Create(filepath)
@@ -2353,7 +2368,7 @@ func UploadAvatarHandler(w http.ResponseWriter, r *http.Request) {
 		ext = ".webp"
 	}
 
-	filename := fmt.Sprintf("%s%s", userID, ext)
+	filename := fmt.Sprintf("%s%s", sanitizeFilename(userID), ext)
 	filepath := fmt.Sprintf("%s/%s", avatarDir, filename)
 
 	dst, err := os.Create(filepath)

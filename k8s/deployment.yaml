@@ -54,6 +54,6 @@ metadata:
   name: schemalabsai-secrets
 type: Opaque
 stringData:
-  DATABASE_URL: "postgresql://schemalabs:SchemaLabs2024!@34.9.180.204:5432/schemalabs"
+  DATABASE_URL: "${DATABASE_URL}"
   REDIS_URL: "34.9.180.204:6379"
-  REDIS_PASSWORD: "SchemaLabs2024!"
+  REDIS_PASSWORD: "${REDIS_PASSWORD}"
