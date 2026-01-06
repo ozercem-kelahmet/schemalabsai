@@ -529,22 +529,25 @@ func AcceptInviteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := r.Header.Get("X-User-ID")
-	// Validate userID to prevent SQL injection
-	for _, c := range userID {
-		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
-			http.Error(w, "Invalid user ID", http.StatusBadRequest)
-			return
+	rawUserID := r.Header.Get("X-User-ID")
+	if rawUserID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	// Sanitize userID - only allow alphanumeric, dash and underscore
+	var sanitizedBuilder strings.Builder
+	for _, c := range rawUserID {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' {
+			sanitizedBuilder.WriteRune(c)
 		}
 	}
-	if userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	safeUserID := sanitizedBuilder.String()
+	if safeUserID == "" || safeUserID != rawUserID {
+		http.Error(w, "Invalid user ID", http.StatusBadRequest)
 		return
 	}
 
 
-	// safeUserID is validated and safe to use in DB queries
-	safeUserID := userID
 	token := strings.TrimPrefix(r.URL.Path, "/api/organizations/invite/")
 
 	var invite OrganizationInvite
@@ -560,7 +563,7 @@ func AcceptInviteHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Get user email
 	var user User
-	DB.Where("id = ?", userID).First(&user)
+	DB.Where("id = ?", safeUserID).First(&user)
 
 	if user.Email != invite.Email {
 		http.Error(w, "This invite is for a different email address", http.StatusForbidden)
