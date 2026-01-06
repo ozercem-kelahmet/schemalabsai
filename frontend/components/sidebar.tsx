@@ -207,7 +207,7 @@ export function Sidebar({ children }: SidebarProps) {
             <DropdownMenuContent align="start" side="top" className="w-52">
               <DropdownMenuItem asChild>
                 <Link href="/account" className="cursor-pointer">
-                  <Building2 className="h-4 w-4 mr-2" />
+                  <Settings className="h-4 w-4 mr-2" />
                   Account
                 </Link>
               </DropdownMenuItem>
@@ -227,6 +227,12 @@ export function Sidebar({ children }: SidebarProps) {
                 <Link href="/usage" className="cursor-pointer">
                   <BarChart3 className="h-4 w-4 mr-2" />
                   Usage
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <Link href="/upgrade" className="cursor-pointer">
+                  <Globe className="h-4 w-4 mr-2" />
+                  Upgrade
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuItem onClick={logout} className="text-destructive cursor-pointer">
