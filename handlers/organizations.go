@@ -530,6 +530,13 @@ func AcceptInviteHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userID := r.Header.Get("X-User-ID")
+	// Validate userID to prevent SQL injection
+	for _, c := range userID {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
+			http.Error(w, "Invalid user ID", http.StatusBadRequest)
+			return
+		}
+	}
 	if userID == "" {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
