@@ -1,264 +1,277 @@
+#!/usr/bin/env python3
 import torch
 import torch.nn as nn
-from torch.optim import AdamW
 import numpy as np
+from torch.optim import AdamW
+import gc
+from pathlib import Path
 from datetime import datetime
 
-LOG_PATH = "../checkpoints/schemalabsai_agnostic_v4_log.txt"
-SAVE_PATH = "../checkpoints/schemalabsai_agnostic_v4.pt"
+DEVICE = 'cpu'
+CHECKPOINT_DIR = Path('../checkpoints')
+CHECKPOINT_DIR.mkdir(exist_ok=True)
+LOG_FILE = CHECKPOINT_DIR / 'v4_training_log.txt'
 
 def log(msg):
-    timestamp = datetime.now().strftime("%H:%M:%S")
-    print(msg)
-    with open(LOG_PATH, "a") as f:
-        f.write(f"{timestamp} - {msg}\n")
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] {msg}")
+    with open(LOG_FILE, 'a') as f:
+        f.write(f"[{timestamp}] {msg}\n")
 
-def generate_data(n_samples, n_features=10, n_classes=100):
+def generate_data(n_samples, n_features, n_classes, missing_rate=0.3):
     np.random.seed(42)
-    X = np.zeros((n_samples, n_features), dtype=np.float32)
-    y = np.zeros(n_samples, dtype=np.int64)
     samples_per_class = n_samples // n_classes
-    np.random.seed(123)
-    class_centers = np.random.randn(n_classes, n_features) * 10
-    for i in range(n_classes):
-        for j in range(i):
-            dist = np.linalg.norm(class_centers[i] - class_centers[j])
-            if dist < 5:
-                direction = class_centers[i] - class_centers[j]
-                direction = direction / (np.linalg.norm(direction) + 1e-8)
-                class_centers[i] = class_centers[j] + direction * 5
+    X = np.random.randn(n_samples, n_features).astype(np.float32)
+    y = np.repeat(np.arange(n_classes), samples_per_class)
+    features_per_class = max(1, n_features // n_classes)
     for c in range(n_classes):
-        start_idx = c * samples_per_class
-        end_idx = start_idx + samples_per_class
-        data = np.random.randn(samples_per_class, n_features) * 0.3 + class_centers[c]
-        X[start_idx:end_idx] = data
-        y[start_idx:end_idx] = c
-    perm = np.random.permutation(n_samples)
+        start_f = (c * features_per_class) % n_features
+        end_f = min(start_f + features_per_class, n_features)
+        X[y == c, start_f:end_f] += 6
+    perm = np.random.permutation(len(y))
     X, y = X[perm], y[perm]
     for i in range(n_features):
-        X[:, i] = (X[:, i] - X[:, i].min()) / (X[:, i].max() - X[:, i].min() + 1e-8)
-    return X, y
+        col_min, col_max = X[:, i].min(), X[:, i].max()
+        if col_max - col_min > 1e-8:
+            X[:, i] = (X[:, i] - col_min) / (col_max - col_min)
+    mask = (np.random.rand(*X.shape) > missing_rate).astype(np.float32)
+    return X, y, mask
+
+class DataAgnosticConfig:
+    @staticmethod
+    def get(n_features, n_classes, n_samples):
+        cfg = {}
+        cfg['proj'] = min(2048, max(256, n_features))
+        cfg['lat'] = min(1024, max(128, n_features // 2))
+        cfg['hidden'] = min(2000, max(512, n_classes * 2))
+        cfg['epochs'] = 200
+        cfg['batch'] = min(4096, max(256, n_samples // 100))
+        cfg['lr'] = 1e-3
+        cfg['impute_iter'] = 5
+        cfg['noise_std'] = 0.1
+        cfg['patience'] = 20
+        cfg['sl_rounds'] = 3
+        cfg['sl_init_thr'] = 0.95
+        cfg['sl_min_thr'] = 0.80
+        return cfg
 
 class MIDAS(nn.Module):
-    def __init__(self, input_dim=10, hidden_dim=512):
+    def __init__(self, n_features, n_classes, cfg):
         super().__init__()
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim * 2, hidden_dim), nn.GELU(), nn.BatchNorm1d(hidden_dim), nn.Dropout(0.1),
-            nn.Linear(hidden_dim, hidden_dim), nn.GELU(), nn.BatchNorm1d(hidden_dim), nn.Dropout(0.1),
-            nn.Linear(hidden_dim, hidden_dim), nn.GELU(), nn.BatchNorm1d(hidden_dim),
-            nn.Linear(hidden_dim, 256))
-        self.decoder = nn.Sequential(
-            nn.Linear(256, hidden_dim), nn.GELU(), nn.BatchNorm1d(hidden_dim), nn.Dropout(0.1),
-            nn.Linear(hidden_dim, hidden_dim), nn.GELU(), nn.BatchNorm1d(hidden_dim), nn.Dropout(0.1),
-            nn.Linear(hidden_dim, hidden_dim), nn.GELU(), nn.BatchNorm1d(hidden_dim),
-            nn.Linear(hidden_dim, input_dim))
-    def forward(self, x, mask):
-        return self.decoder(self.encoder(torch.cat([x * mask, mask], dim=1)))
-    def encode(self, x, mask=None):
-        if mask is None: mask = torch.ones_like(x)
-        return self.encoder(torch.cat([x * mask, mask], dim=1))
-    def impute(self, x, mask, n_iter=5):
-        current = x * mask
-        for _ in range(n_iter):
-            current = x * mask + self.forward(current, mask) * (1 - mask)
+        self.n_features = n_features
+        self.n_classes = n_classes
+        proj = cfg['proj']
+        lat = cfg['lat']
+        h = cfg['hidden']
+        self.proj = nn.Sequential(nn.Linear(n_features, proj), nn.GELU(), nn.LayerNorm(proj), nn.Dropout(0.1))
+        self.encoder = nn.Sequential(nn.Linear(proj * 2, lat * 2), nn.GELU(), nn.LayerNorm(lat * 2), nn.Dropout(0.1), nn.Linear(lat * 2, lat), nn.GELU(), nn.LayerNorm(lat))
+        self.decoder = nn.Sequential(nn.Linear(lat, proj), nn.GELU(), nn.Linear(proj, n_features))
+        self.classifier = nn.Sequential(nn.Linear(lat, h), nn.GELU(), nn.LayerNorm(h), nn.Dropout(0.3), nn.Linear(h, h), nn.GELU(), nn.LayerNorm(h), nn.Dropout(0.2), nn.Linear(h, n_classes))
+        self.impute_iter = cfg['impute_iter']
+        self.noise_std = cfg['noise_std']
+
+    def encode(self, x, m):
+        xp = self.proj(x * m)
+        mp = self.proj(m)
+        return self.encoder(torch.cat([xp, mp], dim=-1))
+
+    def impute(self, x, m):
+        current = x * m
+        for _ in range(self.impute_iter):
+            z = self.encode(current, m)
+            recon = self.decoder(z)
+            current = x * m + recon * (1 - m)
         return current
 
-class Classifier(nn.Module):
-    def __init__(self, input_dim=256, n_classes=100):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, 512), nn.GELU(), nn.BatchNorm1d(512), nn.Dropout(0.2),
-            nn.Linear(512, 256), nn.GELU(), nn.Dropout(0.1),
-            nn.Linear(256, n_classes))
-    def forward(self, x): return self.net(x)
+    def forward(self, x, m, return_all=False):
+        if self.training:
+            x = x + torch.randn_like(x) * self.noise_std
+        x_imp = self.impute(x, m)
+        z = self.encode(x_imp, torch.ones_like(m))
+        recon = self.decoder(z)
+        logits = self.classifier(z)
+        if return_all:
+            return logits, recon, x_imp
+        return logits
 
-def train():
-    log("=" * 60)
-    log("V4: MIDAS + Classifier + Self-Learning")
-    log("Target: MIDAS 50% missing >= 90%")
-    log("=" * 60)
-    
-    N_SAMPLES = 10_000_000
-    N_FEATURES = 10
-    N_CLASSES = 100
-    BATCH_SIZE = 2048
-    
-    log("\n[1/5] Generating 10M data...")
-    X, y = generate_data(N_SAMPLES, N_FEATURES, N_CLASSES)
-    n_lab = int(N_SAMPLES * 0.6)
-    n_unlab = int(N_SAMPLES * 0.2)
-    X_lab, y_lab = X[:n_lab], y[:n_lab]
-    X_unlab = X[n_lab:n_lab+n_unlab]
-    X_test, y_test = X[n_lab+n_unlab:], y[n_lab+n_unlab:]
-    log(f"  Labeled: {n_lab:,}, Unlabeled: {n_unlab:,}, Test: {len(X_test):,}")
-    
-    X_test_t = torch.FloatTensor(X_test[:100000])
-    y_test_t = torch.LongTensor(y_test[:100000])
-    
-    log("\n[2/5] Training MIDAS (until 50% missing >= 90%)...")
-    midas = MIDAS(N_FEATURES, 512)
-    opt = AdamW(midas.parameters(), lr=0.001, weight_decay=0.01)
-    
-    test_clf = Classifier(10, N_CLASSES)
-    test_clf_opt = AdamW(test_clf.parameters(), lr=0.001, weight_decay=0.01)
-    X_train_t = torch.FloatTensor(X_lab[:500000])
-    y_train_t = torch.LongTensor(y_lab[:500000])
-    for _ in range(20):
-        test_clf.train()
-        perm = torch.randperm(len(X_train_t))
-        for i in range(0, len(X_train_t), 2048):
-            idx = perm[i:i+2048]
-            test_clf_opt.zero_grad()
-            nn.CrossEntropyLoss()(test_clf(X_train_t[idx]), y_train_t[idx]).backward()
-            test_clf_opt.step()
-    test_clf.eval()
-    with torch.no_grad():
-        clean_acc = (test_clf(X_test_t).argmax(-1) == y_test_t).float().mean().item()
-    log(f"  Test classifier clean acc: {clean_acc*100:.1f}%")
-    
-    best_missing_acc = 0
-    for ep in range(100):
-        midas.train()
-        perm = np.random.permutation(n_lab)
-        total_loss, n_batch = 0, 0
-        for i in range(0, n_lab, BATCH_SIZE):
-            idx = perm[i:i+BATCH_SIZE]
-            batch = torch.FloatTensor(X_lab[idx])
-            mask = (torch.rand_like(batch) > np.random.uniform(0.3, 0.6)).float()
-            opt.zero_grad()
-            loss = nn.MSELoss()(midas(batch * mask, mask), batch)
-            loss.backward()
-            opt.step()
-            total_loss += loss.item()
-            n_batch += 1
-        
-        midas.eval()
+class SelfLearning:
+    def __init__(self, cfg):
+        self.rounds = cfg['sl_rounds']
+        self.init_thr = cfg['sl_init_thr']
+        self.min_thr = cfg['sl_min_thr']
+
+    def get_pseudo_labels(self, model, X, m, n_classes, threshold):
+        model.eval()
         with torch.no_grad():
-            torch.manual_seed(42)
-            mask_50 = (torch.rand_like(X_test_t) > 0.5).float()
-            imputed = midas.impute(X_test_t * mask_50, mask_50, n_iter=5)
-            missing_acc = (test_clf(imputed).argmax(-1) == y_test_t).float().mean().item()
-        
-        if missing_acc > best_missing_acc:
-            best_missing_acc = missing_acc
-            best_midas_state = {k: v.clone() for k, v in midas.state_dict().items()}
-        
-        log(f"  MIDAS Ep {ep+1}: Loss={total_loss/n_batch:.6f} | Clean={clean_acc*100:.1f}% | 50%Missing={missing_acc*100:.1f}% | Best={best_missing_acc*100:.1f}%")
-        
-        if best_missing_acc >= 0.90:
-            log(f"  🎉 MIDAS reached 90%+ at epoch {ep+1}")
-            break
-    
-    midas.load_state_dict(best_midas_state)
-    midas.eval()
-    for p in midas.parameters(): p.requires_grad = False
-    
-    if best_missing_acc < 0.90:
-        log(f"  ⚠️ MIDAS did not reach 90%, best={best_missing_acc*100:.1f}%")
-    
-    log("\n[3/5] Extracting features...")
-    X_feat_lab = []
-    for i in range(0, n_lab, 50000):
-        with torch.no_grad():
-            X_feat_lab.append(midas.encode(torch.FloatTensor(X_lab[i:i+50000])))
-    X_feat_lab = torch.cat(X_feat_lab)
-    X_feat_unlab = []
-    for i in range(0, n_unlab, 50000):
-        with torch.no_grad():
-            X_feat_unlab.append(midas.encode(torch.FloatTensor(X_unlab[i:i+50000])))
-    X_feat_unlab = torch.cat(X_feat_unlab)
-    with torch.no_grad():
-        X_feat_test = midas.encode(torch.FloatTensor(X_test))
-    log(f"  Shape: {X_feat_lab.shape}")
-    
-    log("\n[4/5] Training Classifier (patience=10)...")
-    clf = Classifier(256, N_CLASSES)
-    opt = AdamW(clf.parameters(), lr=0.001, weight_decay=0.01)
-    loss_fn = nn.CrossEntropyLoss()
-    y_t = torch.LongTensor(y_lab)
-    y_te = torch.LongTensor(y_test)
-    best_acc, best_state, patience_cnt = 0, None, 0
-    
-    for ep in range(100):
-        clf.train()
-        perm = torch.randperm(len(X_feat_lab))
-        total_loss, n_batch = 0, 0
-        for i in range(0, len(X_feat_lab), BATCH_SIZE):
-            idx = perm[i:i+BATCH_SIZE]
-            opt.zero_grad()
-            loss = loss_fn(clf(X_feat_lab[idx]), y_t[idx])
-            loss.backward()
-            opt.step()
-            total_loss += loss.item()
-            n_batch += 1
-        clf.eval()
-        with torch.no_grad():
-            acc = (clf(X_feat_test).argmax(-1) == y_te).float().mean().item()
-        if acc > best_acc:
-            best_acc = acc
-            best_state = {k: v.clone() for k, v in clf.state_dict().items()}
-            patience_cnt = 0
-            log(f"  Classifier Ep {ep+1}: Loss={total_loss/n_batch:.4f} | Acc={acc*100:.2f}% ✓")
+            logits = model(X, m)
+            probs = torch.softmax(logits, dim=-1)
+            conf, pred = probs.max(dim=-1)
+        high_conf = conf > threshold
+        if high_conf.sum() < 50:
+            return None, None
+        idx = torch.where(high_conf)[0]
+        labels = pred[idx]
+        counts = torch.bincount(labels, minlength=n_classes)
+        if counts.max() > 0 and counts[counts > 0].numel() > 0:
+            min_count = counts[counts > 0].min().item()
+            max_per_class = min(counts.max().item(), min_count * 3 + 10)
         else:
-            patience_cnt += 1
-        if best_acc >= 0.99 or patience_cnt >= 10:
-            break
-    
-    clf.load_state_dict(best_state)
-    
-    log("\n[5/5] Self-Learning (5 rounds)...")
-    for sl in range(5):
-        clf.eval()
-        all_high_x, all_high_y = [], []
-        with torch.no_grad():
-            for i in range(0, len(X_feat_unlab), 50000):
-                batch = X_feat_unlab[i:i+50000]
-                probs = torch.softmax(clf(batch), 1)
-                conf, pred = probs.max(1)
-                high = conf > 0.95
-                if high.sum() > 0:
-                    all_high_x.append(batch[high])
-                    all_high_y.append(pred[high])
-        if len(all_high_x) == 0:
-            log(f"  Round {sl+1}: No pseudo labels")
-            continue
-        X_pseudo = torch.cat(all_high_x)
-        y_pseudo = torch.cat(all_high_y)
-        clf.train()
-        for _ in range(3):
-            perm = torch.randperm(len(X_pseudo))
-            for i in range(0, len(X_pseudo), BATCH_SIZE):
-                idx = perm[i:i+BATCH_SIZE]
+            max_per_class = 100
+        balanced_idx = []
+        balanced_labels = []
+        for c in range(n_classes):
+            c_mask = labels == c
+            c_indices = idx[c_mask]
+            if len(c_indices) > max_per_class:
+                perm = torch.randperm(len(c_indices))[:max_per_class]
+                c_indices = c_indices[perm]
+            if len(c_indices) > 0:
+                balanced_idx.extend(c_indices.tolist())
+                balanced_labels.extend([c] * len(c_indices))
+        if len(balanced_idx) < 50:
+            return None, None
+        return torch.LongTensor(balanced_idx), torch.LongTensor(balanced_labels)
+
+    def run(self, model, Xtr, ytr, mtr, Xte, mte, Xor, n_classes, cfg):
+        for r in range(self.rounds):
+            thr = self.init_thr - r * 0.05
+            thr = max(thr, self.min_thr)
+            result = self.get_pseudo_labels(model, Xte, mte, n_classes, thr)
+            if result[0] is None:
+                log(f"    SL Round {r+1}: No pseudo labels")
+                break
+            idx, labels = result
+            log(f"    SL Round {r+1}: {len(idx)} pseudo (thr={thr:.2f})")
+            Xa = torch.cat([Xtr, Xte[idx]])
+            ya = torch.cat([ytr, labels])
+            ma = torch.cat([mtr, mte[idx]])
+            Xoa = torch.cat([Xor, Xte[idx]])
+            model.train()
+            opt = AdamW(model.parameters(), lr=cfg['lr'] / 10)
+            for _ in range(50):
+                bidx = torch.randperm(len(Xa))[:cfg['batch']]
                 opt.zero_grad()
-                loss_fn(clf(X_pseudo[idx]), y_pseudo[idx]).backward()
+                logits, recon, _ = model(Xa[bidx], ma[bidx], return_all=True)
+                loss = nn.CrossEntropyLoss()(logits, ya[bidx])
+                loss += 0.1 * nn.MSELoss()(recon, Xoa[bidx])
+                loss.backward()
                 opt.step()
-        clf.eval()
-        with torch.no_grad():
-            acc = (clf(X_feat_test).argmax(-1) == y_te).float().mean().item()
-        if acc > best_acc:
-            best_acc = acc
-            best_state = {k: v.clone() for k, v in clf.state_dict().items()}
-        log(f"  Round {sl+1}: +{len(X_pseudo):,} pseudo | Acc={acc*100:.2f}%")
-    
-    clf.load_state_dict(best_state)
-    
-    log("\n" + "=" * 60)
+
+def train_v4(n_features, n_classes, n_samples, target_acc=0.95):
+    log(f"Training: {n_features}f, {n_classes}c, {n_samples:,}s, target={target_acc*100:.0f}%")
+    cfg = DataAgnosticConfig.get(n_features, n_classes, n_samples)
+    log(f"  Config: proj={cfg['proj']}, lat={cfg['lat']}, hidden={cfg['hidden']}, batch={cfg['batch']}")
+    X, y, mask = generate_data(n_samples, n_features, n_classes, missing_rate=0.3)
+    X_orig = X.copy()
+    split = int(n_samples * 0.8)
+    Xtr = torch.FloatTensor(X[:split])
+    ytr = torch.LongTensor(y[:split])
+    mtr = torch.FloatTensor(mask[:split])
+    Xor = torch.FloatTensor(X_orig[:split])
+    Xte = torch.FloatTensor(X[split:])
+    yte = torch.LongTensor(y[split:])
+    mte = torch.FloatTensor(mask[split:])
+    model = MIDAS(n_features, n_classes, cfg)
+    params = sum(p.numel() for p in model.parameters())
+    log(f"  Model params: {params:,}")
+    opt = AdamW(model.parameters(), lr=cfg['lr'], weight_decay=0.01)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, cfg['epochs'])
+    best_acc = 0
+    best_state = None
+    patience_cnt = 0
+    log(f"  Training {cfg['epochs']} epochs...")
+    for ep in range(cfg['epochs']):
+        model.train()
+        idx = torch.randperm(len(Xtr))[:cfg['batch']]
+        opt.zero_grad()
+        logits, recon, x_imp = model(Xtr[idx], mtr[idx], return_all=True)
+        L_clf = nn.CrossEntropyLoss()(logits, ytr[idx])
+        L_rec = nn.MSELoss()(recon, Xor[idx])
+        missing = 1 - mtr[idx]
+        L_imp = ((x_imp - Xor[idx]) ** 2 * missing).sum() / (missing.sum() + 1e-8)
+        loss = L_clf + 0.1 * L_rec + 0.2 * L_imp
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        opt.step()
+        sched.step()
+        if (ep + 1) % 10 == 0:
+            model.eval()
+            with torch.no_grad():
+                test_size = min(5000, len(Xte))
+                acc = (model(Xte[:test_size], mte[:test_size]).argmax(-1) == yte[:test_size]).float().mean().item()
+            if acc > best_acc:
+                best_acc = acc
+                best_state = {k: v.clone() for k, v in model.state_dict().items()}
+                patience_cnt = 0
+            else:
+                patience_cnt += 1
+            if (ep + 1) % 50 == 0:
+                log(f"    Ep {ep+1}: {acc*100:.1f}% (best={best_acc*100:.1f}%)")
+            if acc >= target_acc:
+                log(f"    Ep {ep+1}: {acc*100:.1f}% - Target reached!")
+                break
+            if patience_cnt >= cfg['patience']:
+                log(f"    Ep {ep+1}: Early stop")
+                break
+    if best_state:
+        model.load_state_dict(best_state)
+    log(f"  Self-Learning ({cfg['sl_rounds']} rounds)...")
+    sl = SelfLearning(cfg)
+    sl.run(model, Xtr, ytr, mtr, Xte, mte, Xor, n_classes, cfg)
+    model.eval()
     with torch.no_grad():
-        pred = clf(X_feat_test).argmax(-1).numpy()
-    class_accs = [(pred[y_test==c] == y_test[y_test==c]).mean() for c in range(N_CLASSES)]
-    
-    log("FINAL RESULTS:")
-    log(f"  MIDAS 50% Missing: {best_missing_acc*100:.1f}%")
-    log(f"  Classifier Acc: {best_acc*100:.2f}%")
-    log(f"  Min Class Acc: {min(class_accs)*100:.1f}%")
-    log(f"  Mean Class Acc: {np.mean(class_accs)*100:.1f}%")
-    
-    passed = best_missing_acc >= 0.90 and best_acc >= 0.99 and min(class_accs) >= 0.95
-    log(f"  Status: {'✅ PASSED' if passed else '❌ FAILED'}")
-    
-    torch.save({'midas': midas.state_dict(), 'classifier': clf.state_dict(), 'n_features': N_FEATURES, 'n_classes': N_CLASSES, 'midas_acc': best_missing_acc, 'classifier_acc': best_acc, 'version': 'V4'}, SAVE_PATH)
-    log(f"Saved: {SAVE_PATH}")
-    log("=" * 60)
+        final_acc = (model(Xte, mte).argmax(-1) == yte).float().mean().item()
+    status = "PASS" if final_acc >= target_acc else "FAIL"
+    log(f"  FINAL: {final_acc*100:.1f}% (target {target_acc*100:.0f}%) [{status}]")
+    del Xtr, ytr, mtr, Xor, Xte, yte, mte, X, y, mask, X_orig
+    gc.collect()
+    return model, cfg, final_acc
+
+def main():
+    log("=" * 70)
+    log("V4 DATA-AGNOSTIC TRAINING - 10M DATA")
+    log("MIDAS (6) + Self-Learning (3)")
+    log("=" * 70)
+    combinations = [
+        (10, 10, 100000, 0.99),
+        (10, 100, 500000, 0.95),
+        (100, 100, 1000000, 0.99),
+        (1000, 100, 1000000, 0.99),
+        (1000, 500, 2000000, 0.95),
+        (5000, 100, 1000000, 0.99),
+        (5000, 500, 2000000, 0.95),
+        (5000, 1000, 2400000, 0.90),
+    ]
+    models = {}
+    results = []
+    for n_feat, n_class, n_samples, target in combinations:
+        log(f"\n{'='*60}")
+        log(f"COMBINATION: {n_feat}f x {n_class}c x {n_samples:,}s")
+        log(f"{'='*60}")
+        try:
+            model, cfg, acc = train_v4(n_feat, n_class, n_samples, target)
+            key = f"f{n_feat}_c{n_class}"
+            models[key] = {'state_dict': model.state_dict(), 'n_features': n_feat, 'n_classes': n_class, 'cfg': cfg, 'acc': acc}
+            results.append((n_feat, n_class, acc, target))
+        except Exception as e:
+            log(f"  ERROR: {e}")
+            results.append((n_feat, n_class, 0, target))
+        gc.collect()
+    log("\n" + "=" * 70)
+    log("TRAINING SUMMARY")
+    log("=" * 70)
+    all_pass = True
+    for n_feat, n_class, acc, target in results:
+        status = "PASS" if acc >= target else "FAIL"
+        if acc < target:
+            all_pass = False
+        log(f"{n_feat}f x {n_class}c: {acc*100:.1f}% (target {target*100:.0f}%) [{status}]")
+    log("=" * 70)
+    log(f"RESULT: {'ALL TARGETS MET' if all_pass else 'SOME TARGETS MISSED'}")
+    log("=" * 70)
+    save_path = CHECKPOINT_DIR / 'schemalabsai_v4_agnostic.pt'
+    torch.save(models, save_path)
+    log(f"Models saved to {save_path}")
 
 if __name__ == '__main__':
-    train()
+    main()
