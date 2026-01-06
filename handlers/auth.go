@@ -2159,10 +2159,7 @@ func UpdateProfileHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update user
-	result := DB.Model(&User{}).Where("id = ?", userID).Updates(map[string]interface{}{
-		"name":       req.Name,
-		"updated_at": time.Now(),
-	})
+result := DB.Model(&User{}).Where("id = ?", userID).Select("name", "updated_at").Updates(User{Name: strings.TrimSpace(req.Name), UpdatedAt: time.Now()})
 
 	if result.Error != nil {
 		http.Error(w, "Failed to update profile", http.StatusInternalServerError)
