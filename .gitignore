@@ -31,3 +31,4 @@ test_data*.csv
 main
 server
 model/finetuned_models/*.pt
+!data/scripts/

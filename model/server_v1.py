@@ -17,71 +17,9 @@ from pathlib import Path
 from torch.optim import AdamW
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler
 
-
-def smart_column_mapping(df_cols, target_col):
-    """Kullanıcı kolonlarını V1 feature_cols'a akıllı eşle"""
-    
-    v1_features = ['primary_score', 'secondary_score', 'tertiary_score', 'risk_index', 
-                   'severity_level', 'duration_factor', 'frequency_rate', 'intensity_score',
-                   'recovery_index', 'response_rate']
-    
-    semantic_map = {
-        'primary_score': ['primary', 'main', 'budget', 'spend', 'amount', 'total', 'sum', 'revenue', 'sales', 'income', 'price', 'value', 'campaign'],
-        'secondary_score': ['secondary', 'impressions', 'views', 'visits', 'traffic', 'cost', 'expense', 'quantity', 'count', 'volume'],
-        'tertiary_score': ['tertiary', 'clicks', 'actions', 'profit', 'margin', 'balance', 'sessions', 'users'],
-        'risk_index': ['risk', 'ctr', 'rate', 'ratio', 'percent', 'percentage', 'score'],
-        'severity_level': ['severity', 'cpc', 'cpp', 'cpa', 'cost_per', 'level', 'priority', 'tier'],
-        'duration_factor': ['duration', 'time', 'period', 'days', 'hours', 'frequency', 'ad_frequency'],
-        'frequency_rate': ['conversions', 'leads', 'signups', 'purchases', 'orders', 'transactions', 'sales_count'],
-        'intensity_score': ['conversion_rate', 'conv_rate', 'cr', 'intensity', 'strength', 'power', 'magnitude'],
-        'recovery_index': ['reach', 'audience', 'coverage', 'recovery', 'retention', 'return', 'roi'],
-        'response_rate': ['engagement', 'interaction', 'response', 'feedback', 'click_rate', 'open_rate', 'ctr_percent']
-    }
-    
-    numeric_cols = [c for c in df_cols if c != target_col]
-    
-    mapped = {}
-    used_cols = set()
-    
-    for v1_col in v1_features:
-        if v1_col in numeric_cols and v1_col not in used_cols:
-            mapped[v1_col] = v1_col
-            used_cols.add(v1_col)
-    
-    for v1_col in v1_features:
-        if v1_col in mapped:
-            continue
-        
-        keywords = semantic_map.get(v1_col, [])
-        for user_col in numeric_cols:
-            if user_col in used_cols:
-                continue
-            
-            user_col_lower = user_col.lower().replace('_', ' ').replace('-', ' ')
-            
-            for kw in keywords:
-                if kw in user_col_lower or user_col_lower in kw:
-                    mapped[v1_col] = user_col
-                    used_cols.add(user_col)
-                    break
-            
-            if v1_col in mapped:
-                break
-    
-    remaining_user = [c for c in numeric_cols if c not in used_cols]
-    remaining_v1 = [c for c in v1_features if c not in mapped]
-    
-    for i, v1_col in enumerate(remaining_v1):
-        if i < len(remaining_user):
-            mapped[v1_col] = remaining_user[i]
-        else:
-            mapped[v1_col] = None  # Pad with zeros
-    
-    return mapped, v1_features
-
-
 app = Flask(__name__)
 
+# ===================== MODEL CLASSES =====================
 
 class MIDAS(nn.Module):
     def __init__(self):
@@ -127,6 +65,7 @@ class SubsectorModel(nn.Module):
     def forward(self, x, sector):
         return self.net(torch.cat([x, self.emb(sector)], dim=1))
 
+# ===================== LOAD V1 MODEL =====================
 
 MODEL_PATH = os.getenv('MODEL_V1_PATH', '../checkpoints/schemalabsai_v1.pt')
 SERVER_PORT = int(os.getenv('FLASK_PORT', 6000))
@@ -141,6 +80,7 @@ if not Path(MODEL_PATH).exists():
 
 checkpoint = torch.load(MODEL_PATH, map_location='cpu')
 
+# Load metadata
 sector_to_id = checkpoint['sector_to_id']
 id_to_sector = checkpoint['id_to_sector']
 sector_sub_to_id = checkpoint['sector_sub_to_id']
@@ -150,10 +90,12 @@ X_max = np.array(checkpoint['X_max'])
 feature_cols = checkpoint['feature_cols']
 n_sectors = len(sector_to_id)
 
+# Initialize models
 midas = MIDAS()
 sector_model = SectorModel(n_sectors=n_sectors)
 subsector_model = SubsectorModel(n_sectors=n_sectors, n_subsectors=50)
 
+# Load weights
 midas.load_state_dict(checkpoint['midas'])
 sector_model.load_state_dict(checkpoint['sector_model'])
 subsector_model.load_state_dict(checkpoint['subsector_model'])
@@ -162,6 +104,7 @@ midas.eval()
 sector_model.eval()
 subsector_model.eval()
 
+# Build reverse mappings
 id_to_subsector = {}
 for sid, sub_map in sector_sub_to_id.items():
     id_to_subsector[sid] = {v: k for k, v in sub_map.items()}
@@ -175,6 +118,7 @@ print(f"Features: {feature_cols}")
 print(f"Server ready on port {SERVER_PORT}")
 print("=" * 60)
 
+# Training sessions
 training_sessions = {}
 training_progress = {"epoch": 0, "epochs": 0, "accuracy": 0, "loss": 0, "status": "idle", "eta": "", "start_time": 0}
 
@@ -183,6 +127,7 @@ def get_session(query_id):
         training_sessions[query_id] = {"epoch": 0, "epochs": 0, "accuracy": 0, "loss": 0, "status": "idle", "eta": "", "start_time": 0, "query_id": query_id}
     return training_sessions[query_id]
 
+# ===================== ROUTES =====================
 
 @app.route('/health', methods=['GET'])
 def health():
@@ -244,6 +189,7 @@ def predict():
         if values.ndim == 1:
             values = values.reshape(1, -1)
         
+        # Ensure 10 features
         if values.shape[1] < 10:
             pad = np.zeros((values.shape[0], 10 - values.shape[1]), dtype=np.float32)
             values = np.hstack([values, pad])
@@ -255,10 +201,12 @@ def predict():
         for i in range(len(values)):
             row = values[i:i+1]
             
+            # Try to find best sector base
             best_sector = None
             if sector_hint and sector_hint in sector_bases:
                 best_sector = sector_hint
             
+            # Normalize
             if best_sector:
                 base = np.array(sector_bases[best_sector])
                 row_sub = row - base
@@ -267,6 +215,7 @@ def predict():
             
             row_norm = (row_sub - X_min) / (X_max - X_min + 1e-8)
             
+            # Check for missing
             mask = ~np.isnan(row_norm)
             row_norm = np.nan_to_num(row_norm, nan=0.0)
             
@@ -274,15 +223,18 @@ def predict():
             mask_t = torch.FloatTensor(mask.astype(np.float32))
             
             with torch.no_grad():
+                # Impute if needed
                 if mask.mean() < 1.0:
                     X_imp = midas.impute(X_t, mask_t)
                 else:
                     X_imp = X_t
                 
+                # Predict sector
                 sec_logits = sector_model(X_imp)
                 sec_probs = F.softmax(sec_logits, dim=1)
                 sec_conf, sec_pred = sec_probs.max(1)
                 
+                # Predict subsector
                 sub_logits = subsector_model(X_imp, sec_pred)
                 sub_probs = F.softmax(sub_logits, dim=1)
                 sub_conf, sub_pred = sub_probs.max(1)
@@ -323,6 +275,7 @@ def predict_batch():
         if values.ndim == 1:
             values = values.reshape(1, -1)
         
+        # Ensure 10 features
         if values.shape[1] < 10:
             pad = np.zeros((values.shape[0], 10 - values.shape[1]), dtype=np.float32)
             values = np.hstack([values, pad])
@@ -331,10 +284,12 @@ def predict_batch():
         
         sector_hint = data.get('sector', None)
         
+        # Sector base subtraction
         if sector_hint and sector_hint in sector_bases:
             base = np.array(sector_bases[sector_hint])
             values = values - base
         
+        # Normalize
         values_norm = (values - X_min) / (X_max - X_min + 1e-8)
         
         X_t = torch.FloatTensor(values_norm)
@@ -396,6 +351,7 @@ def analyze():
             'column_names': df.columns.tolist()
         }
         
+        # Find numeric columns
         numeric_cols = df.select_dtypes(include=['int64', 'float64']).columns.tolist()
         
         analysis = "=== DATASET OVERVIEW ===\n"
@@ -403,12 +359,14 @@ def analyze():
         analysis += f"Total Columns: {stats['columns']}\n"
         analysis += f"Numeric Columns: {len(numeric_cols)}\n\n"
         
+        # Column statistics
         analysis += "=== COLUMN STATISTICS ===\n"
         analysis += f"{'Column':<20} {'Min':>12} {'Max':>12} {'Mean':>12}\n"
         analysis += "-" * 60 + "\n"
         for col in numeric_cols[:10]:
             analysis += f"{col:<20} {df[col].min():>12.2f} {df[col].max():>12.2f} {df[col].mean():>12.2f}\n"
         
+        # Try prediction if enough numeric columns
         if len(numeric_cols) >= 5:
             X = df[numeric_cols[:10]].fillna(0).values.astype(np.float32)
             if X.shape[1] < 10:
@@ -422,6 +380,7 @@ def analyze():
                 sec_logits = sector_model(X_t)
                 sec_pred = sec_logits.argmax(1)
             
+            # Count predictions
             pred_counts = {}
             for p in sec_pred.numpy():
                 name = id_to_sector.get(p, f"sector_{p}")
@@ -460,15 +419,18 @@ def finetune():
         
         file = request.files['file']
         
+        # Save temp file
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
         file.save(temp_file.name)
         temp_file.close()
         
         df = pd.read_csv(temp_file.name)
         
+        # Find target column
         if target_column and target_column in df.columns:
             target_col = target_column
         else:
+            # Auto-detect
             for col in df.columns:
                 if col.lower() in ['category', 'class', 'label', 'target', 'sector', 'subsector']:
                     target_col = col
@@ -476,51 +438,16 @@ def finetune():
             else:
                 target_col = df.columns[-1]
         
-        numeric_df = df.select_dtypes(include=['number'])
-        col_mapping, v1_features = smart_column_mapping(numeric_df.columns.tolist(), target_col)
+        feature_cols_user = [c for c in df.columns if c != target_col]
+        numeric_cols = df[feature_cols_user].select_dtypes(include=['number']).columns.tolist()
         
-        print(f"Column mapping: {col_mapping}")
-        
-        X_list = []
-        for v1_col in v1_features:
-            user_col = col_mapping.get(v1_col)
-            if user_col and user_col in df.columns:
-                X_list.append(df[user_col].values.astype(np.float32))
-            else:
-                X_list.append(np.zeros(len(df), dtype=np.float32))
-        
-        X = np.column_stack(X_list)
-        
-        v1_cols = ['primary_score', 'secondary_score', 'tertiary_score', 'risk_index', 
-                   'severity_level', 'duration_factor', 'frequency_rate', 'intensity_score',
-                   'recovery_index', 'response_rate']
-        has_v1_features = all(c in df.columns for c in v1_cols[:5])
-        
-        has_missing = np.isnan(X).any()
-        if has_missing:
-            if has_v1_features:
-                mask = (~np.isnan(X)).astype(np.float32)
-                X_filled = np.nan_to_num(X, nan=0.0)
-                
-                midas.eval()
-                with torch.no_grad():
-                    X_t = torch.FloatTensor(X_filled)
-                    mask_t = torch.FloatTensor(mask)
-                    X_imputed = midas.impute(X_t, mask_t, n_iter=3)
-                    X = X_imputed.numpy()
-                
-                missing_pct = (1 - mask.mean()) * 100
-                print(f"MIDAS imputation: {missing_pct:.1f}% missing data filled")
-            else:
-                missing_pct = np.isnan(X).mean() * 100
-                X = np.nan_to_num(X, nan=0.0)
-                print(f"Simple fill: {missing_pct:.1f}% missing data filled with 0")
-        numeric_cols = [col_mapping.get(v, v) for v in v1_features]
+        X = df[numeric_cols].fillna(0).values.astype(np.float32)
         
         le = LabelEncoder()
         y = le.fit_transform(df[target_col])
         n_classes = len(le.classes_)
         
+        # Normalize
         scaler = MinMaxScaler()
         X = scaler.fit_transform(X)
         
@@ -530,157 +457,69 @@ def finetune():
         elif X.shape[1] > 10:
             X = X[:, :10]
         
-        v1_cols = ['primary_score', 'secondary_score', 'tertiary_score', 'risk_index', 
-                   'severity_level', 'duration_factor', 'frequency_rate', 'intensity_score',
-                   'recovery_index', 'response_rate']
+        # Create fine-tune model (simple classifier)
+        ft_model = nn.Sequential(
+            nn.Linear(10, 256), nn.ReLU(), nn.Dropout(0.2),
+            nn.Linear(256, 128), nn.ReLU(),
+            nn.Linear(128, n_classes)
+        )
         
-        has_v1_features = all(c in df.columns for c in v1_cols[:5])
-        
-        if has_v1_features:
-            sector_model.eval()
-            subsector_model.eval()
-            
-            with torch.no_grad():
-                X_t = torch.FloatTensor(X)
-                sec_logits = sector_model(X_t)
-                sec_probs = F.softmax(sec_logits, dim=1)
-                sec_pred = sec_logits.argmax(1)
-                sub_logits = subsector_model(X_t, sec_pred)
-                sub_probs = F.softmax(sub_logits, dim=1)
-            
-            X = np.hstack([X, sec_probs.numpy(), sub_probs.numpy()])
-            input_dim = 10 + n_sectors + 50
-            print(f"V1 features detected - using base model probs (input_dim={input_dim})")
-        else:
-            input_dim = 10
-            print(f"Custom features - training without base model probs (input_dim={input_dim})")  # 110
-        
-        if input_dim > 50:
-            ft_model = nn.Sequential(
-                nn.Linear(input_dim, 256), nn.ReLU(), nn.BatchNorm1d(256), nn.Dropout(0.3),
-                nn.Linear(256, 128), nn.ReLU(), nn.Dropout(0.2),
-                nn.Linear(128, n_classes)
-            )
-        else:
-            ft_model = nn.Sequential(
-                nn.Linear(input_dim, 512), nn.ReLU(), nn.BatchNorm1d(512), nn.Dropout(0.3),
-                nn.Linear(512, 256), nn.ReLU(), nn.BatchNorm1d(256), nn.Dropout(0.2),
-                nn.Linear(256, 128), nn.ReLU(),
-                nn.Linear(128, n_classes)
-            )
-        
-        optimizer = AdamW(ft_model.parameters(), lr=1e-3, weight_decay=0.01)
+        optimizer = AdamW(ft_model.parameters(), lr=1e-3)
         loss_fn = nn.CrossEntropyLoss()
         
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5)
-        
         session["status"] = "training"
+        session["epochs"] = epochs
         session["start_time"] = time.time()
         training_progress.update(session)
         
         best_acc = 0
-        best_state = None
-        patience = 10
-        no_improve = 0
-        max_epochs = 200  # Maksimum epoch limiti
-        current_epoch = 0
         
-        while current_epoch < max_epochs:
+        for epoch in range(epochs):
             ft_model.train()
             idx = np.random.permutation(len(X))
             total_loss = 0
             correct = 0
-            batches = 0
             
-            for i in range(0, len(X) - batch_size + 1, batch_size):
+            for i in range(0, len(X) - batch_size, batch_size):
                 batch_idx = idx[i:i+batch_size]
                 batch_X = torch.FloatTensor(X[batch_idx])
                 batch_y = torch.LongTensor(y[batch_idx])
-                
-                if np.random.random() > 0.5:
-                    noise = torch.randn_like(batch_X) * 0.01
-                    batch_X = batch_X + noise
                 
                 optimizer.zero_grad()
                 logits = ft_model(batch_X)
                 loss = loss_fn(logits, batch_y)
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(ft_model.parameters(), 1.0)
                 optimizer.step()
                 
                 total_loss += loss.item()
                 correct += (logits.argmax(1) == batch_y).sum().item()
-                batches += 1
             
-            scheduler.step()
-            current_epoch += 1
             acc = 100 * correct / len(X)
-            avg_loss = total_loss / max(batches, 1)
-            
             if acc > best_acc:
                 best_acc = acc
-                best_state = {k: v.clone() for k, v in ft_model.state_dict().items()}
-                no_improve = 0
-            else:
-                no_improve += 1
             
-            elapsed = time.time() - session["start_time"]
-            if current_epoch > 1:
-                time_per_epoch = elapsed / current_epoch
-                if best_acc < 95:
-                    est_remaining = max(20, epochs - current_epoch)
-                else:
-                    est_remaining = min(10, max_epochs - current_epoch)
-                remaining = est_remaining * time_per_epoch
-                eta = f"{int(remaining)}s" if remaining < 60 else f"{int(remaining/60)}m"
-            else:
-                eta = "..."
-            
-            session["epoch"] = current_epoch
-            session["epochs"] = max(epochs, current_epoch + 10) if best_acc < 95 else current_epoch + 5
+            session["epoch"] = epoch + 1
             session["accuracy"] = acc
-            session["loss"] = avg_loss
-            session["eta"] = eta
+            session["loss"] = total_loss
             training_progress.update(session)
             
-            print(f"Epoch {current_epoch}: Acc={acc:.1f}% (best={best_acc:.1f}%)")
-            
-            if best_acc >= 99.0:
-                print(f"🎉 %99+ accuracy - MÜKEMMEL!")
-                break
-            
-            if best_acc >= 95.0 and no_improve >= patience:
-                print(f"✅ Early stop at {best_acc:.1f}% (no improve for {patience} epochs)")
-                break
-            
-            if best_acc < 95.0 and no_improve >= patience * 3:
-                print(f"⚠️ Early stop at {best_acc:.1f}% (no improve for {patience * 3} epochs, < 95%)")
-                break
-            
-            if current_epoch >= max_epochs:
-                print(f"⚠️ Max epoch ({max_epochs}) - best: {best_acc:.1f}%")
-                break
-        
-        if best_state:
-            ft_model.load_state_dict(best_state)
+            print(f"Epoch {epoch+1}/{epochs}: Acc={acc:.1f}%")
         
         session["status"] = "completed"
         session["accuracy"] = best_acc
         training_progress.update(session)
         
+        # Save finetuned model
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         ft_path = f'../checkpoints/model_finetuned_{timestamp}.pt'
         
         torch.save({
             'model_state_dict': ft_model.state_dict(),
-            'model_type': 'v1_finetune',
             'scaler': scaler,
             'encoder': le,
             'class_names': [str(c) for c in le.classes_],
             'feature_cols': numeric_cols[:10],
-            'n_classes': n_classes,
-            'input_dim': input_dim,
-            'n_sectors': n_sectors
+            'n_classes': n_classes
         }, ft_path)
         
         os.unlink(temp_file.name)

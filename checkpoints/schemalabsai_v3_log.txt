@@ -1,0 +1,53 @@
+2026-01-07 13:40:11 - ======================================================================
+2026-01-07 13:40:11 - SCHEMALABSAI V3 - MIRAS + MIDAS + Self-Learning + OOD + Early Stop
+2026-01-07 13:40:11 - Sorunlu sector/subsector çıkarıldı
+2026-01-07 13:40:11 - ======================================================================
+2026-01-07 13:40:11 - 
+[1/6] Loading data...
+2026-01-07 13:40:24 -   biotech: removed ['pathology_bio'], 2500000 -> 2450000
+2026-01-07 13:40:34 -   defense: removed ['r_and_d'], 2500000 -> 2450000
+2026-01-07 13:40:44 -   energy: removed ['well_services', 'oilfield_services'], 2500000 -> 2400000
+2026-01-07 13:40:52 -   finance: removed ['blockchain_fin'], 2500000 -> 2450000
+2026-01-07 13:40:57 -   Skipping sector: healthcare
+2026-01-07 13:41:07 -   logistics: removed ['oms'], 2500000 -> 2450000
+2026-01-07 13:41:28 -   Skipping sector: packaging
+2026-01-07 13:41:33 -   Skipping sector: printing
+2026-01-07 13:41:38 -   Skipping sector: recycling
+2026-01-07 13:41:38 -   Skipping sector: renewable
+2026-01-07 13:41:41 -   security: removed ['aml'], 2500000 -> 2450000
+2026-01-07 13:42:01 -   Skipping sector: waste_mgmt
+2026-01-07 13:42:01 -   Skipping sector: water
+2026-01-07 13:42:02 - Total data: 8,600,000 rows
+2026-01-07 13:42:02 - Sectors: 43, Subsectors per sector: 50
+2026-01-07 13:42:02 - Skipped sectors: ['healthcare', 'packaging', 'printing', 'recycling', 'renewable', 'waste_mgmt', 'water']
+2026-01-07 13:42:02 - Skipped subsectors: {'security': ['aml'], 'energy': ['well_services', 'oilfield_services'], 'defense': ['r_and_d'], 'biotech': ['pathology_bio'], 'logistics': ['oms'], 'finance': ['blockchain_fin']}
+2026-01-07 13:42:02 - Labeled: 5,160,000, Unlabeled: 1,720,000, Test: 1,720,000
+2026-01-07 13:42:02 - 
+[2/6] Initializing models...
+2026-01-07 13:42:02 - Total params: 2,419,089
+2026-01-07 13:42:02 - 
+[3/6] OOD Detector Training...
+2026-01-07 13:53:59 -   Epoch 25: Loss=0.000004 Best=0.000004
+2026-01-07 14:05:51 -   Epoch 50: Loss=0.000003 Best=0.000003
+2026-01-07 14:17:45 -   Epoch 75: Loss=0.000002 Best=0.000002
+2026-01-07 14:30:21 -   Epoch 100: Loss=0.000002 Best=0.000002
+2026-01-07 14:42:55 -   Epoch 125: Loss=0.000002 Best=0.000002
+2026-01-07 14:55:26 -   Epoch 150: Loss=0.000002 Best=0.000002
+2026-01-07 15:06:27 -   Early stop at epoch 172
+2026-01-07 15:06:28 -   OOD Threshold: 0.000003
+2026-01-07 15:06:28 - 
+[4/6] MIRAS Classification Training (Early Stop)...
+2026-01-07 15:49:44 -   🎉 Reached 99.5%+ at ep 5
+2026-01-07 15:49:44 -   MIRAS Classification complete: 99.8%
+2026-01-07 15:49:44 - 
+[5/6] Self-Learning (Early Stop)...
+2026-01-07 16:38:56 -   Round 1: +529,017 pseudo | acc=97.5% (best=99.8%)
+2026-01-07 17:31:48 -   Round 2: +1,148,947 pseudo | acc=96.0% (best=99.8%)
+2026-01-07 18:26:41 -   Round 3: +1,386,021 pseudo | acc=96.0% (best=99.8%)
+2026-01-07 18:26:41 -   Self-Learning early stop
+2026-01-07 18:26:41 -   Self-Learning complete: 99.8%
+2026-01-07 18:26:41 - 
+[6/6] MIDAS Training (Early Stop)...
+2026-01-07 19:01:11 -   Ep 25 (30% miss): 92.0% (best=92.0%)
+2026-01-07 19:36:53 -   Ep 50 (30% miss): 95.7% (best=95.7%)
+2026-01-07 20:13:07 -   Ep 75 (30% miss): 96.2% (best=96.2%)
