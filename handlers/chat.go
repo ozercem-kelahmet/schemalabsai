@@ -434,8 +434,9 @@ func ChatHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Call fine-tuned model if specified
 	var fineTunedResult string
+	fmt.Printf("DEBUG: FineTunedModel = '%s'\n", req.FineTunedModel)
 	if req.FineTunedModel != "" && req.FineTunedModel != "none" {
-		result, err := callFineTunedModel(req.FineTunedModel, req.Message)
+		result, err := callFineTunedModel(req.FineTunedModel, req.FileID, req.Message)
 		if err != nil {
 			fmt.Printf("Fine-tuned model error: %v\\n", err)
 		} else {
@@ -443,9 +444,8 @@ func ChatHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	modelAnalysis := getModelAnalysis(req.FileID, req.Message)
-	// Add fine-tuned result to system prompt
-	basePrompt := getSystemPrompt(req.Filename, req.DataContext, modelAnalysis)
+	// Fine-tuned model analysis is already included via callFineTunedModel
+	basePrompt := getSystemPrompt(req.Filename, req.DataContext, "")
 	var systemPrompt string
 	if fineTunedResult != "" {
 		systemPrompt = basePrompt + "\n\n### Fine-tuned Model Analysis:\n" + fineTunedResult + "\n\nUse this analysis to provide insights."
@@ -683,11 +683,12 @@ func ClearChatHistoryHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // callFineTunedModel calls the Flask server for fine-tuned model analysis
-func callFineTunedModel(modelID string, message string) (string, error) {
+func callFineTunedModel(modelID string, fileID string, message string) (string, error) {
 	flaskURL := GetFlaskURL()
 
 	payload := map[string]interface{}{
 		"model_id": modelID,
+"file_id":  fileID,
 		"message":  message,
 	}
 

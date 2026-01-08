@@ -522,7 +522,7 @@ function SidebarInner() {
   }
 
   const handleQueryClick = (query: QueryItem) => {
-    // Always navigate to playground - training view will be shown there
+    // Always navigate to playground - training view will be shown there if isTraining is true
     router.push("/playground/" + query.id)
   }
 

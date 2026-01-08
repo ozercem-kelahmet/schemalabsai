@@ -208,6 +208,7 @@ export const api = {
     filename: string
     model: string
     data_context: string
+    finetuned_model?: string
   }) => {
     const res = await fetch(API_BASE + '/chat', {
       method: 'POST',
@@ -226,6 +227,7 @@ export const api = {
       filename: string
       model: string
       data_context: string
+      finetuned_model?: string
     },
     onChunk: (content: string) => void,
     onDone: () => void

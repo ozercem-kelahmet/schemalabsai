@@ -1259,6 +1259,15 @@ export default function PlaygroundQueryPage() {
     selectedFiles.forEach(file => {
       context += "- File: " + file.filename + "\n"
       context += "- Size: " + formatFileSize(file.size) + "\n"
+      if (file.columns) {
+        context += "- Columns: " + file.columns.join(", ") + "\n"
+      }
+      if (file.unique_values) {
+        context += "- Target classes: " + file.unique_values.join(", ") + "\n"
+      }
+      if (file.row_count) {
+        context += "- Rows: " + file.row_count + "\n"
+      }
     })
     return context
   }
@@ -1285,6 +1294,8 @@ export default function PlaygroundQueryPage() {
       const isClaudeModel = selectedModel.startsWith("claude")
       
       if (isClaudeModel) {
+        console.log("DEBUG currentQuery:", currentQuery)
+        console.log("DEBUG trainingModelId:", currentQuery?.trainingModelId)
         const response = await api.chat({
           message: message,
           file_id: primaryFile?.file_id || "",
@@ -1292,6 +1303,7 @@ export default function PlaygroundQueryPage() {
           filename: primaryFile?.filename || "Unknown",
           model: selectedModel,
           data_context: buildDataContext(),
+          finetuned_model: currentQuery?.trainingModelId || "",
         })
         const endTime = Date.now()
         const timeTaken = ((endTime - startTime) / 1000).toFixed(1)
@@ -1309,6 +1321,8 @@ export default function PlaygroundQueryPage() {
         return
       }
       
+      console.log("DEBUG chatStream currentQuery:", currentQuery)
+      console.log("DEBUG chatStream trainingModelId:", currentQuery?.trainingModelId)
       await api.chatStream(
           {
             message: message,
@@ -1317,6 +1331,7 @@ export default function PlaygroundQueryPage() {
             filename: primaryFile?.filename || "Unknown",
             model: selectedModel,
             data_context: buildDataContext(),
+            finetuned_model: currentQuery?.trainingModelId || "",
           },
           (chunk) => {
             streamContent += chunk

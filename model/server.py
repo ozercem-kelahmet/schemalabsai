@@ -171,7 +171,6 @@ finetuned_models = {}
 
 print(f"Model loaded: {current_model_name}")
 print(f"Sectors: {n_sectors}")
-print(f"Features: {feature_cols}")
 print(f"Server ready on port {SERVER_PORT}")
 print("=" * 60)
 
@@ -371,10 +370,12 @@ def predict_batch():
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
-    """Analyze CSV file"""
+    """Analyze CSV file with fine-tuned model if available"""
     try:
         data = request.json
         file_id = data.get('file_id', '')
+        model_id = data.get('model_id', '')
+        print(f"DEBUG /analyze: file_id={file_id}, model_id={model_id}")
         
         uploads_dir = '../uploads'
         file_path = None
@@ -398,12 +399,54 @@ def analyze():
         
         numeric_cols = df.select_dtypes(include=['int64', 'float64']).columns.tolist()
         
+        # Check for fine-tuned model
+        ft_model_info = None
+        ft_checkpoint = None
+        if model_id:
+            checkpoints_dir = '../checkpoints'
+            for f in os.listdir(checkpoints_dir):
+                if model_id in f and f.endswith('.pt'):
+                    ft_path = os.path.join(checkpoints_dir, f)
+                    ft_checkpoint = torch.load(ft_path, map_location='cpu', weights_only=False)
+                    ft_model_info = {
+                        'class_names': ft_checkpoint.get('class_names', []),
+                        'n_classes': ft_checkpoint.get('n_classes', 0),
+                        'feature_cols': ft_checkpoint.get('feature_cols', []),
+                        'model_type': ft_checkpoint.get('model_type', 'unknown')
+                    }
+                    break
+        
         analysis = "=== DATASET OVERVIEW ===\n"
         analysis += f"Total Rows: {stats['rows']}\n"
         analysis += f"Total Columns: {stats['columns']}\n"
-        analysis += f"Numeric Columns: {len(numeric_cols)}\n\n"
+        analysis += f"Numeric Columns: {len(numeric_cols)}\n"
         
-        analysis += "=== COLUMN STATISTICS ===\n"
+        # Add fine-tuned model info if available
+        if ft_model_info:
+            analysis += f"\n=== FINE-TUNED MODEL INFO ===\n"
+            analysis += f"Domain: Finance/Banking\n"
+            analysis += f"Target Classes ({ft_model_info['n_classes']}): {', '.join(ft_model_info['class_names'])}\n"
+            analysis += f"Features: {', '.join(ft_model_info['feature_cols'])}\n"
+            
+            # Calculate actual distribution from CSV
+            target_col = None
+            for col in df.columns:
+                if col.lower() in ['sector', 'subsector', 'category', 'class', 'target', 'label']:
+                    target_col = col
+                    break
+            if target_col is None and df.columns[-1] not in numeric_cols:
+                target_col = df.columns[-1]
+            
+            if target_col:
+                value_counts = df[target_col].value_counts()
+                analysis += f"\n=== DATA DISTRIBUTION ===\n"
+                analysis += f"{'Subsector':<25} {'Count':>10} {'Percentage':>12}\n"
+                analysis += "-" * 50 + "\n"
+                for cls, count in value_counts.items():
+                    pct = count / len(df) * 100
+                    analysis += f"{str(cls):<25} {count:>10} {pct:>11.1f}%\n"
+        
+        analysis += "\n=== COLUMN STATISTICS ===\n"
         analysis += f"{'Column':<20} {'Min':>12} {'Max':>12} {'Mean':>12}\n"
         analysis += "-" * 60 + "\n"
         for col in numeric_cols[:10]:
@@ -437,7 +480,8 @@ def analyze():
         return jsonify({
             'analysis': analysis,
             'stats': stats,
-            'status': 'success'
+            'status': 'success',
+            'fine_tuned_model': ft_model_info
         })
     except Exception as e:
         import traceback
@@ -549,7 +593,8 @@ def finetune():
                    'severity_level', 'duration_factor', 'frequency_rate', 'intensity_score',
                    'recovery_index', 'response_rate']
         
-        has_v1_features = all(c in df.columns for c in v1_cols[:5])
+        # Check if we have V1 features (either directly or via mapping)
+        has_v1_features = all(c in df.columns for c in v1_cols[:5]) or (col_mapping and len(col_mapping) >= 5)
         
         if has_v1_features:
             sector_model.eval()
@@ -708,6 +753,10 @@ def finetune():
         
         os.unlink(temp_file.name)
         
+        model_id = f"model_finetuned_{timestamp}"
+        session["model_id"] = model_id
+        training_progress.update(session)
+        
         return jsonify({
             "status": "success",
             "accuracy": float(best_acc),
@@ -716,6 +765,7 @@ def finetune():
             "n_classes": n_classes,
             "classes": [str(c) for c in le.classes_],
             "model_path": ft_path,
+            "model_id": model_id,
             "rows": len(df)
         })
     except Exception as e:

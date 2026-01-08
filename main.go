@@ -3,6 +3,7 @@ package main
 import (
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -33,7 +34,6 @@ func enableCORS(next http.HandlerFunc) http.HandlerFunc {
 
 func killPort(port string) {
 	exec.Command("sh", "-c", "lsof -ti:"+port+" | xargs kill -9").Run()
-	time.Sleep(1 * time.Second)
 }
 
 func startFlaskServer(pythonPath string) {
@@ -42,7 +42,6 @@ func startFlaskServer(pythonPath string) {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Start()
-	time.Sleep(3 * time.Second)
 }
 
 func startNextJsServer() {
@@ -50,7 +49,15 @@ func startNextJsServer() {
 	cmd.Dir = "./frontend"
 	cmd.Env = append(os.Environ(), "BROWSER=none")
 	cmd.Start()
-	time.Sleep(5 * time.Second)
+}
+
+func isPortInUse(port string) bool {
+	conn, err := net.DialTimeout("tcp", "localhost:"+port, time.Millisecond*500)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }
 
 func getEnv(key, defaultValue string) string {
@@ -61,15 +68,20 @@ func getEnv(key, defaultValue string) string {
 }
 
 func main() {
+	start := time.Now()
 	godotenv.Load()
+	log.Printf("ENV loaded in %v", time.Since(start))
 
 	// Initialize auth (DB + Redis)
+	start = time.Now()
 	if err := handlers.InitAuth(); err != nil {
 		log.Fatal("Failed to initialize auth:", err)
 	}
-	log.Println("Auth initialized (PostgreSQL + Redis)")
+	log.Printf("Auth initialized in %v", time.Since(start))
 
+	start = time.Now()
 	handlers.InitGoogleOAuth()
+	log.Printf("Google OAuth initialized in %v", time.Since(start))
 	flaskPort := getEnv("FLASK_PORT", "6000")
 	frontendPort := getEnv("FRONTEND_PORT", "3000")
 	apiPort := getEnv("API_PORT", "8080")
@@ -78,14 +90,18 @@ func main() {
 	log.Println("SCHEMALABS AI - Starting services...")
 	log.Printf("Flask: %s, Frontend: %s, API: %s", flaskPort, frontendPort, apiPort)
 
-	killPort(frontendPort)
-	killPort(flaskPort)
-	killPort(apiPort)
-
-	go startFlaskServer(pythonPath)
-	go startNextJsServer()
-
-	time.Sleep(6 * time.Second)
+	// Only start services if not already running
+	if !isPortInUse(flaskPort) {
+		go startFlaskServer(pythonPath)
+	} else {
+		log.Println("Flask already running on port", flaskPort)
+	}
+	
+	if !isPortInUse(frontendPort) {
+		go startNextJsServer()
+	} else {
+		log.Println("Next.js already running on port", frontendPort)
+	}
 
 	nextUrl, _ := url.Parse("http://localhost:" + frontendPort)
 	nextProxy := httputil.NewSingleHostReverseProxy(nextUrl)
@@ -111,11 +127,11 @@ func main() {
 	http.HandleFunc("/api/train/analyze", enableCORS(handlers.AuthMiddleware(handlers.AnalyzeFilesHandler)))
 	http.HandleFunc("/api/train/progress", enableCORS(func(w http.ResponseWriter, r *http.Request) {
 		queryID := r.URL.Query().Get("query_id")
-flaskURL := "http://localhost:6000/training/progress"
-if queryID != "" {
-flaskURL = flaskURL + "?query_id=" + queryID
-}
-resp, err := http.Get(flaskURL)
+		flaskURL := "http://localhost:6000/training/progress"
+		if queryID != "" {
+			flaskURL = flaskURL + "?query_id=" + queryID
+		}
+		resp, err := http.Get(flaskURL)
 		if err != nil {
 			http.Error(w, "Flask error", 500)
 			return
@@ -202,7 +218,6 @@ resp, err := http.Get(flaskURL)
 	http.HandleFunc("/api/admin/endpoints", enableCORS(handlers.AuthMiddleware(handlers.AdminEndpointsHandler)))
 	http.HandleFunc("/api/admin/config", enableCORS(handlers.AuthMiddleware(handlers.AdminConfigHandler)))
 
-
 	// Organization routes
 	http.HandleFunc("/api/organizations", enableCORS(handlers.AuthMiddleware(handlers.OrganizationsHandler)))
 	http.HandleFunc("/api/organizations/invite/", enableCORS(handlers.AuthMiddleware(handlers.AcceptInviteHandler)))
@@ -216,7 +231,6 @@ resp, err := http.Get(flaskURL)
 			handlers.OrganizationHandler(w, r)
 		}
 	})))
-
 
 	// Serve uploaded files
 	// Frontend routes with auth check

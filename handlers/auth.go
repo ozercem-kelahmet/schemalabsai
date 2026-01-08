@@ -106,7 +106,11 @@ func InitAuth() error {
 	if err != nil {
 		return err
 	}
-	DB.AutoMigrate(&User{}, &UploadedFile{}, &Query{}, &Message{}, &QueryFile{}, &FineTunedModel{}, &Folder{}, &Connection{}, &APIKey{}, &VerificationCode{}, &PasswordResetToken{})
+	
+	// AutoMigrate in background to not block startup
+	go func() {
+		DB.AutoMigrate(&User{}, &UploadedFile{}, &Query{}, &Message{}, &QueryFile{}, &FineTunedModel{}, &Folder{}, &Connection{}, &APIKey{}, &VerificationCode{}, &PasswordResetToken{})
+	}()
 
 	// Redis
 	redisURL := GetRedisURL()

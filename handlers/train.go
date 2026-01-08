@@ -43,6 +43,7 @@ type TrainResponse struct {
 	Message   string  `json:"message"`
 	ModelName string  `json:"model_name"`
 	ModelPath string  `json:"model_path"`
+	ModelID   string  `json:"model_id"`
 	Accuracy  float64 `json:"accuracy"`
 	Rows      int     `json:"rows"`
 	Epochs    int     `json:"epochs"`
@@ -153,6 +154,10 @@ func TrainHandler(w http.ResponseWriter, r *http.Request) {
 	if l, ok := flaskResp["loss"].(float64); ok {
 		loss = l
 	}
+modelID := ""
+if mid, ok := flaskResp["model_id"].(string); ok {
+modelID = mid
+}
 
 	if DB != nil && userID != "" {
 		ftModel := FineTunedModel{
@@ -179,6 +184,7 @@ func TrainHandler(w http.ResponseWriter, r *http.Request) {
 		Message:   "Model trained successfully",
 		ModelName: modelName,
 		ModelPath: modelPath,
+ModelID:   modelID,
 		Accuracy:  accuracy,
 	})
 }
@@ -355,12 +361,17 @@ queryIDField.Write([]byte(req.QueryID))
 		epochs = int(e)
 	}
 	
+modelID := ""
+if mid, ok := flaskResp["model_id"].(string); ok {
+modelID = mid
+}
 	json.NewEncoder(w).Encode(TrainResponse{
 		JobID:     uuid.New().String(),
 		Status:    "success",
 		Message:   fmt.Sprintf("Model trained with %d merged files", len(filePaths)),
 		ModelName: modelName,
 		ModelPath: modelPath,
+ModelID:   modelID,
 		Accuracy:  accuracy,
 		Rows:      rows,
 		Epochs:    epochs,

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -38,13 +39,16 @@ func getEnvInt(key string, defaultVal int64) int64 {
 }
 
 type UploadedFile struct {
-	ID        string    `gorm:"primaryKey" json:"file_id"`
-	Filename  string    `json:"filename"`
-	Path      string    `json:"path"`
-	Size      int64     `json:"size"`
-	UserID    string    `json:"user_id"`
-	FolderID  *string   `json:"folder_id"`
-	CreatedAt time.Time `json:"created_at"`
+	ID           string    `gorm:"primaryKey" json:"file_id"`
+	Filename     string    `json:"filename"`
+	Path         string    `json:"path"`
+	Size         int64     `json:"size"`
+	UserID       string    `json:"user_id"`
+	FolderID     *string   `json:"folder_id"`
+	CreatedAt    time.Time `json:"created_at"`
+	Columns      string    `json:"columns"`
+	RowCount     int       `json:"row_count"`
+	UniqueValues string    `json:"unique_values"`
 }
 
 type UploadResponse struct {
@@ -160,13 +164,61 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Save to database if user is logged in
 	if userID != "" && DB != nil {
+		// Parse CSV to get columns and unique values
+		columns := ""
+		rowCount := 0
+		uniqueValues := ""
+		
+		if strings.HasSuffix(strings.ToLower(finalFilename), ".csv") {
+			if csvFile, err := os.Open(destPath); err == nil {
+				reader := csv.NewReader(csvFile)
+				if headers, err := reader.Read(); err == nil {
+					columns = strings.Join(headers, ",")
+					
+					// Find target column (last column or 'sector'/'subsector'/'category')
+					targetIdx := len(headers) - 1
+					for i, h := range headers {
+						hl := strings.ToLower(h)
+						if hl == "sector" || hl == "subsector" || hl == "category" || hl == "class" || hl == "target" || hl == "label" {
+							targetIdx = i
+							break
+						}
+					}
+					
+					// Read all rows and collect unique target values
+					uniqueMap := make(map[string]bool)
+					for {
+						record, err := reader.Read()
+						if err != nil {
+							break
+						}
+						rowCount++
+						if targetIdx < len(record) {
+							uniqueMap[record[targetIdx]] = true
+						}
+					}
+					
+					// Convert unique values to string
+					uniqueList := make([]string, 0, len(uniqueMap))
+					for k := range uniqueMap {
+						uniqueList = append(uniqueList, k)
+					}
+					uniqueValues = strings.Join(uniqueList, ",")
+				}
+				csvFile.Close()
+			}
+		}
+		
 		uploadedFile := UploadedFile{
-			ID:        fileID,
-			Filename:  finalFilename,
-			Path:      destPath,
-			Size:      size,
-			UserID:    userID,
-			CreatedAt: time.Now(),
+			ID:           fileID,
+			Filename:     finalFilename,
+			Path:         destPath,
+			Size:         size,
+			UserID:       userID,
+			CreatedAt:    time.Now(),
+			Columns:      columns,
+			RowCount:     rowCount,
+			UniqueValues: uniqueValues,
 		}
 		DB.Create(&uploadedFile)
 	}

@@ -114,6 +114,7 @@ export function QueryStoreProvider({ children }: { children: ReactNode }) {
           model: newQuery.model,
           data_sources: newQuery.dataSources,
           is_training: newQuery.isTraining,
+          has_model: newQuery.hasModel,
           training_model_id: newQuery.trainingModelId
         }),
       })
@@ -122,10 +123,11 @@ export function QueryStoreProvider({ children }: { children: ReactNode }) {
       console.log("[QueryStore] Response:", data)
       
       if (data.id) {
-        // Update temp ID with real ID
+        // Update temp ID with real ID and sync isTraining from backend
         newQuery.id = data.id
+        newQuery.isTraining = data.is_training ?? newQuery.isTraining
         setQueries(prev => prev.map(q => 
-          q.id === tempId ? { ...q, id: data.id } : q
+          q.id === tempId ? { ...q, id: data.id, isTraining: data.is_training ?? q.isTraining } : q
         ))
       }
     } catch (e) {

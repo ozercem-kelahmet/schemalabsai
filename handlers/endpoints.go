@@ -208,7 +208,7 @@ func QueryEndpointHandler(w http.ResponseWriter, r *http.Request) {
 			dataJSON, _ := json.Marshal(req.Data)
 			queryWithData = req.Query + "\n\nInput Data: " + string(dataJSON)
 		}
-		result, err := callFineTunedModel(endpoint.FineTunedModelID, queryWithData)
+		result, err := callFineTunedModel(endpoint.FineTunedModelID, "", queryWithData)
 		if err != nil {
 			fmt.Printf("Fine-tuned model error: %v\n", err)
 		} else {
