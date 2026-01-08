@@ -90,7 +90,14 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ file_ids: fileIds })
     })
-    return res.json()
+    const text = await res.text()
+    console.log("analyzeFiles raw response:", text.substring(0, 200))
+    try {
+      return JSON.parse(text)
+    } catch (e) {
+      console.error("analyzeFiles JSON parse error:", e, "Response:", text.substring(0, 500))
+      throw new Error("analyzeFiles failed: " + text.substring(0, 100))
+    }
   },
 
   getTrainingProgress: async (queryId?: string) => {

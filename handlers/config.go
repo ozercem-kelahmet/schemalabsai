@@ -7,7 +7,7 @@ import (
 
 // IsProduction auto-detects production environment
 func IsProduction() bool {
-	// Check common production indicators
+	// Check explicit production indicators
 	if os.Getenv("APP_ENV") == "production" || os.Getenv("NODE_ENV") == "production" {
 		return true
 	}
@@ -15,9 +15,12 @@ func IsProduction() bool {
 	if host := os.Getenv("HOSTNAME"); strings.Contains(host, "schemalabs") {
 		return true
 	}
-	// Check if DATABASE_URL contains production host (not localhost)
-	if db := os.Getenv("DATABASE_URL"); db != "" && !strings.Contains(db, "localhost") {
-		return true
+	// Check if actually running on GCP (not just using remote DB)
+	// This file only exists on GCP server
+	if _, err := os.Stat("/home/ozercemkelahmet/schemalabsai"); err == nil {
+		if _, err := os.Stat("/etc/nginx/sites-enabled"); err == nil {
+			return true
+		}
 	}
 	return false
 }

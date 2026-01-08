@@ -44,6 +44,9 @@ type TrainResponse struct {
 	ModelName string  `json:"model_name"`
 	ModelPath string  `json:"model_path"`
 	Accuracy  float64 `json:"accuracy"`
+	Rows      int     `json:"rows"`
+	Epochs    int     `json:"epochs"`
+	Loss      float64 `json:"loss"`
 }
 
 func TrainHandler(w http.ResponseWriter, r *http.Request) {
@@ -253,12 +256,12 @@ func MultiTrainHandler(w http.ResponseWriter, r *http.Request) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
-	for i, filePath := range filePaths {
+	for _, filePath := range filePaths {
 		file, err := os.Open(filePath)
 		if err != nil {
 			continue
 		}
-		fieldName := fmt.Sprintf("file%d", i)
+		fieldName := "file"
 		part, _ := writer.CreateFormFile(fieldName, filepath.Base(filePath))
 		io.Copy(part, file)
 		file.Close()
@@ -343,6 +346,15 @@ queryIDField.Write([]byte(req.QueryID))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	rows := 0
+	if r, ok := flaskResp["rows"].(float64); ok {
+		rows = int(r)
+	}
+	epochs := 0
+	if e, ok := flaskResp["epochs"].(float64); ok {
+		epochs = int(e)
+	}
+	
 	json.NewEncoder(w).Encode(TrainResponse{
 		JobID:     uuid.New().String(),
 		Status:    "success",
@@ -350,6 +362,9 @@ queryIDField.Write([]byte(req.QueryID))
 		ModelName: modelName,
 		ModelPath: modelPath,
 		Accuracy:  accuracy,
+		Rows:      rows,
+		Epochs:    epochs,
+		Loss:      loss,
 	})
 }
 
@@ -413,12 +428,12 @@ func AnalyzeFilesHandler(w http.ResponseWriter, r *http.Request) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
-	for i, filePath := range filePaths {
+	for _, filePath := range filePaths {
 		file, err := os.Open(filePath)
 		if err != nil {
 			continue
 		}
-		fieldName := fmt.Sprintf("file%d", i)
+		fieldName := "file"
 		part, _ := writer.CreateFormFile(fieldName, filepath.Base(filePath))
 		io.Copy(part, file)
 		file.Close()

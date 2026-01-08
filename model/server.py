@@ -452,6 +452,7 @@ def finetune():
         batch_size = int(request.form.get('batch_size', 64))
         target_column = request.form.get('target_column', None)
         query_id = request.form.get('query_id', 'default')
+        analyze_only = request.form.get('analyze_only', 'false').lower() == 'true'
         
         session = get_session(query_id)
         
@@ -520,6 +521,20 @@ def finetune():
         le = LabelEncoder()
         y = le.fit_transform(df[target_col])
         n_classes = len(le.classes_)
+        
+        if analyze_only:
+            n_samples = len(df)
+            smart_epochs = min(20, max(5, n_samples // 1000))
+            smart_batch = min(128, max(32, n_samples // 100))
+            return jsonify({
+                "n_samples": n_samples,
+                "n_classes": n_classes,
+                "n_features": X.shape[1] if 'X' in dir() else len(numeric_df.columns),
+                "target_column": target_col,
+                "smart_epochs": smart_epochs,
+                "smart_batch_size": smart_batch,
+                "classes": le.classes_.tolist()
+            })
         
         scaler = MinMaxScaler()
         X = scaler.fit_transform(X)
@@ -637,7 +652,13 @@ def finetune():
                 eta = "..."
             
             session["epoch"] = current_epoch
-            session["epochs"] = max(epochs, current_epoch + 10) if best_acc < 95 else current_epoch + 5
+            # Early stop olacaksa epochs'u güncelle
+            if best_acc >= 99.0:
+                session["epochs"] = current_epoch
+            elif best_acc >= 95.0 and no_improve >= patience:
+                session["epochs"] = current_epoch
+            else:
+                session["epochs"] = current_epoch + 1
             session["accuracy"] = acc
             session["loss"] = avg_loss
             session["eta"] = eta
@@ -666,6 +687,8 @@ def finetune():
         
         session["status"] = "completed"
         session["accuracy"] = best_acc
+        session["epochs"] = current_epoch
+        session["epoch"] = current_epoch
         training_progress.update(session)
         
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -688,10 +711,12 @@ def finetune():
         return jsonify({
             "status": "success",
             "accuracy": float(best_acc),
-            "epochs": epochs,
+            "epochs": current_epoch,
+            "requested_epochs": epochs,
             "n_classes": n_classes,
             "classes": [str(c) for c in le.classes_],
-            "model_path": ft_path
+            "model_path": ft_path,
+            "rows": len(df)
         })
     except Exception as e:
         import traceback

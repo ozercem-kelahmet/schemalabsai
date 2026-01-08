@@ -202,6 +202,7 @@ resp, err := http.Get(flaskURL)
 	http.HandleFunc("/api/admin/endpoints", enableCORS(handlers.AuthMiddleware(handlers.AdminEndpointsHandler)))
 	http.HandleFunc("/api/admin/config", enableCORS(handlers.AuthMiddleware(handlers.AdminConfigHandler)))
 
+
 	// Organization routes
 	http.HandleFunc("/api/organizations", enableCORS(handlers.AuthMiddleware(handlers.OrganizationsHandler)))
 	http.HandleFunc("/api/organizations/invite/", enableCORS(handlers.AuthMiddleware(handlers.AcceptInviteHandler)))
@@ -248,5 +249,6 @@ resp, err := http.Get(flaskURL)
 	})
 
 	log.Println("SCHEMALABS AI running on http://localhost:" + apiPort)
-	log.Fatal(http.ListenAndServe(":"+apiPort, nil))
+	server := &http.Server{Addr: ":" + apiPort, Handler: nil, MaxHeaderBytes: 1 << 20}
+	log.Fatal(server.ListenAndServe())
 }
