@@ -604,8 +604,8 @@ def finetune():
                 "classes": le.classes_.tolist()
             })
         
-        scaler = MinMaxScaler()
-        X = scaler.fit_transform(X)
+        # Normalize etme - orijinal değerleri kullan
+        X = X.astype(np.float32)
         
         if X.shape[1] < 10:
             pad = np.zeros((X.shape[0], 10 - X.shape[1]), dtype=np.float32)
@@ -681,13 +681,9 @@ def finetune():
                     batch_X = batch_X + noise
                 
                 optimizer.zero_grad()
-                if batches == 0:
-                    print(f"  batch_X: {batch_X.shape}, batch_y: {batch_y.shape}, unique_y: {len(set(batch_y.numpy()))}")
                 out = ft_model(batch_X)
                 logits = out['output']
-                if batches == 0:
-                    print(f"  logits: {logits.shape}, logits_range: [{logits.min().item():.2f}, {logits.max().item():.2f}]")
-                loss = loss_fn(logits, batch_y) + out['midas_loss']
+                loss = loss_fn(logits, batch_y)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(ft_model.parameters(), 1.0)
                 optimizer.step()
