@@ -2,11 +2,34 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
 from flask import Flask, request, jsonify
+import json
+import math
+
+class NaNSafeEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, float):
+            if math.isnan(obj) or math.isinf(obj):
+                return 0.0
+        return super().default(obj)
+    
+    def encode(self, obj):
+        def clean_nan(o):
+            if isinstance(o, dict):
+                return {k: clean_nan(v) for k, v in o.items()}
+            elif isinstance(o, list):
+                return [clean_nan(i) for i in o]
+            elif isinstance(o, float) and (math.isnan(o) or math.isinf(o)):
+                return 0.0
+            return o
+        return super().encode(clean_nan(obj))
+
+app_json_encoder = NaNSafeEncoder
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import pandas as pd
+from model import TabularFoundationModel
 import os
 import sys
 import time
@@ -81,6 +104,7 @@ def smart_column_mapping(df_cols, target_col):
 
 
 app = Flask(__name__)
+app.json_encoder = NaNSafeEncoder
 
 
 class MIDAS(nn.Module):
@@ -175,11 +199,11 @@ print(f"Server ready on port {SERVER_PORT}")
 print("=" * 60)
 
 training_sessions = {}
-training_progress = {"epoch": 0, "epochs": 0, "accuracy": 0, "loss": 0, "status": "idle", "eta": "", "start_time": 0}
+training_progress = {"epoch": 0, "epochs": 0, "accuracy": 0.0, "loss": 0.0, "status": "idle", "eta": "0%", "start_time": 0}
 
 def get_session(query_id):
     if query_id not in training_sessions:
-        training_sessions[query_id] = {"epoch": 0, "epochs": 0, "accuracy": 0, "loss": 0, "status": "idle", "eta": "", "start_time": 0, "query_id": query_id}
+        training_sessions[query_id] = {"epoch": 0, "epochs": 0, "accuracy": 0.0, "loss": 0.0, "status": "idle", "eta": "0%", "start_time": 0, "query_id": query_id}
     return training_sessions[query_id]
 
 
@@ -493,7 +517,7 @@ def finetune():
     """Fine-tune model on user data"""
     try:
         epochs = int(request.form.get('epochs', 10))
-        batch_size = int(request.form.get('batch_size', 64))
+        batch_size = int(request.form.get('batch_size', 256))
         target_column = request.form.get('target_column', None)
         query_id = request.form.get('query_id', 'default')
         analyze_only = request.form.get('analyze_only', 'false').lower() == 'true'
@@ -596,38 +620,30 @@ def finetune():
         # Check if we have V1 features (either directly or via mapping)
         has_v1_features = all(c in df.columns for c in v1_cols[:5]) or (col_mapping and len(col_mapping) >= 5)
         
-        if has_v1_features:
-            sector_model.eval()
-            subsector_model.eval()
-            
-            with torch.no_grad():
-                X_t = torch.FloatTensor(X)
-                sec_logits = sector_model(X_t)
-                sec_probs = F.softmax(sec_logits, dim=1)
-                sec_pred = sec_logits.argmax(1)
-                sub_logits = subsector_model(X_t, sec_pred)
-                sub_probs = F.softmax(sub_logits, dim=1)
-            
-            X = np.hstack([X, sec_probs.numpy(), sub_probs.numpy()])
-            input_dim = 10 + n_sectors + 50
-            print(f"V1 features detected - using base model probs (input_dim={input_dim})")
-        else:
-            input_dim = 10
-            print(f"Custom features - training without base model probs (input_dim={input_dim})")  # 110
+        input_dim = X.shape[1]
+        print(f"Training with {input_dim} features")
         
-        if input_dim > 50:
-            ft_model = nn.Sequential(
-                nn.Linear(input_dim, 256), nn.ReLU(), nn.BatchNorm1d(256), nn.Dropout(0.3),
-                nn.Linear(256, 128), nn.ReLU(), nn.Dropout(0.2),
-                nn.Linear(128, n_classes)
-            )
-        else:
-            ft_model = nn.Sequential(
-                nn.Linear(input_dim, 512), nn.ReLU(), nn.BatchNorm1d(512), nn.Dropout(0.3),
-                nn.Linear(512, 256), nn.ReLU(), nn.BatchNorm1d(256), nn.Dropout(0.2),
-                nn.Linear(256, 128), nn.ReLU(),
-                nn.Linear(128, n_classes)
-            )
+        ft_config = {
+            'd_model': 256,
+            'n_heads': 8,
+            'n_layers': 2,
+            'schema_layers': 2,
+            'n_latents': 64,
+            'n_features': input_dim,
+            'n_classes': n_classes,
+            'vocab_size': 50000,
+            'n_types': 10,
+            'max_cols': max(128, input_dim + 10)
+        }
+        print(f"Creating TabularFoundationModel with config: {ft_config}")
+        try:
+            ft_model = TabularFoundationModel(ft_config)
+            print(f"Model created successfully, params: {sum(p.numel() for p in ft_model.parameters())}")
+        except Exception as e:
+            print(f"ERROR creating model: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
         
         optimizer = AdamW(ft_model.parameters(), lr=1e-3, weight_decay=0.01)
         loss_fn = nn.CrossEntropyLoss()
@@ -638,6 +654,9 @@ def finetune():
         session["start_time"] = time.time()
         training_progress.update(session)
         
+        max_samples_per_epoch = min(len(X), 10000)
+        print(f"Starting training loop: X.shape={X.shape}, epochs={epochs}, batch_size={batch_size}, samples_per_epoch={max_samples_per_epoch}")
+        
         best_acc = 0
         best_state = None
         patience = 10
@@ -646,13 +665,14 @@ def finetune():
         current_epoch = 0
         
         while current_epoch < max_epochs:
+            print(f"Epoch {current_epoch + 1} starting...")
             ft_model.train()
             idx = np.random.permutation(len(X))
             total_loss = 0
             correct = 0
             batches = 0
             
-            for i in range(0, len(X) - batch_size + 1, batch_size):
+            for i in range(0, min(len(X), max_samples_per_epoch) - batch_size + 1, batch_size):
                 batch_idx = idx[i:i+batch_size]
                 batch_X = torch.FloatTensor(X[batch_idx])
                 batch_y = torch.LongTensor(y[batch_idx])
@@ -662,8 +682,9 @@ def finetune():
                     batch_X = batch_X + noise
                 
                 optimizer.zero_grad()
-                logits = ft_model(batch_X)
-                loss = loss_fn(logits, batch_y)
+                out = ft_model(batch_X)
+                logits = out['output']
+                loss = loss_fn(logits, batch_y) + out['midas_loss']
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(ft_model.parameters(), 1.0)
                 optimizer.step()
@@ -674,7 +695,7 @@ def finetune():
             
             scheduler.step()
             current_epoch += 1
-            acc = 100 * correct / len(X)
+            acc = 100 * correct / min(len(X), max_samples_per_epoch)
             avg_loss = total_loss / max(batches, 1)
             
             if acc > best_acc:
@@ -685,8 +706,8 @@ def finetune():
                 no_improve += 1
             
             elapsed = time.time() - session["start_time"]
-            if current_epoch > 1:
-                time_per_epoch = elapsed / current_epoch
+            if current_epoch >= 1:
+                time_per_epoch = elapsed / max(current_epoch, 1)
                 if best_acc < 95:
                     est_remaining = max(20, epochs - current_epoch)
                 else:
@@ -810,3 +831,89 @@ def list_files():
 if __name__ == '__main__':
     from waitress import serve
     serve(app, host='0.0.0.0', port=SERVER_PORT, threads=4)
+
+@app.route('/predict/finetuned', methods=['POST'])
+def predict_finetuned():
+    try:
+        data = request.json
+        values = np.array(data['values'], dtype=np.float32)
+        model_id = data.get('model_id', '')
+        
+        if values.ndim == 1:
+            values = values.reshape(1, -1)
+        
+        checkpoints_dir = '../checkpoints'
+        model_path = None
+        for f in os.listdir(checkpoints_dir):
+            if model_id in f and f.endswith('.pt'):
+                model_path = os.path.join(checkpoints_dir, f)
+                break
+        
+        if not model_path:
+            return jsonify({"error": "Model not found"}), 404
+        
+        checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
+        
+        config = {
+            'd_model': 256,
+            'n_heads': 8,
+            'n_latents': 32,
+            'n_features': checkpoint.get('n_features', 10),
+            'n_classes': checkpoint.get('n_classes', 10),
+            'vocab_size': 50000,
+            'n_types': 10,
+            'max_cols': 64
+        }
+        
+        model = TabularFoundationModel(config)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        model.eval()
+        
+        if values.shape[1] != config['n_features']:
+            if values.shape[1] < config['n_features']:
+                pad = np.zeros((values.shape[0], config['n_features'] - values.shape[1]), dtype=np.float32)
+                values = np.hstack([values, pad])
+            else:
+                values = values[:, :config['n_features']]
+        
+        X_t = torch.FloatTensor(values)
+        
+        with torch.no_grad():
+            out = model(X_t)
+            logits = out['output']
+            probs = F.softmax(logits, dim=1)
+            conf, pred = probs.max(1)
+        
+        class_names = checkpoint.get('class_names', [])
+        
+        results = []
+        for i in range(len(values)):
+            pred_id = pred[i].item()
+            pred_name = class_names[pred_id] if pred_id < len(class_names) else f"class_{pred_id}"
+            results.append({
+                "class": pred_name,
+                "class_id": pred_id,
+                "confidence": float(conf[i].item()),
+                "probabilities": probs[i].tolist()
+            })
+        
+        if model.online_learning_enabled and 'label' in data:
+            labels = torch.LongTensor(data['label'])
+            model.self_learn(X_t, labels)
+            torch.save({
+                'model_state_dict': model.state_dict(),
+                'n_features': config['n_features'],
+                'n_classes': config['n_classes'],
+                'class_names': class_names,
+                'feature_cols': checkpoint.get('feature_cols', [])
+            }, model_path)
+        
+        return jsonify({
+            "predictions": results,
+            "model_id": model_id,
+            "status": "success"
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
