@@ -651,6 +651,11 @@ def finetune():
         
         session["status"] = "training"
         session["start_time"] = time.time()
+        session["epochs"] = epochs
+        session["epoch"] = 0
+        session["accuracy"] = 0.0
+        session["loss"] = 0.0
+        session["eta"] = "calculating..."
         training_progress.update(session)
         
         max_samples_per_epoch = min(len(X), 10000)
