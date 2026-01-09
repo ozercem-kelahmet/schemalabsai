@@ -648,7 +648,6 @@ def finetune():
         optimizer = AdamW(ft_model.parameters(), lr=1e-3, weight_decay=0.01)
         loss_fn = nn.CrossEntropyLoss()
         
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5)
         
         session["status"] = "training"
         session["start_time"] = time.time()
@@ -682,8 +681,12 @@ def finetune():
                     batch_X = batch_X + noise
                 
                 optimizer.zero_grad()
+                if batches == 0:
+                    print(f"  batch_X: {batch_X.shape}, batch_y: {batch_y.shape}, unique_y: {len(set(batch_y.numpy()))}")
                 out = ft_model(batch_X)
                 logits = out['output']
+                if batches == 0:
+                    print(f"  logits: {logits.shape}, logits_range: [{logits.min().item():.2f}, {logits.max().item():.2f}]")
                 loss = loss_fn(logits, batch_y) + out['midas_loss']
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(ft_model.parameters(), 1.0)
@@ -693,7 +696,6 @@ def finetune():
                 correct += (logits.argmax(1) == batch_y).sum().item()
                 batches += 1
             
-            scheduler.step()
             current_epoch += 1
             acc = 100 * correct / min(len(X), max_samples_per_epoch)
             avg_loss = total_loss / max(batches, 1)
