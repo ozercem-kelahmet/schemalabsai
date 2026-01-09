@@ -761,7 +761,6 @@ def finetune():
         torch.save({
             'model_state_dict': ft_model.state_dict(),
             'model_type': 'v1_finetune',
-            'scaler': scaler,
             'encoder': le,
             'class_names': [str(c) for c in le.classes_],
             'feature_cols': numeric_cols[:10],
