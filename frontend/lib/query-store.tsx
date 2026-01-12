@@ -17,6 +17,7 @@ type AddQueryInput = {
   id?: string
   name: string
   dataSources?: string[]
+  fileId?: string
   model?: string
   isTraining?: boolean
   hasModel?: boolean
@@ -113,6 +114,7 @@ export function QueryStoreProvider({ children }: { children: ReactNode }) {
           name: newQuery.name,
           model: newQuery.model,
           data_sources: newQuery.dataSources,
+          file_id: input.fileId || "",
           is_training: newQuery.isTraining,
           has_model: newQuery.hasModel,
           training_model_id: newQuery.trainingModelId

@@ -248,7 +248,7 @@ export default function PlaygroundPage() {
     if (!projectName.trim() || !selectedExistingModel) return
     
     try {
-      const response = await api.createQuery(projectName, selectedLLM, [selectedExistingModel])
+      console.log("DEBUG fineTunedModels:", JSON.stringify(fineTunedModels)); console.log("DEBUG selectedExistingModel:", selectedExistingModel); const selectedModel = fineTunedModels.find(m => m.id === selectedExistingModel); console.log("DEBUG selectedModel:", selectedModel); const fileId = selectedModel?.source_file_id || ""; const response = await api.createQuery(projectName, selectedLLM, [selectedExistingModel], fileId)
       addQuery({
         id: response.id,
         name: projectName,

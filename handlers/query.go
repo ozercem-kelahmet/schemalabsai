@@ -13,6 +13,7 @@ type CreateQueryRequest struct {
 	Name            string   `json:"name"`
 	Model           string   `json:"model"`
 	DataSources     []string `json:"data_sources"`
+	FileID          string   `json:"file_id"`
 	IsTraining      bool     `json:"is_training"`
 	HasModel        bool     `json:"has_model"`
 	TrainingModelID *string  `json:"training_model_id"`
@@ -23,6 +24,7 @@ type QueryResponse struct {
 	Name            string   `json:"name"`
 	Model           string   `json:"model"`
 	DataSources     []string `json:"data_sources"`
+	FileID          string   `json:"file_id"`
 	IsTraining      bool     `json:"is_training"`
 	HasModel        bool     `json:"has_model"`
 	TrainingModelID *string  `json:"training_model_id"`
@@ -70,9 +72,14 @@ func CreateQueryHandler(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Printf("QUERY CREATED: id=%s, name=%s\n", queryID, req.Name)
 
-	// Link files to query
-	for _, fileID := range req.DataSources {
-		DB.Create(&QueryFile{QueryID: queryID, FileID: fileID})
+	// Link files to query - use FileID if provided
+	if req.FileID != "" {
+		if err := DB.Create(&QueryFile{QueryID: queryID, FileID: req.FileID}).Error; err != nil { fmt.Printf("DB ERROR: %v\n", err) }
+		fmt.Printf("LINKED FILE: query=%s, file=%s\n", queryID, req.FileID)
+	} else {
+		for _, fileID := range req.DataSources {
+			DB.Create(&QueryFile{QueryID: queryID, FileID: fileID})
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

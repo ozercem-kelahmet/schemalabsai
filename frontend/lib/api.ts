@@ -283,12 +283,12 @@ export const api = {
     return res.json()
   },
 
-  createQuery: async (name: string, model: string, dataSources: string[]) => {
+  createQuery: async (name: string, model: string, dataSources: string[], fileId?: string) => {
     const res = await fetch(API_BASE + '/queries/create', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, model, data_sources: dataSources })
+      body: JSON.stringify({ name, model, data_sources: dataSources, file_id: fileId })
     })
     return res.json()
   },

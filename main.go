@@ -87,12 +87,15 @@ func main() {
 	apiPort := getEnv("API_PORT", "8080")
 	pythonPath := getEnv("PYTHON_PATH", "/opt/homebrew/bin/python3.11")
 
+	// Kill API and Flask ports to ensure fresh start
+	killPort(flaskPort)
+	killPort(apiPort)
 	log.Println("SCHEMALABS AI - Starting services...")
 	log.Printf("Flask: %s, Frontend: %s, API: %s", flaskPort, frontendPort, apiPort)
 
 	// Only start services if not already running
 	if !isPortInUse(flaskPort) {
-		go startFlaskServer(pythonPath)
+		log.Println("Starting Flask server..."); go startFlaskServer(pythonPath)
 	} else {
 		log.Println("Flask already running on port", flaskPort)
 	}

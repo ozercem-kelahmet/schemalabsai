@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { Sidebar } from "@/components/sidebar"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
@@ -86,9 +86,13 @@ function parseCharts(text: string): { content: string; charts: ChartData[] } {
       charts.push({
         type,
         labels: labelsMatch[1].split(',').map(s => s.trim()),
-        values: valuesMatch[1].split(',').map(s => parseFloat(s.trim())),
-        values2: values2Match ? values2Match[1].split(',').map(s => parseFloat(s.trim())) : undefined,
-        values3: values3Match ? values3Match[1].split(',').map(s => parseFloat(s.trim())) : undefined,
+        values: valuesMatch[1].split(',').map(s => {
+          const cleaned = s.trim().replace(/[^0-9.-]/g, '')
+          const num = parseFloat(cleaned)
+          return isNaN(num) ? 0 : num
+        }),
+        values2: values2Match ? values2Match[1].split(',').map(s => parseFloat(s.trim().replace(/,/g, "")) || 0) : undefined,
+        values3: values3Match ? values3Match[1].split(',').map(s => parseFloat(s.trim().replace(/,/g, "")) || 0) : undefined,
         title: titleMatch ? titleMatch[1].trim() : '',
         xlabel: xlabelMatch ? xlabelMatch[1].trim() : undefined,
         ylabel: ylabelMatch ? ylabelMatch[1].trim() : undefined,
@@ -250,7 +254,7 @@ function AdvancedChart({ type, labels, values, values2, values3, title, xlabel, 
 
   // 5. LINE CHART
   if (type === 'line') {
-    const width = 320, height = 180, padding = 45
+    const width = 450, height = 180, padding = 45
     const chartWidth = width - padding * 2, chartHeight = height - padding * 2
     const range = maxValue - minValue || 1
     const points = values.map((v, i) => ({
@@ -300,7 +304,7 @@ function AdvancedChart({ type, labels, values, values2, values3, title, xlabel, 
 
   // 6. MULTI-LINE CHART
   if (type === 'multiline' && values2) {
-    const width = 320, height = 180, padding = 45
+    const width = 450, height = 180, padding = 45
     const chartWidth = width - padding * 2, chartHeight = height - padding * 2
     const allMax = Math.max(...values, ...values2)
     const allMin = Math.min(...values, ...values2)
@@ -336,7 +340,7 @@ function AdvancedChart({ type, labels, values, values2, values3, title, xlabel, 
 
   // 7. AREA CHART
   if (type === 'area') {
-    const width = 320, height = 160, padding = 45
+    const width = 450, height = 160, padding = 45
     const chartWidth = width - padding * 2, chartHeight = height - padding * 2
     const range = maxValue - minValue || 1
     const points = values.map((v, i) => ({
@@ -465,7 +469,7 @@ function AdvancedChart({ type, labels, values, values2, values3, title, xlabel, 
     return (
       <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl shadow-sm relative">
         {title && <p className="text-sm font-semibold mb-3 text-gray-700">{title}</p>}
-        <svg width="180" height="110" viewBox="0 0 180 110" className="mx-auto">
+        <svg width="280" height="110" viewBox="0 0 180 110" className="mx-auto">
           <path d="M 20 90 A 70 70 0 0 1 160 90" fill="none" stroke="#e5e7eb" strokeWidth="14" strokeLinecap="round" />
           <path d={`M 20 90 A 70 70 0 ${pct > 50 ? 1 : 0} 1 ${90 + 70 * Math.cos(angle * Math.PI / 180)} ${90 + 70 * Math.sin(angle * Math.PI / 180)}`}
             fill="none" stroke={color} strokeWidth="14" strokeLinecap="round" />
@@ -478,7 +482,7 @@ function AdvancedChart({ type, labels, values, values2, values3, title, xlabel, 
 
   // 11. SCATTER PLOT
   if (type === 'scatter' && values2) {
-    const width = 300, height = 200, padding = 40
+    const width = 420, height = 200, padding = 40
     const xMax = Math.max(...values), xMin = Math.min(...values)
     const yMax = Math.max(...values2), yMin = Math.min(...values2)
     const xRange = xMax - xMin || 1, yRange = yMax - yMin || 1
@@ -885,22 +889,68 @@ function MessageBubble({ message, userName, compact = false }: { message: Messag
       const parseRow = (line: string) => line.split("|").map(c => c.trim()).filter(c => c)
       const headers = parseRow(rows[0])
       const dataRows = rows.slice(1).map(parseRow)
-      return (
-        <div key={"table-" + resultIndex++} className="overflow-x-auto my-3">
-          <table className="min-w-full border border-gray-200 rounded-lg text-xs">
-            <thead className="bg-gray-100">
-              <tr>{headers.map((h, i) => <th key={i} className="px-3 py-2 text-left font-semibold border-b border-gray-200">{renderFormattedText(h, "th-" + i)}</th>)}</tr>
-            </thead>
-            <tbody>
-              {dataRows.map((row, i) => (
-                <tr key={i} className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}>
-                  {row.map((cell, j) => <td key={j} className="px-3 py-2 border-b border-gray-200">{renderFormattedText(cell, "td-" + i + "-" + j)}</td>)}
+      
+      const SortableTable = () => {
+        const [sortCol, setSortCol] = useState<number | null>(null)
+        const [sortAsc, setSortAsc] = useState(true)
+        
+        const sortedRows = useMemo(() => {
+          if (sortCol === null) return dataRows
+          return [...dataRows].sort((a, b) => {
+            const aVal = a[sortCol] || ""
+            const bVal = b[sortCol] || ""
+            const aNum = parseFloat(aVal.replace(/[^0-9.-]/g, ""))
+            const bNum = parseFloat(bVal.replace(/[^0-9.-]/g, ""))
+            if (!isNaN(aNum) && !isNaN(bNum)) {
+              return sortAsc ? aNum - bNum : bNum - aNum
+            }
+            return sortAsc ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal)
+          })
+        }, [sortCol, sortAsc])
+        
+        const handleSort = (colIdx: number) => {
+          if (sortCol === colIdx) {
+            setSortAsc(!sortAsc)
+          } else {
+            setSortCol(colIdx)
+            setSortAsc(true)
+          }
+        }
+        
+        return (
+          <div className="overflow-x-auto my-3">
+            <table className="min-w-full border border-gray-200 rounded-lg text-xs">
+              <thead className="bg-gray-100">
+                <tr>
+                  {headers.map((h, i) => (
+                    <th 
+                      key={i} 
+                      className="px-3 py-2 text-left font-semibold border-b border-gray-200 cursor-pointer hover:bg-gray-200 select-none"
+                      onClick={() => handleSort(i)}
+                    >
+                      <div className="flex items-center gap-1">
+                        {renderFormattedText(h, "th-" + i)}
+                        <span className="text-gray-400 text-[10px]">
+                          {sortCol === i ? (sortAsc ? "▲" : "▼") : "⇅"}
+                        </span>
+                      </div>
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )
+              </thead>
+              <tbody>
+                {sortedRows.map((row, i) => (
+                  <tr key={i} className={i % 2 === 0 ? "bg-white hover:bg-blue-50" : "bg-gray-50 hover:bg-blue-50"}>
+                    {row.map((cell, j) => <td key={j} className="px-3 py-2 border-b border-gray-200">{renderFormattedText(cell, "td-" + i + "-" + j)}</td>)}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      }
+      
+      return <SortableTable key={"table-" + resultIndex++} />
     }
 
     const renderList = (items: string[]) => {
@@ -984,7 +1034,7 @@ function MessageBubble({ message, userName, compact = false }: { message: Messag
 
   return (
     <div className={"flex w-full " + (isUser ? "justify-end" : "justify-start")}>
-      <div className={"flex gap-2 sm:gap-3 " + (compact ? "max-w-full" : "max-w-[85%]") + " " + (isUser ? "flex-row-reverse" : "flex-row")}>
+      <div className={"flex gap-2 sm:gap-3 " + (compact ? "max-w-full" : "w-full") + " " + (isUser ? "flex-row-reverse" : "flex-row")}>
         <div
           className={"flex-shrink-0 rounded-full flex items-center justify-center " + 
             (compact ? "w-6 h-6 " : "w-7 h-7 sm:w-8 sm:h-8 ") +
@@ -1135,6 +1185,12 @@ export default function PlaygroundQueryPage() {
   ])
 
   useEffect(() => {
+    if (currentQuery?.model) {
+      setSelectedModel(currentQuery.model)
+    }
+  }, [currentQuery?.model])
+
+  useEffect(() => {
     loadFiles()
   }, [])
 
@@ -1181,6 +1237,12 @@ export default function PlaygroundQueryPage() {
     if (currentQuery?.model) {
       setSelectedModel(currentQuery.model)
     }
+  }, [currentQuery?.model])
+
+  useEffect(() => {
+    if (currentQuery?.model) {
+      setSelectedModel(currentQuery.model)
+    }
   }, [currentQuery])
 
   const loadFiles = async () => {
@@ -1194,7 +1256,13 @@ export default function PlaygroundQueryPage() {
 
 
   useEffect(() => {
-    if (currentQuery && uploadedFiles.length > 0 && !hasInitializedChat) {
+    if (currentQuery?.model) {
+      setSelectedModel(currentQuery.model)
+    }
+  }, [currentQuery?.model])
+
+  useEffect(() => {
+    if (currentQuery && uploadedFiles.length > 0 && !hasInitializedChat) { 
       let files = currentQuery.dataSources
         .map(id => uploadedFiles.find(f => f.file_id === id))
         .filter(Boolean) as UploadedFile[]
@@ -1243,6 +1311,12 @@ export default function PlaygroundQueryPage() {
       }
     }
   }, [currentQuery, uploadedFiles, hasInitializedChat])
+
+  useEffect(() => {
+    if (currentQuery?.model) {
+      setSelectedModel(currentQuery.model)
+    }
+  }, [currentQuery?.model])
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -1395,6 +1469,7 @@ export default function PlaygroundQueryPage() {
           query_id: queryId,
             filename: primaryFile?.filename || "Unknown",
             model: pane.model,
+            finetuned_model: currentQuery?.trainingModelId || "",
             data_context: buildDataContext(),
           })
           const endTime = Date.now()
@@ -1412,6 +1487,7 @@ export default function PlaygroundQueryPage() {
             tokens: 0,
             time: "0s",
             model: pane.model,
+            finetuned_model: currentQuery?.trainingModelId || "",
           }
         }
       })

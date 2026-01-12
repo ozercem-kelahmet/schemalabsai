@@ -329,7 +329,7 @@ export default function LoginPage() {
         </div>
 
         <p className="text-background/40 text-sm">
-          © 2024 Schema Labs. All rights reserved.
+          © 2026 Schema Labs. All rights reserved.
         </p>
       </div>
 

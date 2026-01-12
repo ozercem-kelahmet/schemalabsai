@@ -159,12 +159,18 @@ if mid, ok := flaskResp["model_id"].(string); ok {
 modelID = mid
 }
 
+// Check for merged file ID from Flask
+mergedFileID := ""
+if mfid, ok := flaskResp["merged_file_id"].(string); ok && mfid != "" {
+mergedFileID = mfid
+}
+
 	if DB != nil && userID != "" {
 		ftModel := FineTunedModel{
 			ID:           uuid.New().String(),
 			Name:         modelName,
 			Version:      version,
-			SourceFileID: req.FileID,
+			SourceFileID: func() string { if mergedFileID != "" { return mergedFileID }; return req.FileID }(),
 			SourceName:   baseName,
 			ModelPath:    modelPath,
 			Accuracy:     accuracy,
@@ -365,6 +371,7 @@ modelID := ""
 if mid, ok := flaskResp["model_id"].(string); ok {
 modelID = mid
 }
+
 	json.NewEncoder(w).Encode(TrainResponse{
 		JobID:     uuid.New().String(),
 		Status:    "success",

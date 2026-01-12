@@ -15,6 +15,7 @@ import {
   Pencil,
   Trash2,
   ChevronRight,
+  Folder,
   FileSpreadsheet,
   Server,
   Copy,
@@ -85,6 +86,12 @@ interface UploadedFile {
   filename: string
   path: string
   size: number
+  folder_id?: string | null
+}
+
+interface FolderType {
+  id: string
+  name: string
 }
 
 interface FineTunedModel {
@@ -136,6 +143,7 @@ function SidebarInner() {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
   const [fineTunedModels, setFineTunedModels] = useState<FineTunedModel[]>([])
   const [connections, setConnections] = useState<any[]>([])
+  const [folders, setFolders] = useState<FolderType[]>([])
   
   const [dbTables, setDbTables] = useState<{[key: string]: string[]}>({})
   const [isTraining, setIsTraining] = useState(false)
@@ -262,14 +270,16 @@ function SidebarInner() {
 
   const loadData = async () => {
     try {
-      const [filesData, modelsData, connectionsData] = await Promise.all([
+      const [filesData, modelsData, connectionsData, foldersData] = await Promise.all([
         api.getUploadedFiles(),
         api.getFineTunedModels(),
-        api.getConnections()
+        api.getConnections(),
+        api.getFolders()
       ])
       setUploadedFiles(filesData.files || [])
       setFineTunedModels(modelsData.models || [])
       setConnections(connectionsData.connections || [])
+      setFolders(foldersData.folders || [])
     } catch (error) {
       console.error("Failed to load data:", error)
     }
@@ -469,10 +479,16 @@ function SidebarInner() {
     setIsProcessing(true)
     setIsNewChatOpen(false)
 
+    const selectedModelData = fineTunedModels.find(m => m.id === selectedExistingModel)
+    const fileId = selectedModelData?.source_file_id || ""
+    console.log("DEBUG sidebar fileId:", fileId)
+    
     const newQuery = await addQuery({
       name: projectName,
       model: selectedModel,
       dataSources: [selectedExistingModel],
+      trainingModelId: selectedExistingModel,
+      fileId: fileId,
       hasModel: true
     })
 
@@ -609,14 +625,15 @@ function SidebarInner() {
                               </div>
                               
                               <div className="rounded-lg border border-border bg-secondary/30 max-h-[280px] overflow-y-auto">
+                                {/* Uploaded Files - main collapsible with folders inside */}
                                 <Collapsible open={expandedFolders.includes("files")} onOpenChange={() => toggleFolder("files")}>
                                   <div className="flex items-center gap-2 px-3 py-2 border-b border-border/50 bg-secondary/50 hover:bg-secondary/80 transition-colors">
                                     <Checkbox
-                                      checked={allFilesSelected}
-                                      ref={(el) => { if (el) (el as any).indeterminate = someFilesSelected }}
+                                      checked={uploadedFiles.length > 0 && uploadedFiles.every(f => selectedFiles.includes(f.file_id))}
+                                      ref={(el) => { if (el) (el as any).indeterminate = uploadedFiles.some(f => selectedFiles.includes(f.file_id)) && !uploadedFiles.every(f => selectedFiles.includes(f.file_id)) }}
                                       onCheckedChange={(checked) => {
                                         if (checked) {
-                                          setSelectedFiles(uploadedFiles.map(f => f.file_id))
+                                          setSelectedFiles(prev => [...new Set([...prev, ...uploadedFiles.map(f => f.file_id)])])
                                         } else {
                                           setSelectedFiles([])
                                         }
@@ -627,39 +644,83 @@ function SidebarInner() {
                                         <ChevronRight className={cn("h-4 w-4 text-muted-foreground transition-transform", expandedFolders.includes("files") && "rotate-90")} />
                                         <FileSpreadsheet className="h-4 w-4 text-muted-foreground" />
                                         <span className="text-sm font-medium flex-1">Uploaded Files</span>
-                                        <span className="text-xs text-muted-foreground">{selectedFiles.length}/{uploadedFiles.length}</span>
+                                        <span className="text-xs text-muted-foreground">{uploadedFiles.filter(f => selectedFiles.includes(f.file_id)).length}/{uploadedFiles.length}</span>
                                       </button>
                                     </CollapsibleTrigger>
                                   </div>
                                   <CollapsibleContent>
                                     <div className="p-2 space-y-2">
-                                      {uploadedFiles.length === 0 ? (
-                                        <p className="text-xs text-muted-foreground px-2 py-4 text-center">No files uploaded yet. Go to Data Sources to upload.</p>
-                                      ) : (
-                                        uploadedFiles.map((file) => {
-                                          const isSelected = selectedFiles.includes(file.file_id)
-                                          return (
-                                            <div
-                                              key={file.file_id}
-                                              onClick={() => toggleFileSelection(file.file_id)}
-                                              className={cn(
-                                                "flex items-center gap-3 rounded-lg border p-2 transition-colors cursor-pointer",
-                                                isSelected ? "border-green-500 bg-green-500/5" : "border-border bg-background hover:bg-secondary/50"
-                                              )}
-                                            >
-                                              <Checkbox checked={isSelected} onCheckedChange={() => toggleFileSelection(file.file_id)} onClick={(e) => e.stopPropagation()} />
-                                              <div className="rounded-lg bg-secondary p-2">
-                                                <FileSpreadsheet className="h-4 w-4 text-primary" />
-                                              </div>
-                                              <div className="flex-1 min-w-0">
-                                                <p className="font-medium text-sm text-foreground truncate">{file.filename}</p>
-                                                <span className="text-xs text-muted-foreground">{formatFileSize(file.size)}</span>
-                                              </div>
-                                              {isSelected && <Badge className="bg-green-500/10 text-green-600 border-green-500/30 text-xs">Selected</Badge>}
+                                      {/* Unfiled files first */}
+                                      {uploadedFiles.filter(f => !f.folder_id).map((file) => {
+                                        const isSelected = selectedFiles.includes(file.file_id)
+                                        return (
+                                          <div key={file.file_id} onClick={() => toggleFileSelection(file.file_id)}
+                                            className={cn("flex items-center gap-3 rounded-lg border p-2 transition-colors cursor-pointer overflow-hidden",
+                                              isSelected ? "border-green-500 bg-green-500/5" : "border-border bg-secondary/30 hover:bg-secondary/50")}>
+                                            <Checkbox checked={isSelected} onCheckedChange={() => toggleFileSelection(file.file_id)} onClick={(e) => e.stopPropagation()} />
+                                            <div className="rounded-lg bg-secondary p-2"><FileSpreadsheet className="h-4 w-4 text-primary" /></div>
+                                            <div className="flex-1 min-w-0">
+                                              <p className="font-medium text-sm text-foreground truncate max-w-[200px]">{file.filename}</p>
+                                              <span className="text-xs text-muted-foreground">{formatFileSize(file.size)}</span>
                                             </div>
-                                          )
-                                        })
-                                      )}
+                                            {isSelected && <Badge className="bg-green-500/10 text-green-600 border-green-500/30 text-xs shrink-0">Selected</Badge>}
+                                          </div>
+                                        )
+                                      })}
+                                      
+                                      {/* Folders */}
+                                      {folders.map((folder) => {
+                                        const folderFiles = uploadedFiles.filter(f => f.folder_id === folder.id)
+                                        if (folderFiles.length === 0) return null
+                                        const allFolderSelected = folderFiles.every(f => selectedFiles.includes(f.file_id))
+                                        const someFolderSelected = folderFiles.some(f => selectedFiles.includes(f.file_id)) && !allFolderSelected
+                                        return (
+                                          <Collapsible key={folder.id} open={expandedFolders.includes(folder.id)} onOpenChange={() => toggleFolder(folder.id)}>
+                                            <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg border border-border/50 bg-secondary/30 hover:bg-secondary/50 transition-colors">
+                                              <Checkbox
+                                                checked={allFolderSelected}
+                                                ref={(el) => { if (el) (el as any).indeterminate = someFolderSelected }}
+                                                onCheckedChange={(checked) => {
+                                                  if (checked) {
+                                                    setSelectedFiles(prev => [...new Set([...prev, ...folderFiles.map(f => f.file_id)])])
+                                                  } else {
+                                                    setSelectedFiles(prev => prev.filter(id => !folderFiles.find(f => f.file_id === id)))
+                                                  }
+                                                }}
+                                                onClick={(e) => e.stopPropagation()}
+                                              />
+                                              <CollapsibleTrigger asChild>
+                                                <button className="flex items-center gap-2 flex-1 text-left">
+                                                  <ChevronRight className={cn("h-3 w-3 text-muted-foreground transition-transform", expandedFolders.includes(folder.id) && "rotate-90")} />
+                                                  <Folder className="h-4 w-4 text-muted-foreground" />
+                                                  <span className="text-sm font-medium flex-1 truncate max-w-[120px]">{folder.name}</span>
+                                                  <span className="text-xs text-muted-foreground">{folderFiles.filter(f => selectedFiles.includes(f.file_id)).length}/{folderFiles.length}</span>
+                                                </button>
+                                              </CollapsibleTrigger>
+                                            </div>
+                                            <CollapsibleContent>
+                                              <div className="ml-4 mt-2 space-y-2">
+                                                {folderFiles.map((file) => {
+                                                  const isSelected = selectedFiles.includes(file.file_id)
+                                                  return (
+                                                    <div key={file.file_id} onClick={() => toggleFileSelection(file.file_id)}
+                                                      className={cn("flex items-center gap-3 rounded-lg border p-2 transition-colors cursor-pointer overflow-hidden",
+                                                        isSelected ? "border-green-500 bg-green-500/5" : "border-border bg-secondary/30 hover:bg-secondary/50")}>
+                                                      <Checkbox checked={isSelected} onCheckedChange={() => toggleFileSelection(file.file_id)} onClick={(e) => e.stopPropagation()} />
+                                                      <div className="rounded-lg bg-secondary p-2"><FileSpreadsheet className="h-4 w-4 text-primary" /></div>
+                                                      <div className="flex-1 min-w-0">
+                                                        <p className="font-medium text-sm text-foreground truncate max-w-[200px]">{file.filename}</p>
+                                                        <span className="text-xs text-muted-foreground">{formatFileSize(file.size)}</span>
+                                                      </div>
+                                                      {isSelected && <Badge className="bg-green-500/10 text-green-600 border-green-500/30 text-xs shrink-0">Selected</Badge>}
+                                                    </div>
+                                                  )
+                                                })}
+                                              </div>
+                                            </CollapsibleContent>
+                                          </Collapsible>
+                                        )
+                                      })}
                                     </div>
                                   </CollapsibleContent>
                                 </Collapsible>
@@ -684,7 +745,7 @@ function SidebarInner() {
                                             <div
                                               onClick={() => toggleFileSelection(conn.id)}
                                               className={cn(
-                                                "flex items-center gap-3 rounded-lg border p-2 transition-colors cursor-pointer",
+                                                "flex items-center gap-3 rounded-lg border p-2 transition-colors cursor-pointer overflow-hidden",
                                                 selectedFiles.includes(conn.id) ? "border-green-500 bg-green-500/5" : "border-border bg-background hover:bg-secondary/50"
                                               )}
                                             >
@@ -953,9 +1014,9 @@ function SidebarInner() {
                             >
                               <Loader2 className="h-4 w-4 animate-spin mr-1" />
                               <span className="text-xs text-emerald-500 mr-1">
-                                {trainingStates[query.id] ? `${trainingStates[query.id].epoch}/${trainingStates[query.id].epochs}` : "Training..."}
+                                {trainingStates[query.id] ? `Training ${trainingStates[query.id].epoch}/${trainingStates[query.id].epochs}` : "Training..."}
                               </span>
-                              <span className="truncate">{query.name}</span>
+                              <span className="truncate max-w-[120px] block">{query.name}</span>
                             </SidebarMenuButton>
                           ) : (
                             <SidebarMenuButton 
@@ -964,7 +1025,7 @@ function SidebarInner() {
                               className="pl-7"
                               onClick={() => handleQueryClick(query)}
                             >
-                              <span className="truncate">{query.name}</span>
+                              <span className="truncate max-w-[120px] block">{query.name}</span>
                             </SidebarMenuButton>
                           )}
                         </ContextMenuTrigger>

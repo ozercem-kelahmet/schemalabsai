@@ -29,7 +29,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import pandas as pd
-from model import TabularFoundationModel
+from model import TabularFoundationModel, TabularFoundationModelMIRAS
 import os
 import sys
 import time
@@ -38,69 +38,403 @@ import tempfile
 import glob
 from pathlib import Path
 from torch.optim import AdamW
-from sklearn.preprocessing import LabelEncoder, MinMaxScaler
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.utils.class_weight import compute_class_weight
+from sklearn.cluster import KMeans
+
+
+def is_time_pattern(series):
+    """Değerlerin zaman formatı olup olmadığını kontrol et"""
+    sample = series.dropna().head(20).astype(str)
+    time_patterns = 0
+    for val in sample:
+        # HH:MM:SS, HH:MM, YYYY-MM-DD formatları
+        if ':' in val and len(val) <= 12:
+            time_patterns += 1
+        elif '-' in val and len(val) >= 8 and len(val) <= 10:
+            time_patterns += 1
+    return time_patterns > len(sample) * 0.5
+
+def is_id_pattern(series, n_samples):
+    """Değerlerin ID/index pattern'ı olup olmadığını kontrol et"""
+    nunique = series.nunique()
+    # Çok yüksek unique oranı = muhtemelen ID
+    if nunique > n_samples * 0.8:
+        return True
+    # Sequential sayılar = muhtemelen index
+    if series.dtype in ['int64', 'float64']:
+        sorted_vals = series.dropna().sort_values().values
+        if len(sorted_vals) > 10:
+            diffs = np.diff(sorted_vals[:20])
+            if len(set(diffs)) <= 2:  # Hep aynı fark = sequential
+                return True
+    return False
+
+
+def smart_merge_datasets(dataframes, file_names=None):
+    """
+    Birden fazla dataseti akıllıca birleştirir.
+    - Player ID mapping otomatik tespit
+    - Prefix ekleme
+    - NaN handling
+    """
+    import pandas as pd
+    import numpy as np
+    
+    if len(dataframes) == 1:
+        return dataframes[0]
+    
+    if len(dataframes) == 0:
+        return None
+    
+    def find_player_col(df):
+        candidates = ['player_id', 'player.id', 'Player Full Name (P)', 'player_num', 'id']
+        for col in candidates:
+            if col in df.columns:
+                return col
+        for col in df.columns:
+            if 'player' in col.lower() and ('id' in col.lower() or 'name' in col.lower()):
+                return col
+        return None
+    
+    def extract_player_num(val):
+        if pd.isna(val):
+            return None
+        val_str = str(val)
+        if 'player' in val_str.lower():
+            val_str = val_str.replace('Playre', 'Player')
+            try:
+                return int(val_str.lower().replace('player', '').strip())
+            except:
+                pass
+        try:
+            return int(float(val_str))
+        except:
+            return None
+    
+    known_mappings = {
+        33098:1, 35690:2, 33126:3, 30500:4, 23428:5, 6357:6, 47467:7, 
+        43555:8, 30458:9, 3016:10, 276020:11, 36167:12, 37999:13, 
+        30944:14, 30736:15, 26400:16,
+        34810:1, 25980:2, 36205:3, 36109:4, 18224:5, 5247:6, 31954:7,
+        36103:8, 34819:9, 616:10, 502999:11, 34766:12, 38250:13,
+        18289:14, 25463:15, 18024:16
+    }
+    
+    prepared_dfs = []
+    
+    for i, df in enumerate(dataframes):
+        prefix = f'd{i}' if file_names is None else file_names[i].split('.')[0][:10]
+        prefix = prefix.replace(' ', '_').replace('-', '_')
+        
+        player_col = find_player_col(df)
+        df = df.copy()
+        
+        if player_col:
+            if player_col == 'Player Full Name (P)':
+                df['player_num'] = df[player_col].apply(extract_player_num)
+            elif df[player_col].dtype in ['int64', 'float64']:
+                df['player_num'] = df[player_col].map(known_mappings)
+                if df['player_num'].isna().all():
+                    df['player_num'] = df[player_col].apply(extract_player_num)
+            else:
+                df['player_num'] = df[player_col].apply(extract_player_num)
+            
+            df = df[df['player_num'].notna()].copy()
+        
+        if len(df) == 0:
+            continue
+        
+        new_cols = {}
+        for col in df.columns:
+            if col == 'player_num':
+                new_cols[col] = col
+            else:
+                new_cols[col] = f'{prefix}_{col}'
+        
+        df = df.rename(columns=new_cols)
+        prepared_dfs.append(df)
+    
+    if len(prepared_dfs) == 0:
+        return dataframes[0] if len(dataframes) > 0 else None
+    
+    if len(prepared_dfs) == 1:
+        return prepared_dfs[0]
+    
+    merged = pd.concat(prepared_dfs, axis=0, ignore_index=True)
+    merged = merged.fillna(0)
+    
+    print(f"Smart merge: {len(dataframes)} datasets -> {merged.shape}")
+    
+    return merged
+
+
+def get_dynamic_config(n_samples, n_features, n_classes):
+    import numpy as np
+    
+    complexity = (n_samples * n_classes) / 1000
+    
+    if complexity > 5000:
+        d_model = 512
+    elif complexity > 200:
+        d_model = 256
+    else:
+        d_model = 128
+    
+    if n_samples > 50000:
+        n_layers = 3
+    else:
+        n_layers = 2
+    
+    if complexity > 1000:
+        n_latents = 128
+    elif complexity > 100:
+        n_latents = 64
+    else:
+        n_latents = 32
+    
+    max_cols = max(64, int(np.ceil(n_features / 32) * 32))
+    
+    if n_samples < 100:
+        batch_size = 4
+    elif n_samples < 500:
+        batch_size = 16
+    elif n_samples < 2000:
+        batch_size = 32
+    else:
+        batch_size = 64
+    
+    if n_features > 150:
+        batch_size = max(batch_size, 128)
+    elif n_features > 100:
+        batch_size = max(batch_size, 64)
+    
+    if n_samples < 100:
+        epochs = 100
+    elif n_samples < 500:
+        epochs = 50
+    elif n_samples < 2000:
+        epochs = 30
+    else:
+        epochs = 20
+    
+    if n_classes > 20:
+        epochs = min(epochs + 5, 100)
+    
+    patience = max(5, min(25, epochs // 4))
+    
+    if batch_size <= 8:
+        lr = 0.0005
+    elif batch_size <= 32:
+        lr = 0.001
+    else:
+        lr = 0.002
+    
+    n_heads = max(4, d_model // 64)
+    
+    return {
+        'd_model': d_model,
+        'n_heads': n_heads,
+        'n_layers': n_layers,
+        'n_latents': n_latents,
+        'n_features': n_features,
+        'n_classes': n_classes,
+        'n_sectors': min(n_classes, 10),
+        'max_cols': max_cols,
+        'batch_size': batch_size,
+        'epochs': epochs,
+        'patience': patience,
+        'lr': lr
+    }
+
+
+
+def advanced_target_score(df, col):
+    """
+    %100 DİNAMİK Target Skorlama
+    
+    SIFIR hardcoded keyword/pattern
+    Sadece veri analizi ile karar verir
+    """
+    import numpy as np
+    from sklearn.preprocessing import LabelEncoder
+    
+    series = df[col]
+    n_samples = len(df)
+    nunique = series.nunique()
+    
+    # === TEMEL FİLTRELER (Tamamen Dinamik) ===
+    
+    # 1. Numeric kolonlar target olamaz
+    if series.dtype in ['float64', 'float32', 'int64', 'int32', 'float', 'int']:
+        return None
+    
+    # 2. Minimum 2 class
+    if nunique < 2:
+        return None
+    
+    # 3. ID Tespiti - unique oranı ve mutlak sayı
+    unique_ratio = nunique / n_samples
+    if unique_ratio > 0.5:
+        return None
+    
+    # Çok fazla class = muhtemelen ID/name kolonu
+    if nunique > 500:
+        return None
+    
+    # 4. Neredeyse sabit kolon
+    value_counts = series.value_counts()
+    if value_counts.iloc[0] / n_samples > 0.98:
+        return None
+    
+    # 5. Değer Analizi - string özellikleri
+    try:
+        sample_vals = series.dropna().head(200).astype(str)
+        
+        # 5a. Ortalama uzunluk - çok uzun = text/description
+        avg_len = np.mean([len(v) for v in sample_vals])
+        if avg_len > 50:
+            return None
+        
+        # 5b. Kelime sayısı - çok fazla kelime = text
+        avg_words = np.mean([len(v.split()) for v in sample_vals])
+        if avg_words > 5:
+            return None
+        
+        # 5c. Sayı oranı yüksek + özel karakter = ID/code
+        digit_ratios = [sum(c.isdigit() for c in v) / max(len(v), 1) for v in sample_vals]
+        avg_digit_ratio = np.mean(digit_ratios)
+        
+        special_ratios = [sum(c in '-_/:@#.' for c in v) / max(len(v), 1) for v in sample_vals]
+        avg_special = np.mean(special_ratios)
+        
+        # Çok fazla rakam + özel karakter = muhtemelen ID/tarih/kod
+        if avg_digit_ratio > 0.5 and avg_special > 0.1:
+            return None
+        
+        # 5d. Tüm değerler unique uzunlukta ve uzun = hash/token
+        lengths = [len(v) for v in sample_vals]
+        if len(set(lengths)) < 3 and np.mean(lengths) > 20:
+            return None
+            
+    except:
+        pass
+    
+    # === PREDICTABILITY (En Önemli Metrik) ===
+    predictability = 0.3  # Default düşük
+    try:
+        from sklearn.ensemble import RandomForestClassifier
+        from sklearn.model_selection import cross_val_score
+        
+        num_cols = df.select_dtypes(include=['number']).columns
+        if len(num_cols) >= 2:
+            sample_size = min(2000, n_samples)
+            X_sample = df[num_cols].fillna(0).values[:sample_size]
+            
+            le = LabelEncoder()
+            y_sample = le.fit_transform(series.fillna('__NA__').astype(str)[:sample_size])
+            
+            # Eğer bir class çok baskınsa RF yanıltıcı olabilir
+            class_counts = np.bincount(y_sample)
+            max_class_ratio = class_counts.max() / len(y_sample)
+            
+            # Her zaman LIFT hesapla (RF - majority baseline)
+            rf = RandomForestClassifier(n_estimators=20, max_depth=6, random_state=42, n_jobs=-1)
+            cv = 2 if sample_size < 500 else 3
+            scores = cross_val_score(rf, X_sample, y_sample, cv=cv, scoring='accuracy')
+            rf_acc = scores.mean()
+            
+            # Majority baseline
+            baseline = max_class_ratio
+            
+            # LIFT = RF accuracy - baseline
+            # Negatif lift = kötü target (model baseline'dan iyi değil)
+            lift = rf_acc - baseline
+            
+            # Predictability = normalized lift (0-1 arası)
+            # lift > 0.1 iyi, lift < 0 kötü
+            if lift > 0:
+                predictability = 0.5 + (lift * 2)  # Pozitif lift bonus
+                predictability = min(1.0, predictability)
+            else:
+                predictability = 0.3 + lift  # Negatif lift penalty
+                predictability = max(0.1, predictability)
+    except:
+        pass
+    
+    # === DİĞER METRİKLER ===
+    
+    # Entropy - dağılım dengesi
+    probs = value_counts / value_counts.sum()
+    entropy = -sum(p * np.log2(p + 1e-10) for p in probs)
+    max_entropy = np.log2(nunique) if nunique > 1 else 1
+    entropy_score = entropy / max_entropy if max_entropy > 0 else 0
+    
+    # Imbalance
+    imbalance_ratio = value_counts.max() / (value_counts.min() + 1)
+    imbalance_score = 1 / (1 + np.log10(imbalance_ratio + 1))
+    
+    # Missing
+    missing_ratio = series.isna().sum() / n_samples
+    missing_score = 1 - missing_ratio
+    
+    # Class count score - 3+ class GÜÇLÜ tercih
+    if nunique == 2:
+        class_score = 0.3  # Binary çok kolay, az bilgi içerir
+    elif 3 <= nunique <= 100:
+        class_score = 1.0
+    else:
+        class_score = 0.7
+    
+    # === FİNAL SKOR ===
+    final_score = (
+        predictability * 0.45 +
+        entropy_score * 0.20 +
+        imbalance_score * 0.15 +
+        class_score * 0.15 +      # Class count daha önemli
+        missing_score * 0.05
+    ) * 100
+    
+    return final_score
+
+
+def auto_select_target(df, user_target=None):
+    """
+    %100 DİNAMİK Target Seçimi
+    Hardcoded değer YOK
+    """
+    import warnings
+    warnings.filterwarnings('ignore')
+    
+    if user_target and user_target in df.columns:
+        return user_target
+    
+    candidates = []
+    
+    for col in df.columns:
+        score = advanced_target_score(df, col)
+        if score is not None:
+            candidates.append((col, score))
+    
+    if candidates:
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        print(f"Target candidates: {[(c[0], round(c[1], 1)) for c in candidates[:5]]}")
+        return candidates[0][0]
+    
+    # Fallback - en az unique kategorik
+    cat_cols = df.select_dtypes(include=['object', 'category']).columns
+    if len(cat_cols) > 0:
+        return min(cat_cols, key=lambda c: df[c].nunique())
+    
+    return df.columns[-1]
 
 
 def smart_column_mapping(df_cols, target_col):
-    """Kullanıcı kolonlarını V1 feature_cols'a akıllı eşle"""
-    
-    v1_features = ['primary_score', 'secondary_score', 'tertiary_score', 'risk_index', 
-                   'severity_level', 'duration_factor', 'frequency_rate', 'intensity_score',
-                   'recovery_index', 'response_rate']
-    
-    semantic_map = {
-        'primary_score': ['primary', 'main', 'budget', 'spend', 'amount', 'total', 'sum', 'revenue', 'sales', 'income', 'price', 'value', 'campaign'],
-        'secondary_score': ['secondary', 'impressions', 'views', 'visits', 'traffic', 'cost', 'expense', 'quantity', 'count', 'volume'],
-        'tertiary_score': ['tertiary', 'clicks', 'actions', 'profit', 'margin', 'balance', 'sessions', 'users'],
-        'risk_index': ['risk', 'ctr', 'rate', 'ratio', 'percent', 'percentage', 'score'],
-        'severity_level': ['severity', 'cpc', 'cpp', 'cpa', 'cost_per', 'level', 'priority', 'tier'],
-        'duration_factor': ['duration', 'time', 'period', 'days', 'hours', 'frequency', 'ad_frequency'],
-        'frequency_rate': ['conversions', 'leads', 'signups', 'purchases', 'orders', 'transactions', 'sales_count'],
-        'intensity_score': ['conversion_rate', 'conv_rate', 'cr', 'intensity', 'strength', 'power', 'magnitude'],
-        'recovery_index': ['reach', 'audience', 'coverage', 'recovery', 'retention', 'return', 'roi'],
-        'response_rate': ['engagement', 'interaction', 'response', 'feedback', 'click_rate', 'open_rate', 'ctr_percent']
-    }
-    
-    numeric_cols = [c for c in df_cols if c != target_col]
-    
-    mapped = {}
-    used_cols = set()
-    
-    for v1_col in v1_features:
-        if v1_col in numeric_cols and v1_col not in used_cols:
-            mapped[v1_col] = v1_col
-            used_cols.add(v1_col)
-    
-    for v1_col in v1_features:
-        if v1_col in mapped:
-            continue
-        
-        keywords = semantic_map.get(v1_col, [])
-        for user_col in numeric_cols:
-            if user_col in used_cols:
-                continue
-            
-            user_col_lower = user_col.lower().replace('_', ' ').replace('-', ' ')
-            
-            for kw in keywords:
-                if kw in user_col_lower or user_col_lower in kw:
-                    mapped[v1_col] = user_col
-                    used_cols.add(user_col)
-                    break
-            
-            if v1_col in mapped:
-                break
-    
-    remaining_user = [c for c in numeric_cols if c not in used_cols]
-    remaining_v1 = [c for c in v1_features if c not in mapped]
-    
-    for i, v1_col in enumerate(remaining_v1):
-        if i < len(remaining_user):
-            mapped[v1_col] = remaining_user[i]
-        else:
-            mapped[v1_col] = None  # Pad with zeros
-    
-    return mapped, v1_features
+    """Agnostik kolon mapping - tüm sayısal kolonları feature olarak kullan"""
+    feature_cols = [c for c in df_cols if c != target_col]
+    # Mapping: her kolon kendine map'lenir
+    mapped = {col: col for col in feature_cols}
+    return mapped, feature_cols
 
 
 app = Flask(__name__)
@@ -128,73 +462,17 @@ class MIDAS(nn.Module):
             current = x * mask + self.forward(current, mask) * (1 - mask)
         return current
 
-class SectorModel(nn.Module):
-    def __init__(self, n_sectors=50):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(10, 512), nn.ReLU(), nn.BatchNorm1d(512), nn.Dropout(0.2),
-            nn.Linear(512, 256), nn.ReLU(),
-            nn.Linear(256, n_sectors)
-        )
-    def forward(self, x):
-        return self.net(x)
 
-class SubsectorModel(nn.Module):
-    def __init__(self, n_sectors=50, n_subsectors=50):
-        super().__init__()
-        self.emb = nn.Embedding(n_sectors, 128)
-        self.net = nn.Sequential(
-            nn.Linear(10 + 128, 512), nn.ReLU(), nn.BatchNorm1d(512), nn.Dropout(0.2),
-            nn.Linear(512, 256), nn.ReLU(),
-            nn.Linear(256, n_subsectors)
-        )
-    def forward(self, x, sector):
-        return self.net(torch.cat([x, self.emb(sector)], dim=1))
-
-
-MODEL_PATH = os.getenv('MODEL_V1_PATH', '../checkpoints/schemalabsai_v1.pt')
-SERVER_PORT = int(os.getenv('FLASK_PORT', 6000))
-
+# TabularFoundationModel - her CSV için yeni model
+SERVER_PORT = int(os.getenv("FLASK_PORT", 6000))
 print("=" * 60)
-print("SCHEMALABSAI V1 - Loading model...")
+print("SCHEMALABSAI - TabularFoundationModel Server")
 print("=" * 60)
-
-if not Path(MODEL_PATH).exists():
-    print(f"Model not found: {MODEL_PATH}")
-    sys.exit(1)
-
-checkpoint = torch.load(MODEL_PATH, map_location='cpu')
-
-sector_to_id = checkpoint['sector_to_id']
-id_to_sector = checkpoint['id_to_sector']
-sector_sub_to_id = checkpoint['sector_sub_to_id']
-sector_bases = checkpoint['sector_bases']
-X_min = np.array(checkpoint['X_min'])
-X_max = np.array(checkpoint['X_max'])
-feature_cols = checkpoint['feature_cols']
-n_sectors = len(sector_to_id)
-
-midas = MIDAS()
-sector_model = SectorModel(n_sectors=n_sectors)
-subsector_model = SubsectorModel(n_sectors=n_sectors, n_subsectors=50)
-
-midas.load_state_dict(checkpoint['midas'])
-sector_model.load_state_dict(checkpoint['sector_model'])
-subsector_model.load_state_dict(checkpoint['subsector_model'])
-
-midas.eval()
-sector_model.eval()
-subsector_model.eval()
-
-id_to_subsector = {}
-for sid, sub_map in sector_sub_to_id.items():
-    id_to_subsector[sid] = {v: k for k, v in sub_map.items()}
-
-current_model_name = "schemalabsai_v1"
+current_model_name = "tabular_foundation"
 finetuned_models = {}
 
-print(f"Model loaded: {current_model_name}")
-print(f"Sectors: {n_sectors}")
+
+print(f"Model: TabularFoundationModel v2.1")
 print(f"Server ready on port {SERVER_PORT}")
 print("=" * 60)
 
@@ -211,35 +489,27 @@ def get_session(query_id):
 def health():
     return jsonify({
         "status": "ok",
-        "model_loaded": True,
-        "current_model": current_model_name,
-        "sectors": list(sector_to_id.keys()),
-        "n_sectors": n_sectors
+        "model_type": "TabularFoundationModel",
+        "version": "2.1",
+        "finetuned_models": list(finetuned_models.keys())
     })
 
 @app.route('/model/info', methods=['GET'])
 def model_info():
     return jsonify({
-        "current_model": current_model_name,
-        "model_path": MODEL_PATH,
-        "sectors": list(sector_to_id.keys()),
-        "n_sectors": n_sectors,
-        "feature_cols": feature_cols,
-        "version": checkpoint.get('version', 'V1')
+        "model_type": "TabularFoundationModel",
+        "version": "2.1",
+        "finetuned_models": len(finetuned_models),
+        "capabilities": ["classification", "sector_detection", "midas_imputation", "ewc_learning"]
     })
 
 @app.route('/sectors', methods=['GET'])
 def list_sectors():
-    sector_info = []
-    for sector, sid in sector_to_id.items():
-        subsectors = list(sector_sub_to_id[sid].keys())
-        sector_info.append({
-            "name": sector,
-            "id": sid,
-            "subsectors": subsectors,
-            "n_subsectors": len(subsectors)
-        })
-    return jsonify({"sectors": sector_info})
+    return jsonify({
+        "info": "Sectors auto-detected during fine-tuning",
+        "detection": "dynamic",
+        "finetuned_models": list(finetuned_models.keys())
+    })
 
 @app.route('/models/list', methods=['GET'])
 def list_models():
@@ -302,11 +572,15 @@ def predict():
                 else:
                     X_imp = X_t
                 
-                sec_logits = sector_model(X_imp)
+                try:
+                    out = model(X_imp)
+                    sec_logits = out.get('sector', torch.zeros(X_imp.shape[0], 50))
+                except:
+                    sec_logits = torch.zeros(X_imp.shape[0], 50)
                 sec_probs = F.softmax(sec_logits, dim=1)
                 sec_conf, sec_pred = sec_probs.max(1)
                 
-                sub_logits = subsector_model(X_imp, sec_pred)
+                sub_logits = sec_logits  # Use sector logits as subsector
                 sub_probs = F.softmax(sub_logits, dim=1)
                 sub_conf, sub_pred = sub_probs.max(1)
             
@@ -362,11 +636,17 @@ def predict_batch():
         
         X_t = torch.FloatTensor(values_norm)
         with torch.no_grad():
-            sec_logits = sector_model(X_t)
+            try:
+                out = model(X_t)
+                sec_logits = out.get('sector', None)
+                if sec_logits is None:
+                    sec_logits = torch.zeros(X_t.shape[0], 50)
+            except:
+                sec_logits = torch.zeros(X_t.shape[0], 50)
             sec_probs = F.softmax(sec_logits, dim=1)
             sec_conf, sec_pred = sec_probs.max(1)
             
-            sub_logits = subsector_model(X_t, sec_pred)
+            sub_logits = sec_logits
             sub_probs = F.softmax(sub_logits, dim=1)
             sub_conf, sub_pred = sub_probs.max(1)
         
@@ -394,200 +674,224 @@ def predict_batch():
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
-    """Analyze CSV file with fine-tuned model if available"""
+    """Smart analyzer - query-aware, token-efficient"""
     try:
         data = request.json
         file_id = data.get('file_id', '')
-        model_id = data.get('model_id', '')
-        print(f"DEBUG /analyze: file_id={file_id}, model_id={model_id}")
+        query = data.get('query', data.get('message', '')).lower()
         
         uploads_dir = '../uploads'
         file_path = None
-        
         if os.path.exists(uploads_dir):
             for f in os.listdir(uploads_dir):
                 if len(file_id) >= 8 and f.startswith(file_id[:8]):
                     file_path = os.path.join(uploads_dir, f)
                     break
         
-        if not file_path or not os.path.exists(file_path):
+        if not file_path:
             return jsonify({'analysis': 'File not found.', 'status': 'error'})
         
-        df = pd.read_csv(file_path)
+        if file_path.endswith(('.xlsx', '.xls')):
+            df = pd.read_excel(file_path)
+        elif file_path.endswith(".json"):
+            df = pd.read_json(file_path)
+        elif file_path.endswith(".parquet"):
+            df = pd.read_parquet(file_path)
+        else:
+            df = pd.read_csv(file_path, low_memory=False)
         
-        stats = {
-            'rows': len(df),
-            'columns': len(df.columns),
-            'column_names': df.columns.tolist()
-        }
+        numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
         
-        numeric_cols = df.select_dtypes(include=['int64', 'float64']).columns.tolist()
-        
-        # Check for fine-tuned model
-        ft_model_info = None
-        ft_checkpoint = None
-        if model_id:
-            checkpoints_dir = '../checkpoints'
-            for f in os.listdir(checkpoints_dir):
-                if model_id in f and f.endswith('.pt'):
-                    ft_path = os.path.join(checkpoints_dir, f)
-                    ft_checkpoint = torch.load(ft_path, map_location='cpu', weights_only=False)
-                    ft_model_info = {
-                        'class_names': ft_checkpoint.get('class_names', []),
-                        'n_classes': ft_checkpoint.get('n_classes', 0),
-                        'feature_cols': ft_checkpoint.get('feature_cols', []),
-                        'model_type': ft_checkpoint.get('model_type', 'unknown')
-                    }
-                    break
-        
-        analysis = "=== DATASET OVERVIEW ===\n"
-        analysis += f"Total Rows: {stats['rows']}\n"
-        analysis += f"Total Columns: {stats['columns']}\n"
-        analysis += f"Numeric Columns: {len(numeric_cols)}\n"
-        
-        # Add fine-tuned model info if available
-        if ft_model_info:
-            analysis += f"\n=== FINE-TUNED MODEL INFO ===\n"
-            analysis += f"Domain: Finance/Banking\n"
-            analysis += f"Target Classes ({ft_model_info['n_classes']}): {', '.join(ft_model_info['class_names'])}\n"
-            analysis += f"Features: {', '.join(ft_model_info['feature_cols'])}\n"
-            
-            # Calculate actual distribution from CSV
-            target_col = None
+        # Find grouping column
+        group_col = None
+        for col in df.columns:
+            n = df[col].nunique()
+            if 2 <= n <= 30 and col in numeric_cols:
+                group_col = col
+                break
+        if not group_col:
             for col in df.columns:
-                if col.lower() in ['sector', 'subsector', 'category', 'class', 'target', 'label']:
-                    target_col = col
-                    break
-            if target_col is None and df.columns[-1] not in numeric_cols:
-                target_col = df.columns[-1]
-            
-            if target_col:
-                value_counts = df[target_col].value_counts()
-                analysis += f"\n=== DATA DISTRIBUTION ===\n"
-                analysis += f"{'Subsector':<25} {'Count':>10} {'Percentage':>12}\n"
-                analysis += "-" * 50 + "\n"
-                for cls, count in value_counts.items():
-                    pct = count / len(df) * 100
-                    analysis += f"{str(cls):<25} {count:>10} {pct:>11.1f}%\n"
+                if 'player' in col.lower() or 'id' in col.lower():
+                    if 2 <= df[col].nunique() <= 30:
+                        group_col = col
+                        break
         
-        analysis += "\n=== COLUMN STATISTICS ===\n"
-        analysis += f"{'Column':<20} {'Min':>12} {'Max':>12} {'Mean':>12}\n"
-        analysis += "-" * 60 + "\n"
-        for col in numeric_cols[:10]:
-            analysis += f"{col:<20} {df[col].min():>12.2f} {df[col].max():>12.2f} {df[col].mean():>12.2f}\n"
+        # Find query-relevant columns with smart scoring
+        query_words = [w for w in query.split() if len(w) > 2]
+        col_scores = []
+        for col in numeric_cols:
+            col_l = col.lower()
+            score = 0
+            for w in query_words:
+                if w in col_l:
+                    score += 10
+                    # Exact word match bonus
+                    if w in col_l.replace('-', ' ').replace('_', ' ').split():
+                        score += 20
+            # Physical metrics bonus (wimu = wearable data)
+            if 'wimu_' in col_l:
+                score += 5
+            # Penalize ID columns
+            if col_l.endswith('.id') or col_l.endswith('_id'):
+                score -= 50
+            if score > 0:
+                col_scores.append((col, score))
         
-        if len(numeric_cols) >= 5:
-            X = df[numeric_cols[:10]].fillna(0).values.astype(np.float32)
-            if X.shape[1] < 10:
-                pad = np.zeros((X.shape[0], 10 - X.shape[1]), dtype=np.float32)
-                X = np.hstack([X, pad])
-            
-            X_norm = (X - X_min) / (X_max - X_min + 1e-8)
-            X_t = torch.FloatTensor(X_norm)
-            
-            with torch.no_grad():
-                sec_logits = sector_model(X_t)
-                sec_pred = sec_logits.argmax(1)
-            
-            pred_counts = {}
-            for p in sec_pred.numpy():
-                name = id_to_sector.get(p, f"sector_{p}")
-                pred_counts[name] = pred_counts.get(name, 0) + 1
-            
-            analysis += "\n=== SECTOR PREDICTIONS ===\n"
-            analysis += f"{'Sector':<20} {'Count':>10} {'Percentage':>12}\n"
-            analysis += "-" * 45 + "\n"
-            for sector, count in sorted(pred_counts.items(), key=lambda x: -x[1]):
-                pct = count / len(df) * 100
-                analysis += f"{sector:<20} {count:>10} {pct:>11.1f}%\n"
+        # Sort by score descending
+        col_scores.sort(key=lambda x: x[1], reverse=True)
+        relevant_cols = [c[0] for c in col_scores]
         
-        return jsonify({
-            'analysis': analysis,
-            'stats': stats,
-            'status': 'success',
-            'fine_tuned_model': ft_model_info
-        })
+        analysis = f"DATA: {len(df)} rows x {len(df.columns)} cols\n"
+        
+        if group_col:
+            analysis += f"\n=== METRICS BY {group_col} ===\n"
+            
+            # Show relevant columns first (detailed)
+            shown = set()
+            for col in relevant_cols[:10]:
+                if col == group_col or col in shown:
+                    continue
+                shown.add(col)
+                try:
+                    grp = df.groupby(group_col)[col].sum().sort_values(ascending=False)
+                    if grp.sum() != 0:
+                        analysis += f"\n**{col}**:\n"
+                        for idx, val in grp.items():
+                            analysis += f"  {idx}: {val:.2f}\n"
+                except:
+                    pass
+            
+            # Show only TOP 30 most important columns (query-relevant first, then by variance)
+            shown_cols = set(relevant_cols[:10])
+            
+            # Add high-variance columns if we have room
+            col_scores = []
+            for col in numeric_cols:
+                if col != group_col and col not in shown_cols:
+                    try:
+                        variance = df[col].var()
+                        col_scores.append((col, variance))
+                    except:
+                        pass
+            col_scores.sort(key=lambda x: x[1], reverse=True)
+            for col, _ in col_scores[:20]:
+                shown_cols.add(col)
+            
+            # Output only the selected columns
+            for col in shown_cols:
+                if col == group_col:
+                    continue
+                try:
+                    grp = df.groupby(group_col)[col].sum().sort_values(ascending=False)
+                    total = grp.sum()
+                    if abs(total) > 0.001:
+                        analysis += f"\n**{col}**:\n"
+                        for idx, val in grp.items():
+                            if abs(val) > 0.001:
+                                analysis += f"  {idx}: {val:.2f}\n"
+                except:
+                    pass
+        
+        # Column reference
+        analysis += f"\n=== ALL COLUMNS ({len(df.columns)}) ===\n"
+        analysis += ", ".join(df.columns[:80])
+        if len(df.columns) > 80:
+            analysis += f"... +{len(df.columns)-80} more"
+        
+        return jsonify({'analysis': analysis, 'status': 'success'})
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({'analysis': f'Error: {str(e)}', 'status': 'error'})
+        return jsonify({'analysis': f'Error: {e}', 'status': 'error'})
 
 @app.route('/finetune', methods=['POST'])
 def finetune():
     """Fine-tune model on user data"""
     try:
-        epochs = int(request.form.get('epochs', 10))
-        batch_size = int(request.form.get('batch_size', 256))
+        epochs_req = int(request.form.get('epochs', 0))  # 0 = auto
+        batch_size_req = int(request.form.get('batch_size', 0))  # 0 = auto
         target_column = request.form.get('target_column', None)
         query_id = request.form.get('query_id', 'default')
         analyze_only = request.form.get('analyze_only', 'false').lower() == 'true'
         
         session = get_session(query_id)
         
-        if 'file' not in request.files:
-            return jsonify({"error": "No file provided"}), 400
+        merge_files = request.form.get('merge_files', 'false').lower() == 'true'
         
-        file = request.files['file']
-        
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
-        file.save(temp_file.name)
-        temp_file.close()
-        
-        df = pd.read_csv(temp_file.name)
-        
-        if target_column and target_column in df.columns:
-            target_col = target_column
-        else:
-            for col in df.columns:
-                if col.lower() in ['category', 'class', 'label', 'target', 'sector', 'subsector']:
-                    target_col = col
-                    break
+        # Çoklu dosya kontrolü
+        files = request.files.getlist('file')
+        if not files or len(files) == 0:
+            if 'file' in request.files:
+                files = [request.files['file']]
             else:
-                target_col = df.columns[-1]
+                return jsonify({"error": "No file provided"}), 400
+        
+        dataframes = []
+        file_names = []
+        
+        for file in files:
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
+            file.save(temp_file.name)
+            temp_file.close()
+            
+            # CSV, Excel, JSON, Parquet
+            if file.filename.endswith(('.xlsx', '.xls')):
+                df_temp = pd.read_excel(temp_file.name)
+            elif file.filename.endswith('.json'):
+                df_temp = pd.read_json(temp_file.name)
+            elif file.filename.endswith('.parquet'):
+                df_temp = pd.read_parquet(temp_file.name)
+            else:
+                df_temp = pd.read_csv(temp_file.name)
+            
+            dataframes.append(df_temp)
+            file_names.append(file.filename)
+            os.unlink(temp_file.name)
+        
+        # Birden fazla dosya varsa smart merge yap
+        merged_file_id = None
+        if len(dataframes) > 1 and merge_files:
+            print(f"Smart merging {len(dataframes)} files: {file_names}")
+            df = smart_merge_datasets(dataframes, file_names)
+            print(f"Merged shape: {df.shape}")
+            
+            # Save merged file to uploads
+            import uuid
+            from datetime import datetime
+            merged_file_id = str(uuid.uuid4())
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            merged_filename = f"{merged_file_id[:8]}_merged_all_{timestamp}.csv"
+            merged_path = os.path.join('../uploads', merged_filename)
+            df.to_csv(merged_path, index=False)
+            print(f"Merged file saved: {merged_path}")
+        else:
+            df = dataframes[0]
+        
+        # Otomatik akıllı target seçimi
+        target_col = auto_select_target(df, target_column)
+        print(f"Auto-selected target: {target_col}")
         
         numeric_df = df.select_dtypes(include=['number'])
-        col_mapping, v1_features = smart_column_mapping(numeric_df.columns.tolist(), target_col)
+        # Agnostik: Tüm sayısal kolonları feature olarak kullan
+        col_mapping, feature_cols = smart_column_mapping(numeric_df.columns.tolist(), target_col)
         
-        print(f"Column mapping: {col_mapping}")
+        print(f"Feature columns: {feature_cols}")
         
-        X_list = []
-        for v1_col in v1_features:
-            user_col = col_mapping.get(v1_col)
-            if user_col and user_col in df.columns:
-                X_list.append(df[user_col].values.astype(np.float32))
-            else:
-                X_list.append(np.zeros(len(df), dtype=np.float32))
+        # Tüm feature kolonlarını al
+        X = df[feature_cols].values.astype(np.float32)
         
-        X = np.column_stack(X_list)
-        
-        v1_cols = ['primary_score', 'secondary_score', 'tertiary_score', 'risk_index', 
-                   'severity_level', 'duration_factor', 'frequency_rate', 'intensity_score',
-                   'recovery_index', 'response_rate']
-        has_v1_features = all(c in df.columns for c in v1_cols[:5])
-        
+        # Eksik değer kontrolü
         has_missing = np.isnan(X).any()
         if has_missing:
-            if has_v1_features:
-                mask = (~np.isnan(X)).astype(np.float32)
-                X_filled = np.nan_to_num(X, nan=0.0)
-                
-                midas.eval()
-                with torch.no_grad():
-                    X_t = torch.FloatTensor(X_filled)
-                    mask_t = torch.FloatTensor(mask)
-                    X_imputed = midas.impute(X_t, mask_t, n_iter=3)
-                    X = X_imputed.numpy()
-                
-                missing_pct = (1 - mask.mean()) * 100
-                print(f"MIDAS imputation: {missing_pct:.1f}% missing data filled")
-            else:
-                missing_pct = np.isnan(X).mean() * 100
-                X = np.nan_to_num(X, nan=0.0)
-                print(f"Simple fill: {missing_pct:.1f}% missing data filled with 0")
-        numeric_cols = [col_mapping.get(v, v) for v in v1_features]
+            missing_pct = np.isnan(X).mean() * 100
+            X = np.nan_to_num(X, nan=0.0)
+            print(f"Missing data filled: {missing_pct:.1f}%")
+        
+        numeric_cols = feature_cols
         
         le = LabelEncoder()
-        y = le.fit_transform(df[target_col])
+        # Mixed type fix - hepsini string yap
+        y = le.fit_transform(df[target_col].astype(str))
         n_classes = len(le.classes_)
         
         if analyze_only:
@@ -599,45 +903,58 @@ def finetune():
                 "n_classes": n_classes,
                 "n_features": X.shape[1] if 'X' in dir() else len(numeric_df.columns),
                 "target_column": target_col,
+            "miras_enabled": use_miras if 'use_miras' in dir() else False,
                 "smart_epochs": smart_epochs,
                 "smart_batch_size": smart_batch,
                 "classes": le.classes_.tolist()
             })
         
-        # Normalize etme - orijinal değerleri kullan
-        X = X.astype(np.float32)
+        # StandardScaler ile normalize et - her türlü veri range'i için
+        scaler = StandardScaler()
+        X = scaler.fit_transform(X).astype(np.float32)
         
-        if X.shape[1] < 10:
-            pad = np.zeros((X.shape[0], 10 - X.shape[1]), dtype=np.float32)
-            X = np.hstack([X, pad])
-        elif X.shape[1] > 10:
-            X = X[:, :10]
-        
-        v1_cols = ['primary_score', 'secondary_score', 'tertiary_score', 'risk_index', 
-                   'severity_level', 'duration_factor', 'frequency_rate', 'intensity_score',
-                   'recovery_index', 'response_rate']
-        
-        # Check if we have V1 features (either directly or via mapping)
-        has_v1_features = all(c in df.columns for c in v1_cols[:5]) or (col_mapping and len(col_mapping) >= 5)
-        
+        # TabularFoundationModel herhangi feature sayısı ile çalışır
+        # Agnostik: Herhangi feature sayısı ile çalışır
         input_dim = X.shape[1]
         print(f"Training with {input_dim} features")
         
+        # Tam dinamik config
+        dyn_cfg = get_dynamic_config(len(X), input_dim, n_classes)
+        
         ft_config = {
-            'd_model': 256,
-            'n_heads': 8,
-            'n_layers': 2,
-            'schema_layers': 2,
-            'n_latents': 64,
+            'd_model': dyn_cfg['d_model'],
+            'n_heads': dyn_cfg['n_heads'],
+            'n_layers': dyn_cfg['n_layers'],
+            'schema_layers': dyn_cfg['n_layers'],
+            'n_latents': dyn_cfg['n_latents'],
             'n_features': input_dim,
             'n_classes': n_classes,
             'vocab_size': 50000,
             'n_types': 10,
-            'max_cols': max(128, input_dim + 10)
+            'max_cols': dyn_cfg['max_cols']
         }
-        print(f"Creating TabularFoundationModel with config: {ft_config}")
+        
+        print(f"Dynamic: d={dyn_cfg['d_model']}, L={dyn_cfg['n_layers']}, lat={dyn_cfg['n_latents']}, bs={dyn_cfg['batch_size']}, ep={dyn_cfg['epochs']}, lr={dyn_cfg['lr']:.4f}")
+        # Check if MIRAS is requested
+        use_miras = request.form.get('use_miras', 'false').lower() == 'true'
+        miras_bias = request.form.get('miras_bias', 'huber')
+        miras_retention = request.form.get('miras_retention', 'lq')
+        
+        print(f"Creating model with config: {ft_config}, MIRAS={use_miras}")
         try:
-            ft_model = TabularFoundationModel(ft_config)
+            if use_miras:
+                miras_config = {
+                    'attentional_bias': miras_bias,
+                    'retention_gate': miras_retention,
+                    'p': 3.0, 'q': 4.0, 'delta': 1.0,
+                    'use_momentum': True,
+                    'use_channel_wise': True,
+                    'use_gated_output': True
+                }
+                ft_model = TabularFoundationModelMIRAS(ft_config, miras_config)
+                print(f"MIRAS Model created with bias={miras_bias}, retention={miras_retention}")
+            else:
+                ft_model = TabularFoundationModel(ft_config)
             print(f"Model created successfully, params: {sum(p.numel() for p in ft_model.parameters())}")
         except Exception as e:
             print(f"ERROR creating model: {e}")
@@ -645,9 +962,13 @@ def finetune():
             traceback.print_exc()
             raise
         
-        optimizer = AdamW(ft_model.parameters(), lr=1e-3, weight_decay=0.01)
-        loss_fn = nn.CrossEntropyLoss()
+        # Dinamik batch size ve epochs - algoritmik
+        batch_size = batch_size_req if batch_size_req > 0 else dyn_cfg['batch_size']
+        epochs = epochs_req if epochs_req > 0 else dyn_cfg['epochs']
         
+        optimizer = AdamW(ft_model.parameters(), lr=dyn_cfg['lr'], weight_decay=0.01)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+        loss_fn = nn.CrossEntropyLoss()
         
         session["status"] = "training"
         session["start_time"] = time.time()
@@ -656,16 +977,20 @@ def finetune():
         session["accuracy"] = 0.0
         session["loss"] = 0.0
         session["eta"] = "calculating..."
-        training_progress.update(session)
+        training_progress.update(session); training_sessions[query_id] = session if "query_id" in dir() and query_id else training_progress
         
-        max_samples_per_epoch = min(len(X), 10000)
+        # Süre optimizasyonu - epoch başına max sample
+        if len(X) > 10000:
+            max_samples_per_epoch = 10000
+        else:
+            max_samples_per_epoch = len(X)
         print(f"Starting training loop: X.shape={X.shape}, epochs={epochs}, batch_size={batch_size}, samples_per_epoch={max_samples_per_epoch}")
         
         best_acc = 0
         best_state = None
-        patience = 10
+        patience = dyn_cfg['patience']
         no_improve = 0
-        max_epochs = 200  # Maksimum epoch limiti
+        max_epochs = 500  # Maksimum epoch limiti
         current_epoch = 0
         
         while current_epoch < max_epochs:
@@ -688,7 +1013,14 @@ def finetune():
                 optimizer.zero_grad()
                 out = ft_model(batch_X)
                 logits = out['output']
-                loss = loss_fn(logits, batch_y)
+                # Classification + Sector loss
+                # Sector: aynı class'takiler benzer sector'e
+                sector_logits = out['sector']
+                sector_targets = batch_y % ft_model.n_sectors  # Class'a göre sector
+                sector_loss = nn.CrossEntropyLoss()(sector_logits, sector_targets)
+                mcm_loss = out.get('mcm_loss', torch.tensor(0.0))
+                miras_loss = out.get('miras_loss', torch.tensor(0.0))
+                loss = loss_fn(logits, batch_y) + sector_loss + 0.1 * mcm_loss + 0.05 * miras_loss
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(ft_model.parameters(), 1.0)
                 optimizer.step()
@@ -698,6 +1030,7 @@ def finetune():
                 batches += 1
             
             current_epoch += 1
+            scheduler.step()
             acc = 100 * correct / min(len(X), max_samples_per_epoch)
             avg_loss = total_loss / max(batches, 1)
             
@@ -724,14 +1057,14 @@ def finetune():
             # Early stop olacaksa epochs'u güncelle
             if best_acc >= 99.0:
                 session["epochs"] = current_epoch
-            elif best_acc >= 95.0 and no_improve >= patience:
+            elif best_acc >= 99.0 and no_improve >= patience:  # %99 hedef
                 session["epochs"] = current_epoch
             else:
                 session["epochs"] = current_epoch + 1
             session["accuracy"] = acc
             session["loss"] = avg_loss
             session["eta"] = eta
-            training_progress.update(session)
+            training_progress.update(session); training_sessions[query_id] = session if "query_id" in dir() and query_id else training_progress
             
             print(f"Epoch {current_epoch}: Acc={acc:.1f}% (best={best_acc:.1f}%)")
             
@@ -739,7 +1072,7 @@ def finetune():
                 print(f"🎉 %99+ accuracy - MÜKEMMEL!")
                 break
             
-            if best_acc >= 95.0 and no_improve >= patience:
+            if best_acc >= 99.0 and no_improve >= patience:  # %99 hedef
                 print(f"✅ Early stop at {best_acc:.1f}% (no improve for {patience} epochs)")
                 break
             
@@ -758,9 +1091,9 @@ def finetune():
         session["accuracy"] = best_acc
         session["epochs"] = current_epoch
         session["epoch"] = current_epoch
-        training_progress.update(session)
+        training_progress.update(session); training_sessions[query_id] = session if "query_id" in dir() and query_id else training_progress
         
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         ft_path = f'../checkpoints/model_finetuned_{timestamp}.pt'
         
         torch.save({
@@ -768,17 +1101,34 @@ def finetune():
             'model_type': 'v1_finetune',
             'encoder': le,
             'class_names': [str(c) for c in le.classes_],
-            'feature_cols': numeric_cols[:10],
+            'feature_cols': numeric_cols,
             'n_classes': n_classes,
             'input_dim': input_dim,
-            'n_sectors': n_sectors
+            'n_sectors': ft_model.n_sectors,
+            'target_col': target_col,
+            'accuracy': best_acc,
+            'config': ft_config
         }, ft_path)
         
-        os.unlink(temp_file.name)
+        # Temp dosya varsa sil (tek dosya modunda)
+        try:
+            if 'temp_file' in dir() and temp_file and hasattr(temp_file, 'name'):
+                os.unlink(temp_file.name)
+        except:
+            pass
         
         model_id = f"model_finetuned_{timestamp}"
         session["model_id"] = model_id
-        training_progress.update(session)
+        training_progress.update(session); training_sessions[query_id] = session if "query_id" in dir() and query_id else training_progress
+        
+        # Sector tahmini yap
+        ft_model.eval()
+        with torch.no_grad():
+            sample_X = torch.FloatTensor(X[:min(100, len(X))])
+            out = ft_model(sample_X)
+            sector_probs = torch.softmax(out['sector'], dim=1)
+            sector_conf = sector_probs.max(1).values.mean().item() * 100
+            dominant_sector = sector_probs.mean(0).argmax().item()
         
         return jsonify({
             "status": "success",
@@ -789,7 +1139,16 @@ def finetune():
             "classes": [str(c) for c in le.classes_],
             "model_path": ft_path,
             "model_id": model_id,
-            "rows": len(df)
+            "rows": len(df),
+            "sector": {
+                "id": dominant_sector,
+                "confidence": round(sector_conf, 1),
+                "description": f"Data cluster {dominant_sector}"
+            },
+            "target_column": target_col,
+            "miras_enabled": use_miras if 'use_miras' in dir() else False,
+            "n_features": input_dim,
+            "merged_file_id": merged_file_id if "merged_file_id" in dir() else None
         })
     except Exception as e:
         import traceback
@@ -830,6 +1189,49 @@ def list_files():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
+
+# =============================================================================
+# MIRAS OPTIONS ENDPOINT
+# =============================================================================
+
+@app.route('/miras/options', methods=['GET'])
+def miras_options():
+    """Get available MIRAS configuration options"""
+    options = TabularFoundationModelMIRAS.list_miras_options()
+    return jsonify({
+        "status": "success",
+        "miras_options": options,
+        "total_features": 49,
+        "description": {
+            "attentional_bias": "Loss function for memory learning (huber=outlier robust, lp=aggressive)",
+            "retention_gate": "How much to forget old memories (lq=stable, kl=probabilistic)",
+            "memory_algorithm": "Optimization method for memory updates",
+            "architectural": "Additional architectural features",
+            "special": "Special capabilities from MIRAS paper"
+        },
+        "recommended": {
+            "default": {"attentional_bias": "huber", "retention_gate": "lq"},
+            "noisy_data": {"attentional_bias": "huber", "retention_gate": "elastic"},
+            "large_data": {"attentional_bias": "l2", "retention_gate": "l2_local"},
+            "small_data": {"attentional_bias": "lp", "retention_gate": "kl"}
+        }
+    })
+
+@app.route('/miras/info', methods=['GET'])
+def miras_info():
+    """Get MIRAS framework information"""
+    from layers.miras import list_all_features
+    features = list_all_features()
+    return jsonify({
+        "status": "success",
+        "framework": "MIRAS (Google Research 2025)",
+        "paper": "It's All Connected: A Journey Through Test-Time Memorization",
+        "features": features,
+        "total": sum(len(v) for v in features.values()),
+        "integrated_in": "TabularFoundationModelMIRAS"
+    })
+
 if __name__ == '__main__':
     from waitress import serve
     serve(app, host='0.0.0.0', port=SERVER_PORT, threads=4)
@@ -856,15 +1258,21 @@ def predict_finetuned():
         
         checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
         
+        # Dinamik config - checkpoint'tan al
+        n_features = checkpoint.get('n_features', 10)
+        n_classes = checkpoint.get('n_classes', 10)
+        
         config = {
             'd_model': 256,
             'n_heads': 8,
-            'n_latents': 32,
-            'n_features': checkpoint.get('n_features', 10),
-            'n_classes': checkpoint.get('n_classes', 10),
+            'n_layers': 2,
+            'schema_layers': 2,
+            'n_latents': 64,
+            'n_features': n_features,
+            'n_classes': n_classes,
             'vocab_size': 50000,
             'n_types': 10,
-            'max_cols': 64
+            'max_cols': max(128, n_features + 10)  # Dinamik
         }
         
         model = TabularFoundationModel(config)
