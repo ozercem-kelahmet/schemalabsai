@@ -1,4 +1,5 @@
 "use client"
+import { toast } from "sonner"
 
 import type React from "react"
 import { DialogTrigger } from "@/components/ui/dialog"
@@ -486,7 +487,7 @@ function SidebarInner() {
     const newQuery = await addQuery({
       name: projectName,
       model: selectedModel,
-      dataSources: [selectedExistingModel],
+      dataSources: fileId ? [fileId] : [],
       trainingModelId: selectedExistingModel,
       fileId: fileId,
       hasModel: true
@@ -508,11 +509,14 @@ function SidebarInner() {
 
   const handleDeleteModel = async (modelId: string) => {
     try {
+      const model = fineTunedModels.find(m => m.id === modelId)
       await api.deleteFineTunedModel(modelId)
       setFineTunedModels(prev => prev.filter(m => m.id !== modelId))
       if (selectedExistingModel === modelId) setSelectedExistingModel(null)
+      toast.success("Model deleted", { description: model?.name || "Model removed successfully" })
     } catch (error) {
       console.error("Failed to delete model:", error)
+      toast.error("Failed to delete model")
     }
   }
 
@@ -522,9 +526,11 @@ function SidebarInner() {
       await api.renameFineTunedModel(modelId, editingModelName.trim())
       setFineTunedModels(prev => prev.map(m => m.id === modelId ? {...m, name: editingModelName.trim()} : m))
       setEditingModelId(null)
+      toast.success("Model renamed", { description: editingModelName.trim() })
       setEditingModelName("")
     } catch (error) {
       console.error("Failed to rename model:", error)
+      toast.error("Failed to rename model")
     }
   }
 
@@ -935,7 +941,7 @@ function SidebarInner() {
                                             ) : (
                                               <span className="text-sm font-medium break-all leading-tight">{model.name}</span>
                                             )}
-                                            <span className="text-xs text-muted-foreground">v{model.version} - {(model.accuracy * 100).toFixed(1)}% accuracy</span>
+                                            <span className="text-xs text-muted-foreground">v{model.version} - {model.accuracy.toFixed(1)}% accuracy</span>
                                           </div>
                                           <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1">
                                             <button onClick={(e) => { e.stopPropagation(); setEditingModelId(model.id); setEditingModelName(model.name); }} className="p-1 hover:bg-secondary rounded"><Pencil className="h-3 w-3" /></button>
@@ -945,7 +951,7 @@ function SidebarInner() {
                                       </TooltipTrigger>
                                       <TooltipContent side="right" className="p-3">
                                         <div className="space-y-1 text-xs">
-                                          <p><span className="text-muted-foreground">Accuracy:</span> {(model.accuracy * 100).toFixed(1)}%</p>
+                                          <p><span className="text-muted-foreground">Accuracy:</span> {model.accuracy.toFixed(1)}%</p>
                                           <p><span className="text-muted-foreground">Epochs:</span> {model.epochs || "N/A"}</p>
                                           <p><span className="text-muted-foreground">Batch Size:</span> {model.batch_size || "N/A"}</p>
                                           <p><span className="text-muted-foreground">Loss:</span> {model.loss?.toFixed(4) || "N/A"}</p>

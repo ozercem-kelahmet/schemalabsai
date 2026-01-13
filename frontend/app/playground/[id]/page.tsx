@@ -1380,7 +1380,7 @@ export default function PlaygroundQueryPage() {
         console.log("DEBUG trainingModelId:", currentQuery?.trainingModelId)
         const response = await api.chat({
           message: message,
-          file_id: primaryFile?.file_id || "",
+          file_id: currentQuery?.dataSources?.[0] || primaryFile?.file_id || "",
           query_id: queryId,
           filename: primaryFile?.filename || "Unknown",
           model: selectedModel,
@@ -1408,7 +1408,7 @@ export default function PlaygroundQueryPage() {
       await api.chatStream(
           {
             message: message,
-            file_id: primaryFile?.file_id || "",
+            file_id: currentQuery?.dataSources?.[0] || primaryFile?.file_id || "",
             query_id: queryId,
             filename: primaryFile?.filename || "Unknown",
             model: selectedModel,
@@ -1473,7 +1473,7 @@ export default function PlaygroundQueryPage() {
         try {
           const response = await api.chat({
             message: message,
-            file_id: primaryFile?.file_id || "",
+            file_id: currentQuery?.dataSources?.[0] || primaryFile?.file_id || "",
           query_id: queryId,
             filename: primaryFile?.filename || "Unknown",
             model: pane.model,

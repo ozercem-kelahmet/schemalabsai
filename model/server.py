@@ -700,47 +700,126 @@ def analyze():
         else:
             df = pd.read_csv(file_path, low_memory=False)
         
-        # === SIMPLE & DYNAMIC ANALYSIS ===
-        analysis = f"DATA: {len(df)} rows x {len(df.columns)} columns\n\n"
+        # === COMPACT ANALYSIS (max 8K chars) ===
+        num_cols = df.select_dtypes(include=['number']).columns.tolist()
+        cat_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+        query_words = [w.lower() for w in query.replace('?', '').replace(',', '').split() if len(w) > 2]
+        # Add common synonyms
+        expanded_words = list(query_words)
+        for w in query_words:
+            if w == 'distance': expanded_words.append('distance_covered')
+            if w == 'speed': expanded_words.append('speed_avg')
+            if w == 'player': expanded_words.extend(['player_in_possession_name', 'player_name'])
+        query_words = expanded_words
         
-        # Column info with types and stats
-        analysis += "=== COLUMNS ===\n"
-        for col in df.columns:
-            dtype = str(df[col].dtype)
+        # Smart match: find columns matching query words
+        matched_num = []
+        matched_cat = []
+        
+        # Score columns by how well they match query
+        for col in num_cols:
+            col_lower = col.lower()
+            score = 0
+            for w in query_words:
+                if w in col_lower:
+                    score += len(w)  # Longer match = higher score
+                    if col_lower == w or col_lower.endswith('_' + w) or col_lower.startswith(w + '_'):
+                        score += 10  # Exact/partial match bonus
+            if score > 0:
+                matched_num.append((col, score))
+        
+        for col in cat_cols:
+            col_lower = col.lower()
+            score = 0
+            for w in query_words:
+                if w in col_lower:
+                    score += len(w)
+                    if 'name' in col_lower:
+                        score += 20  # Name columns are better for grouping
+            if score > 0:
+                matched_cat.append((col, score))
+        
+        # Sort by score descending
+        matched_num = [c[0] for c in sorted(matched_num, key=lambda x: -x[1])]
+        matched_cat = [c[0] for c in sorted(matched_cat, key=lambda x: -x[1])]
+        
+        analysis = f"DATASET: {len(df)} rows, {len(df.columns)} columns\n"
+        analysis += f"Numeric: {len(num_cols)} | Categorical: {len(cat_cols)}\n\n"
+        
+        # AUTO-CALCULATE if matching columns found
+        if matched_num and matched_cat:
+            analysis += "=== QUERY RESULT ===\n"
+            for num_col in matched_num[:2]:
+                for cat_col in matched_cat[:1]:
+                    try:
+                        if any(w in query for w in ['average', 'avg', 'mean']):
+                            result = df.groupby(cat_col)[num_col].mean().sort_values(ascending=False)
+                            agg = "AVG"
+                        elif any(w in query for w in ['count', 'how many']):
+                            result = df.groupby(cat_col)[num_col].count().sort_values(ascending=False)
+                            agg = "COUNT"
+                        elif any(w in query for w in ['max', 'highest']):
+                            result = df.groupby(cat_col)[num_col].max().sort_values(ascending=False)
+                            agg = "MAX"
+                        elif any(w in query for w in ['min', 'lowest']):
+                            result = df.groupby(cat_col)[num_col].min().sort_values(ascending=True)
+                            agg = "MIN"
+                        else:
+                            result = df.groupby(cat_col)[num_col].sum().sort_values(ascending=False)
+                            agg = "TOTAL"
+                        analysis += f"\n{agg} {num_col} BY {cat_col}:\n"
+                        for idx, val in list(result.items())[:25]:
+                            analysis += f"  {idx}: {val:.2f}\n"
+                    except:
+                        pass
+            analysis += "\n"
+        elif matched_num:
+            analysis += "=== MATCHED METRICS ===\n"
+            for col in matched_num[:3]:
+                analysis += f"{col}: sum={df[col].sum():.2f}, avg={df[col].mean():.2f}\n"
+            analysis += "\n"
+
+        
+        # ALL numeric column names listed, stats for first 30
+        analysis += "NUMERIC COLUMNS:\n"
+        for i, col in enumerate(num_cols):
+            try:
+                if i < 30:
+                    analysis += f"  {col}: avg={df[col].mean():.2f}, min={df[col].min():.2f}, max={df[col].max():.2f}\n"
+                else:
+                    # Just list the name
+                    pass
+            except:
+                pass
+        # List ALL remaining column names compactly
+        if len(num_cols) > 30:
+            remaining = num_cols[30:]
+            analysis += f"  MORE NUMERIC ({len(remaining)}): {', '.join(remaining)}\n"
+        
+        # Categorical columns with values (max 10)
+        analysis += "\nCATEGORICAL COLUMNS:\n"
+        for col in cat_cols[:10]:
             nunique = df[col].nunique()
-            
-            if df[col].dtype == 'object':
-                unique_vals = df[col].dropna().unique()[:8].tolist()
-                analysis += f"• {col} (text, {nunique} unique): {unique_vals}\n"
+            if nunique <= 15:
+                vals = df[col].dropna().unique().tolist()
+                analysis += f"  {col}: {vals}\n"
             else:
-                try:
-                    analysis += f"• {col} (numeric): min={df[col].min():.2f}, max={df[col].max():.2f}, avg={df[col].mean():.2f}\n"
-                except:
-                    analysis += f"• {col} ({dtype})\n"
+                top = df[col].value_counts().head(5).index.tolist()
+                analysis += f"  {col} ({nunique} unique): {top}...\n"
+        if len(cat_cols) > 10:
+            analysis += f"  ... +{len(cat_cols)-10} more categorical columns\n"
         
-        # Sample data - first 10 rows as CSV-like format
-        analysis += f"\n=== SAMPLE DATA (10 rows) ===\n"
-        analysis += " | ".join(df.columns[:10]) + "\n"
-        analysis += "-" * 50 + "\n"
-        for idx, row in df.head(10).iterrows():
-            vals = [str(row[c])[:15] for c in df.columns[:10]]
+        # Sample rows (5 rows, max 8 columns)
+        show_cols = (cat_cols[:2] + num_cols[:6])[:8]
+        analysis += f"\nSAMPLE DATA ({len(show_cols)} cols):\n"
+        analysis += " | ".join([c[:15] for c in show_cols]) + "\n"
+        for _, row in df.head(5).iterrows():
+            vals = [str(row[c])[:12] for c in show_cols]
             analysis += " | ".join(vals) + "\n"
         
-        # Basic stats summary
-        analysis += f"\n=== QUICK STATS ===\n"
-        for col in df.select_dtypes(include=['number']).columns[:10]:
-            analysis += f"• {col}: sum={df[col].sum():.2f}, avg={df[col].mean():.2f}, count={len(df)}\n"
-        
-        # Categorical breakdown (if any)
-        cat_cols = df.select_dtypes(include=['object']).columns.tolist()
-        if cat_cols:
-            analysis += f"\n=== CATEGORICAL BREAKDOWN ===\n"
-            for cat_col in cat_cols[:3]:
-                analysis += f"\n**{cat_col}** value counts:\n"
-                vc = df[cat_col].value_counts().head(15)
-                for val, count in vc.items():
-                    pct = count / len(df) * 100
-                    analysis += f"  {val}: {count} ({pct:.1f}%)\n"
+        # Truncate if still too long
+        if len(analysis) > 8000:
+            analysis = analysis[:8000] + "\n...(truncated)"
         
         return jsonify({'analysis': analysis, 'status': 'success'})
     except Exception as e:
