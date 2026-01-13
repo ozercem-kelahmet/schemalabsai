@@ -165,16 +165,16 @@ function AdvancedChart({ type, labels, values, values2, values3, title, xlabel, 
         <div className="space-y-2">
           {labels.map((label, i) => (
             <div key={i} className="flex items-center gap-2 group cursor-pointer"
-              onMouseMove={(e) => showTooltip(e, `${label}: ${values[i].toLocaleString()}`)}
+              onMouseMove={(e) => showTooltip(e, `${label}: ${(values[i] ?? 0).toLocaleString()}`)}
               onMouseLeave={hideTooltip}>
               <span className="text-xs w-24 truncate text-gray-600 text-right">{label}</span>
               <div className="flex-1 bg-gray-200 rounded-full h-6 overflow-hidden">
                 <div className="h-full rounded-full transition-all duration-500 flex items-center justify-end pr-2 group-hover:opacity-80"
                   style={{ width: `${(values[i] / maxValue) * 100}%`, backgroundColor: colors[i % colors.length] }}>
-                  <span className="text-[10px] text-white font-medium opacity-0 group-hover:opacity-100">{values[i].toLocaleString()}</span>
+                  <span className="text-[10px] text-white font-medium opacity-0 group-hover:opacity-100">{(values[i] ?? 0).toLocaleString()}</span>
                 </div>
               </div>
-              <span className="text-xs w-16 font-medium text-right">{values[i].toLocaleString()}</span>
+              <span className="text-xs w-16 font-medium text-right">{(values[i] ?? 0).toLocaleString()}</span>
             </div>
           ))}
         </div>
@@ -196,7 +196,7 @@ function AdvancedChart({ type, labels, values, values2, values3, title, xlabel, 
               <div className="flex items-end gap-1 h-28 w-full justify-center">
                 <div className="w-5 bg-blue-500 rounded-t transition-all cursor-pointer hover:opacity-80"
                   style={{ height: `${(values[i] / groupMax) * 100}%` }}
-                  onMouseMove={(e) => showTooltip(e, `${seriesNames[0]}: ${values[i].toLocaleString()}`)}
+                  onMouseMove={(e) => showTooltip(e, `${seriesNames[0]}: ${(values[i] ?? 0).toLocaleString()}`)}
                   onMouseLeave={hideTooltip} />
                 <div className="w-5 bg-emerald-500 rounded-t transition-all cursor-pointer hover:opacity-80"
                   style={{ height: `${(values2[i] / groupMax) * 100}%` }}
@@ -231,7 +231,7 @@ function AdvancedChart({ type, labels, values, values2, values3, title, xlabel, 
                 <div className="w-full flex flex-col-reverse" style={{ height: `${(stackTotal / maxStack) * 100}%`, minHeight: '8px' }}>
                   <div className="w-full bg-blue-500 rounded-b cursor-pointer hover:opacity-80 transition-opacity"
                     style={{ height: `${(values[i] / stackTotal) * 100}%` }}
-                    onMouseMove={(e) => showTooltip(e, `${seriesNames[0]}: ${values[i].toLocaleString()}`)}
+                    onMouseMove={(e) => showTooltip(e, `${seriesNames[0]}: ${(values[i] ?? 0).toLocaleString()}`)}
                     onMouseLeave={hideTooltip} />
                   <div className="w-full bg-emerald-500 rounded-t cursor-pointer hover:opacity-80 transition-opacity"
                     style={{ height: `${(values2[i] / stackTotal) * 100}%` }}
@@ -450,7 +450,7 @@ function AdvancedChart({ type, labels, values, values2, values3, title, xlabel, 
             {labels.map((l, i) => (
               <div key={i} className="flex items-center gap-2">
                 <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: colors[i % colors.length] }} />
-                <span>{l}: {values[i].toLocaleString()}</span>
+                <span>{l}: {(values[i] ?? 0).toLocaleString()}</span>
               </div>
             ))}
           </div>
@@ -779,10 +779,10 @@ function AdvancedChart({ type, labels, values, values2, values3, title, xlabel, 
           const pct = values2 ? ((values[i] / values2[i]) * 100).toFixed(1) : null
           return (
             <div key={i} className="p-3 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl shadow-sm cursor-pointer hover:shadow-md transition-shadow"
-              onMouseMove={(e) => showTooltip(e, `${label}: ${values[i].toLocaleString()}${pct ? ` (${pct}% of target)` : ''}`)}
+              onMouseMove={(e) => showTooltip(e, `${label}: ${(values[i] ?? 0).toLocaleString()}${pct ? ` (${pct}% of target)` : ''}`)}
               onMouseLeave={hideTooltip}>
               <div className="text-[10px] text-gray-500 uppercase tracking-wide">{label}</div>
-              <div className="text-xl font-bold text-gray-800">{values[i].toLocaleString()}</div>
+              <div className="text-xl font-bold text-gray-800">{(values[i] ?? 0).toLocaleString()}</div>
               {pct && (
                 <div className="mt-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
                   <div className="h-full bg-blue-500 rounded-full" style={{ width: `${Math.min(100, parseFloat(pct))}%` }} />
