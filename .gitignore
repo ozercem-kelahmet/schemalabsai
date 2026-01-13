@@ -10,25 +10,22 @@ __pycache__/
 # Build
 .next/
 *.pyc
-schemalabsai
 
-# Data
-data/
-scripts/
-uploads/
+# Large binaries
+schemalabsai
+schemalabsai_linux
+main
+server
+
+# Large model files
 checkpoints/*.pt
-!checkpoints/.gitkeep
+model/finetuned_models/*.pt
 
 # Logs & DB
 *.log
 *.db
 *.rdb
 *_backup.sql
-test_data*.csv
 
 # OS
 .DS_Store
-main
-server
-model/finetuned_models/*.pt
-!data/scripts/
