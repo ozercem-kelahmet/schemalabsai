@@ -18,8 +18,14 @@ jobs:
           key: ${{ secrets.GCP_SSH_KEY }}
           script: |
             cd /opt/schemalabsai
-            git pull origin main
+            git fetch origin
+            git reset --hard origin/main
+            export PATH=$PATH:/usr/local/go/bin
             go mod tidy
             go build -o schemalabsai main.go
-            cd frontend && npm run build && cd ..
-            sudo systemctl restart schemalabs-go
+            sudo systemctl stop schemalabs-go
+            sudo pkill -9 schemalabsai 2>/dev/null || true
+            sudo pkill -9 -f server.py 2>/dev/null || true
+            sleep 2
+            sudo systemctl reset-failed schemalabs-go
+            sudo systemctl start schemalabs-go
