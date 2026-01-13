@@ -376,6 +376,8 @@ function SidebarInner() {
     })
     setTrainingQueryId(newQuery.id)
 
+    setTrainingProgress(0)
+    setDisplayEpochs(0)
     setIsTraining(true)
     setTrainingProgress(5)
     setTrainingStatus("Analyzing data...")
@@ -842,12 +844,12 @@ function SidebarInner() {
                         ) : (
                           <div className="py-6 space-y-6">
                             <div className="text-center">
-                              {trainingComplete ? (
+                              { trainingProgress >= 100 ? (
                                 <CheckCircle2 className="h-12 w-12 text-green-500 mx-auto mb-4" />
                               ) : (
                                 <Loader2 className="h-12 w-12 text-primary mx-auto mb-4 animate-spin" />
                               )}
-                              <h3 className="text-lg font-semibold">{trainingComplete ? "Training Complete!" : "Fine-tuning..."}</h3>
+                              <h3 className="text-lg font-semibold">{trainingProgress >= 100 ? "Training Complete!" : "Fine-tuning..."}</h3>
                               <p className="text-sm text-muted-foreground mt-1">{trainingStatus}</p>
                               {trainingETA && !trainingComplete && (
                                 <p className="text-xs text-muted-foreground mt-1">ETA: {trainingETA}</p>

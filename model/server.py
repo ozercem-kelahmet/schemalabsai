@@ -838,6 +838,8 @@ def finetune():
         analyze_only = request.form.get('analyze_only', 'false').lower() == 'true'
         
         session = get_session(query_id)
+        # Reset session for new training
+        session.update({"epoch": 0, "epochs": 0, "accuracy": 0.0, "loss": 0.0, "status": "starting", "eta": "0%", "start_time": time.time()})
         
         merge_files = request.form.get('merge_files', 'false').lower() == 'true'
         

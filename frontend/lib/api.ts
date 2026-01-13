@@ -104,7 +104,17 @@ export const api = {
     const res = await fetch(API_BASE + '/train/progress' + (queryId ? '?query_id=' + queryId : ''), {
       credentials: 'include'
     })
-    return res.json()
+    if (!res.ok) {
+      console.error("getTrainingProgress failed:", res.status)
+      return { status: "idle", epoch: 0, epochs: 0, accuracy: 0, loss: 0 }
+    }
+    const text = await res.text()
+    try {
+      return JSON.parse(text)
+    } catch (e) {
+      console.error("getTrainingProgress parse error:", text.substring(0, 100))
+      return { status: "idle", epoch: 0, epochs: 0, accuracy: 0, loss: 0 }
+    }
   },
 
   getUploadedFiles: async () => {
