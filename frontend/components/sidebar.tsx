@@ -481,13 +481,14 @@ function SidebarInner() {
     setIsNewChatOpen(false)
 
     const selectedModelData = fineTunedModels.find(m => m.id === selectedExistingModel)
-    const fileId = selectedModelData?.source_file_id || ""
-    console.log("DEBUG sidebar fileId:", fileId)
+    const sourceFileIds = selectedModelData?.source_file_id?.split(',').map(id => id.trim()).filter(Boolean) || []
+    const fileId = sourceFileIds[0] || ""
+    console.log("DEBUG sidebar fileIds:", sourceFileIds, "primary:", fileId)
     
     const newQuery = await addQuery({
       name: projectName,
       model: selectedModel,
-      dataSources: fileId ? [fileId] : [],
+      dataSources: sourceFileIds.length > 0 ? sourceFileIds : [],
       trainingModelId: selectedExistingModel,
       fileId: fileId,
       hasModel: true
