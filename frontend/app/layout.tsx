@@ -7,6 +7,7 @@ import { QueryStoreProvider } from "@/lib/query-store"
 import { Providers } from "@/components/providers"
 import { AuthProvider } from "@/lib/auth"
 import { ToastProvider } from "@/components/ui/toast"
+import { Toaster } from "sonner"
 import "./globals.css"
 
 const _geist = Geist({ subsets: ["latin"] })
@@ -36,7 +37,7 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className={`font-sans antialiased`}>
         <ThemeProvider attribute="class" defaultTheme="light" enableSystem disableTransitionOnChange>
-          <Providers><AuthProvider><QueryStoreProvider><ToastProvider>{children}</ToastProvider></QueryStoreProvider></AuthProvider></Providers>
+          <Providers><AuthProvider><QueryStoreProvider><ToastProvider>{children}<Toaster position="top-right" richColors /></ToastProvider></QueryStoreProvider></AuthProvider></Providers>
         </ThemeProvider>
         <Analytics />
       </body>
