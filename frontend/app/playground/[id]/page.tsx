@@ -1173,6 +1173,14 @@ export default function PlaygroundQueryPage() {
   const [compareResults, setCompareResults] = useState<{model: string, modelName: string, content: string, tokens: number, time: string}[]>([])
   const [messages, setMessages] = useState<Message[]>([])
   const [hasInitializedChat, setHasInitializedChat] = useState(false)
+
+  // Reset chat initialization when query changes
+  useEffect(() => {
+    setHasInitializedChat(false)
+    setSelectedFiles([])
+    setMessages([])
+  }, [queryId])
+
   const [isLoading, setIsLoading] = useState(false)
   const [selectedModel, setSelectedModel] = useState("gpt-4o")
   const [trainingProgress, setTrainingProgress] = useState({ epoch: 0, epochs: 10, batch: 0, batches: 100, accuracy: 0, loss: 0, eta: "", status: "" })

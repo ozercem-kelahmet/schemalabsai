@@ -2,6 +2,7 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
 from flask import Flask, request, jsonify
+from datetime import datetime
 import json
 import math
 
@@ -33,7 +34,6 @@ from model import TabularFoundationModel, TabularFoundationModelMIRAS
 import os
 import sys
 import time
-import datetime
 import tempfile
 import glob
 from pathlib import Path
@@ -700,103 +700,47 @@ def analyze():
         else:
             df = pd.read_csv(file_path, low_memory=False)
         
-        numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+        # === SIMPLE & DYNAMIC ANALYSIS ===
+        analysis = f"DATA: {len(df)} rows x {len(df.columns)} columns\n\n"
         
-        # Find grouping column
-        group_col = None
+        # Column info with types and stats
+        analysis += "=== COLUMNS ===\n"
         for col in df.columns:
-            n = df[col].nunique()
-            if 2 <= n <= 30 and col in numeric_cols:
-                group_col = col
-                break
-        if not group_col:
-            for col in df.columns:
-                if 'player' in col.lower() or 'id' in col.lower():
-                    if 2 <= df[col].nunique() <= 30:
-                        group_col = col
-                        break
-        
-        # Find query-relevant columns with smart scoring
-        query_words = [w for w in query.split() if len(w) > 2]
-        col_scores = []
-        for col in numeric_cols:
-            col_l = col.lower()
-            score = 0
-            for w in query_words:
-                if w in col_l:
-                    score += 10
-                    # Exact word match bonus
-                    if w in col_l.replace('-', ' ').replace('_', ' ').split():
-                        score += 20
-            # Physical metrics bonus (wimu = wearable data)
-            if 'wimu_' in col_l:
-                score += 5
-            # Penalize ID columns
-            if col_l.endswith('.id') or col_l.endswith('_id'):
-                score -= 50
-            if score > 0:
-                col_scores.append((col, score))
-        
-        # Sort by score descending
-        col_scores.sort(key=lambda x: x[1], reverse=True)
-        relevant_cols = [c[0] for c in col_scores]
-        
-        analysis = f"DATA: {len(df)} rows x {len(df.columns)} cols\n"
-        
-        if group_col:
-            analysis += f"\n=== METRICS BY {group_col} ===\n"
+            dtype = str(df[col].dtype)
+            nunique = df[col].nunique()
             
-            # Show relevant columns first (detailed)
-            shown = set()
-            for col in relevant_cols[:10]:
-                if col == group_col or col in shown:
-                    continue
-                shown.add(col)
+            if df[col].dtype == 'object':
+                unique_vals = df[col].dropna().unique()[:8].tolist()
+                analysis += f"• {col} (text, {nunique} unique): {unique_vals}\n"
+            else:
                 try:
-                    grp = df.groupby(group_col)[col].sum().sort_values(ascending=False)
-                    if grp.sum() != 0:
-                        analysis += f"\n**{col}**:\n"
-                        for idx, val in grp.items():
-                            analysis += f"  {idx}: {val:.2f}\n"
+                    analysis += f"• {col} (numeric): min={df[col].min():.2f}, max={df[col].max():.2f}, avg={df[col].mean():.2f}\n"
                 except:
-                    pass
-            
-            # Show only TOP 30 most important columns (query-relevant first, then by variance)
-            shown_cols = set(relevant_cols[:10])
-            
-            # Add high-variance columns if we have room
-            col_scores = []
-            for col in numeric_cols:
-                if col != group_col and col not in shown_cols:
-                    try:
-                        variance = df[col].var()
-                        col_scores.append((col, variance))
-                    except:
-                        pass
-            col_scores.sort(key=lambda x: x[1], reverse=True)
-            for col, _ in col_scores[:20]:
-                shown_cols.add(col)
-            
-            # Output only the selected columns
-            for col in shown_cols:
-                if col == group_col:
-                    continue
-                try:
-                    grp = df.groupby(group_col)[col].sum().sort_values(ascending=False)
-                    total = grp.sum()
-                    if abs(total) > 0.001:
-                        analysis += f"\n**{col}**:\n"
-                        for idx, val in grp.items():
-                            if abs(val) > 0.001:
-                                analysis += f"  {idx}: {val:.2f}\n"
-                except:
-                    pass
+                    analysis += f"• {col} ({dtype})\n"
         
-        # Column reference
-        analysis += f"\n=== ALL COLUMNS ({len(df.columns)}) ===\n"
-        analysis += ", ".join(df.columns[:80])
-        if len(df.columns) > 80:
-            analysis += f"... +{len(df.columns)-80} more"
+        # Sample data - first 10 rows as CSV-like format
+        analysis += f"\n=== SAMPLE DATA (10 rows) ===\n"
+        analysis += " | ".join(df.columns[:10]) + "\n"
+        analysis += "-" * 50 + "\n"
+        for idx, row in df.head(10).iterrows():
+            vals = [str(row[c])[:15] for c in df.columns[:10]]
+            analysis += " | ".join(vals) + "\n"
+        
+        # Basic stats summary
+        analysis += f"\n=== QUICK STATS ===\n"
+        for col in df.select_dtypes(include=['number']).columns[:10]:
+            analysis += f"• {col}: sum={df[col].sum():.2f}, avg={df[col].mean():.2f}, count={len(df)}\n"
+        
+        # Categorical breakdown (if any)
+        cat_cols = df.select_dtypes(include=['object']).columns.tolist()
+        if cat_cols:
+            analysis += f"\n=== CATEGORICAL BREAKDOWN ===\n"
+            for cat_col in cat_cols[:3]:
+                analysis += f"\n**{cat_col}** value counts:\n"
+                vc = df[cat_col].value_counts().head(15)
+                for val, count in vc.items():
+                    pct = count / len(df) * 100
+                    analysis += f"  {val}: {count} ({pct:.1f}%)\n"
         
         return jsonify({'analysis': analysis, 'status': 'success'})
     except Exception as e:
@@ -859,7 +803,7 @@ def finetune():
             import uuid
             from datetime import datetime
             merged_file_id = str(uuid.uuid4())
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            from datetime import datetime; timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             merged_filename = f"{merged_file_id[:8]}_merged_all_{timestamp}.csv"
             merged_path = os.path.join('../uploads', merged_filename)
             df.to_csv(merged_path, index=False)
@@ -1093,7 +1037,7 @@ def finetune():
         session["epoch"] = current_epoch
         training_progress.update(session); training_sessions[query_id] = session if "query_id" in dir() and query_id else training_progress
         
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        from datetime import datetime; timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         ft_path = f'../checkpoints/model_finetuned_{timestamp}.pt'
         
         torch.save({
