@@ -108,7 +108,7 @@ func main() {
 	}
 	
 	if !isPortInUse(frontendPort) {
-		go startNextJsServer()
+		// go startNextJsServer() // Managed by schemalabs-frontend service
 	} else {
 		log.Println("Next.js already running on port", frontendPort)
 	}
