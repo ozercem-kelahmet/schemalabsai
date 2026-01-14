@@ -178,7 +178,17 @@ function SidebarInner() {
       try {
         if (trainingQueryId) {
           const progress = await api.getTrainingProgress(trainingQueryId)
-          if (progress.status === "training") {
+          // Skip if this is not our training session
+          if (progress.query_id && progress.query_id !== trainingQueryId) {
+            return
+          }
+          if (progress.status === "starting") {
+            setTrainingProgress(10)
+            setTrainingStatus("Starting...")
+            setTrainingEpoch(0)
+            setTrainingAccuracy(0)
+            setTrainingLoss(0)
+          } else if (progress.status === "training") {
             setTrainingEpoch(progress.epoch)
             setTrainingAccuracy(progress.accuracy / 100)
             setTrainingLoss(progress.loss)
@@ -207,7 +217,7 @@ function SidebarInner() {
                 progress: 20 + (progress.epoch / progress.epochs) * 70
               }
             }))
-          } else if (progress.status === "completed" && progress.epoch > 0 && progress.epoch === progress.epochs) {
+          } else if (progress.status === "completed" && progress.epoch > 0 && progress.epoch === progress.epochs && progress.query_id === trainingQueryId) {
             setTrainingProgress(100)
             setTrainingComplete(true)
             setTrainingStatus("Done! Accuracy: " + progress.accuracy.toFixed(1) + "%")
@@ -411,6 +421,14 @@ function SidebarInner() {
       console.log("Calling api.analyzeFiles...")
       const analysis = await api.analyzeFiles(allFileIds)
       console.log("analyzeFiles result:", analysis)
+      
+      // Check for error response
+      if (analysis.error) {
+        toast.error(analysis.error)
+        setIsFineTuneModalOpen(false)
+        setIsTraining(false)
+        return
+      }
       const smartEpochs = analysis.smart_epochs || epochCount
       const smartBatch = analysis.smart_batch_size || batchSize
       setDisplayEpochs(0)
@@ -433,10 +451,17 @@ function SidebarInner() {
       console.log("file_ids:", allFileIds)
       console.log("modelName:", modelName)
       console.log("epochs:", smartEpochs)
-      console.log("=== Calling api.multiTrain with query.id:", newQuery.id)
+      
       const result = await api.multiTrain(allFileIds, modelName, smartEpochs, smartBatch, 0.001, 100, newQuery.id)
       console.log("=== multiTrain result:", result)
       stopPolling()
+      
+      if (result.error) {
+        toast.error(result.error)
+        setIsFineTuneModalOpen(false)
+        setIsTraining(false)
+        return
+      }
       
       if (result.accuracy) setTrainingAccuracy(result.accuracy / 100)
       if (result.loss) setTrainingLoss(result.loss)
@@ -460,6 +485,7 @@ function SidebarInner() {
       setTrainingQueryId(null)
       setIsNewChatOpen(false)
       router.push("/playground/" + newQuery.id)
+    
       
     } catch (error) {
       console.error("Training failed:", error)
@@ -475,7 +501,6 @@ function SidebarInner() {
     if (!newProjectName.trim() || !selectedExistingModel) return
     
     const projectName = newProjectName.trim()
-    
     setProcessingProjectName(projectName)
     const model = fineTunedModels.find(m => m.id === selectedExistingModel)
     setProcessingDataSources([model?.name || "Model"])

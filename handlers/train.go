@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"log"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -260,7 +261,11 @@ func MultiTrainHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(filePaths) == 0 {
-		http.Error(w, "No files found", http.StatusNotFound)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "No files found. Files may not exist locally or need to be re-uploaded.",
+		})
 		return
 	}
 
@@ -300,12 +305,11 @@ queryIDField.Write([]byte(req.QueryID))
 
 	writer.Close()
 
-	// Call Flask server
-	resp, err := http.Post(
-		GetFlaskURL()+"/finetune",
-		writer.FormDataContentType(),
-		body,
-	)
+	// Call Flask server with timeout
+	httpClient := &http.Client{Timeout: 18000 * time.Second}
+	httpReq, _ := http.NewRequest("POST", GetFlaskURL()+"/finetune", body)
+	httpReq.Header.Set("Content-Type", writer.FormDataContentType())
+	resp, err := httpClient.Do(httpReq)
 	if err != nil {
 		http.Error(w, "Flask server error", http.StatusInternalServerError)
 		return
@@ -443,6 +447,15 @@ func AnalyzeFilesHandler(w http.ResponseWriter, r *http.Request) {
 		filePaths = append(filePaths, matches[0])
 	}
 
+	if len(filePaths) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "No files found. Files may not exist locally or need to be re-uploaded.",
+		})
+		return
+	}
+
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
@@ -522,4 +535,68 @@ func UpdateFineTunedModelHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"message": "Model updated"})
+}
+
+// AsyncTrainHandler - Async training başlatır
+func AsyncTrainHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		FileIDs       []string `json:"file_ids"`
+		ModelName     string   `json:"model_name"`
+		Epochs        int      `json:"epochs"`
+		BatchSize     int      `json:"batch_size"`
+		LearningRate  float64  `json:"learning_rate"`
+		WarmupSteps   int      `json:"warmup_steps"`
+		QueryID       string   `json:"query_id"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	flaskURL := GetFlaskURL() + "/finetune/async"
+	
+	// Flask'a yönlendir
+	resp, err := http.Post(flaskURL, "application/json", bytes.NewBuffer(mustMarshal(req)))
+	if err != nil {
+		log.Printf("Flask error: %v", err)
+	http.Error(w, "Flask error", http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	io.Copy(w, resp.Body)
+}
+
+// TrainingStatusHandler - Training status döner
+func TrainingStatusHandler(w http.ResponseWriter, r *http.Request) {
+	taskID := r.URL.Query().Get("task_id")
+	if taskID == "" {
+		http.Error(w, "task_id required", http.StatusBadRequest)
+		return
+	}
+
+	flaskURL := GetFlaskURL() + "/training/status/" + taskID
+	
+	resp, err := http.Get(flaskURL)
+	if err != nil {
+		log.Printf("Flask error: %v", err)
+	http.Error(w, "Flask error", http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	io.Copy(w, resp.Body)
+}
+
+func mustMarshal(v interface{}) []byte {
+	b, _ := json.Marshal(v)
+	return b
 }

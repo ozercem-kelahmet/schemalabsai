@@ -1,6 +1,7 @@
 import { API_BASE } from './config'
 
 export const api = {
+
   health: async () => {
     const res = await fetch(API_BASE + '/health')
     return res.json()
@@ -376,10 +377,8 @@ export const api = {
     })
     return res.json()
   }
-}
+,
 
-// API Keys
-export const apiKeys = {
   list: async () => {
     const res = await fetch(API_BASE + '/keys', {
       credentials: 'include'
@@ -403,5 +402,23 @@ export const apiKeys = {
       credentials: 'include'
     })
     return res.json()
+  },
+
+  trainAsync: async (fileIds: string[], modelName: string, epochs: number = 5, batchSize: number = 64, learningRate: number = 0.001, warmupSteps: number = 100, queryId?: string) => {
+    const res = await fetch(API_BASE + '/train/async', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file_ids: fileIds, model_name: modelName, epochs, batch_size: batchSize, learning_rate: learningRate, warmup_steps: warmupSteps, query_id: queryId })
+    })
+    return res.json()
+  },
+
+  getTrainingStatus: async (taskId: string) => {
+    const res = await fetch(API_BASE + '/train/status?task_id=' + taskId, {
+      credentials: 'include'
+    })
+    return res.json()
   }
 }
+

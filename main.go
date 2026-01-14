@@ -45,6 +45,13 @@ func startFlaskServer(pythonPath string) {
 }
 
 func startNextJsServer() {
+	exec.Command("pkill", "-f", "next-server").Run()
+	exec.Command("pkill", "-f", "npm run dev").Run()
+	time.Sleep(time.Millisecond * 500)
+	exec.Command("rm", "-rf", "./frontend/node_modules/.cache").Run()
+	time.Sleep(time.Millisecond * 500)
+
+	exec.Command("rm", "-rf", "./frontend/.next").Run()
 	cmd := exec.Command("npm", "run", "dev")
 	cmd.Dir = "./frontend"
 	cmd.Env = append(os.Environ(), "BROWSER=none")
@@ -127,6 +134,8 @@ func main() {
 	http.HandleFunc("/api/upload", enableCORS(handlers.AuthMiddleware(handlers.UploadHandler)))
 	http.HandleFunc("/api/train", enableCORS(handlers.AuthMiddleware(handlers.TrainHandler)))
 	http.HandleFunc("/api/train/multi", enableCORS(handlers.AuthMiddleware(handlers.MultiTrainHandler)))
+	http.HandleFunc("/api/train/async", enableCORS(handlers.AuthMiddleware(handlers.AsyncTrainHandler)))
+	http.HandleFunc("/api/train/status", enableCORS(handlers.TrainingStatusHandler))
 	http.HandleFunc("/api/train/analyze", enableCORS(handlers.AuthMiddleware(handlers.AnalyzeFilesHandler)))
 	http.HandleFunc("/api/train/progress", enableCORS(func(w http.ResponseWriter, r *http.Request) {
 		queryID := r.URL.Query().Get("query_id")

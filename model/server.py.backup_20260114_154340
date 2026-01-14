@@ -30,7 +30,6 @@ app_json_encoder = NaNSafeEncoder
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.cuda.amp import autocast, GradScaler
 import numpy as np
 import pandas as pd
 from model import TabularFoundationModel, TabularFoundationModelMIRAS
@@ -1017,12 +1016,6 @@ def finetune():
             traceback.print_exc()
             raise
         
-        except Exception as e:
-            print(f"ERROR creating model: {e}")
-            import traceback
-            traceback.print_exc()
-            raise
-        
         # Dinamik batch size ve epochs - algoritmik
         batch_size = batch_size_req if batch_size_req > 0 else dyn_cfg['batch_size']
         epochs = epochs_req if epochs_req > 0 else dyn_cfg['epochs']
@@ -1030,10 +1023,6 @@ def finetune():
         optimizer = AdamW(ft_model.parameters(), lr=dyn_cfg['lr'], weight_decay=0.01)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
         loss_fn = nn.CrossEntropyLoss()
-        
-        # AMP for 2x speedup
-        scaler = GradScaler()
-        gradient_accumulation_steps = 2  # Effective batch size *= 2
         
         session["status"] = "training"
         # Aynı progress'i Redis'e de yaz (async için)
@@ -1064,46 +1053,37 @@ def finetune():
         max_epochs = 500  # Maksimum epoch limiti
         current_epoch = 0
         
-        # DataLoader ile paralel data loading
-        from torch.utils.data import TensorDataset, DataLoader
-        dataset = TensorDataset(torch.FloatTensor(X[:max_samples_per_epoch]), torch.LongTensor(y[:max_samples_per_epoch]))
-        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=True)
-        
         while current_epoch < max_epochs:
             print(f"Epoch {current_epoch + 1} starting...")
             ft_model.train()
+            idx = np.random.permutation(len(X))
             total_loss = 0
             correct = 0
             batches = 0
             
-            for batch_idx, (batch_X, batch_y) in enumerate(dataloader):
+            for i in range(0, min(len(X), max_samples_per_epoch) - batch_size + 1, batch_size):
+                batch_idx = idx[i:i+batch_size]
+                batch_X = torch.FloatTensor(X[batch_idx])
+                batch_y = torch.LongTensor(y[batch_idx])
                 
                 if np.random.random() > 0.5:
                     noise = torch.randn_like(batch_X) * 0.01
                     batch_X = batch_X + noise
                 
-                # AMP forward pass
-                with autocast():
-                    out = ft_model(batch_X)
-                    logits = out['output']
-                    sector_logits = out['sector']
-                    sector_targets = batch_y % ft_model.n_sectors
-                    sector_loss = nn.CrossEntropyLoss()(sector_logits, sector_targets)
-                    mcm_loss = out.get('mcm_loss', torch.tensor(0.0))
-                    miras_loss = out.get('miras_loss', torch.tensor(0.0))
-                    loss = loss_fn(logits, batch_y) + sector_loss + 0.1 * mcm_loss + 0.05 * miras_loss
-                    loss = loss / gradient_accumulation_steps  # Scale loss
-                
-                # AMP backward pass
-                scaler.scale(loss).backward()
-                
-                # Gradient accumulation - update every N steps
-                if (batch_idx + 1) % gradient_accumulation_steps == 0:
-                    scaler.unscale_(optimizer)
-                    torch.nn.utils.clip_grad_norm_(ft_model.parameters(), 1.0)
-                    scaler.step(optimizer)
-                    scaler.update()
-                    optimizer.zero_grad()
+                optimizer.zero_grad()
+                out = ft_model(batch_X)
+                logits = out['output']
+                # Classification + Sector loss
+                # Sector: aynı class'takiler benzer sector'e
+                sector_logits = out['sector']
+                sector_targets = batch_y % ft_model.n_sectors  # Class'a göre sector
+                sector_loss = nn.CrossEntropyLoss()(sector_logits, sector_targets)
+                mcm_loss = out.get('mcm_loss', torch.tensor(0.0))
+                miras_loss = out.get('miras_loss', torch.tensor(0.0))
+                loss = loss_fn(logits, batch_y) + sector_loss + 0.1 * mcm_loss + 0.05 * miras_loss
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(ft_model.parameters(), 1.0)
+                optimizer.step()
                 
                 total_loss += loss.item()
                 correct += (logits.argmax(1) == batch_y).sum().item()
