@@ -1,11 +1,6 @@
-age,income,credit_score,debt_ratio,loan_amount,employment_years,category
-25,35000,650,0.4,10000,2,Rejected
-45,85000,780,0.2,25000,15,Approved
-30,55000,700,0.3,15000,5,Approved
-22,28000,580,0.5,8000,1,Rejected
-55,120000,800,0.15,50000,25,Approved
-35,62000,720,0.25,20000,8,Approved
-28,42000,630,0.45,12000,3,Rejected
-40,78000,760,0.22,30000,12,Approved
-23,32000,600,0.48,9000,1,Rejected
-50,95000,790,0.18,40000,20,Approved
+feature1,feature2,feature3,target
+10,20,30,A
+15,25,35,B
+12,22,32,A
+18,28,38,B
+11,21,31,A
