@@ -52,7 +52,7 @@ func startNextJsServer() {
 	time.Sleep(time.Millisecond * 500)
 
 	exec.Command("rm", "-rf", "./frontend/.next").Run()
-	cmd := exec.Command("npm", "run", "dev")
+	cmd := exec.Command("npm", "start")
 	cmd.Dir = "./frontend"
 	cmd.Env = append(os.Environ(), "BROWSER=none")
 	cmd.Start()
