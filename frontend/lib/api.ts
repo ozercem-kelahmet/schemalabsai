@@ -69,7 +69,7 @@ export const api = {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file_id: fileId, filename, epochs, batch_size: batchSize, target_column: targetColumn })
+      body: JSON.stringify({ fileId: fileId, filename, epochs, batch_size: batchSize, target_column: targetColumn })
     })
     return res.json()
   },
@@ -207,7 +207,7 @@ export const api = {
       method: 'PUT',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file_id: fileId, folder_id: folderId })
+      body: JSON.stringify({ fileId: fileId, folder_id: folderId })
     })
     return res.json()
   },
@@ -299,7 +299,7 @@ export const api = {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, model, data_sources: dataSources, file_id: fileId })
+      body: JSON.stringify({ name, model, dataSources: dataSources, fileId: fileId })
     })
     return res.json()
   },

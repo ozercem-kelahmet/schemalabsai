@@ -474,7 +474,7 @@ function SidebarInner() {
       setTrainingEpoch(result.epochs || smartEpochs)
       setTrainingStatus("Done! " + (result.files_merged || 1) + " files, " + (result.rows || 0) + " rows, " + (result.epochs || smartEpochs) + " epochs, " + (result.accuracy || 0).toFixed(1) + "% acc")
       
-      console.log("=== Updating query with id:", newQuery.id)
+      console.log("=== Updating query with id:", newQuery.id, "model_id:", result.model_id, "result:", result)
       updateQuery(newQuery.id, { isTraining: false, hasModel: true, trainingModelId: result.model_id })
       
       await loadData()

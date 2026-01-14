@@ -61,12 +61,12 @@ export function QueryStoreProvider({ children }: { children: ReactNode }) {
             const loaded = data.queries.map((q: any) => ({
               id: q.id,
               name: q.name,
-              dataSources: q.data_sources || [],
+              dataSources: q.dataSources || [],
               model: q.model || "gpt-4o",
-              createdAt: new Date(q.created_at),
-              isTraining: q.is_training || false,
-              trainingModelId: q.training_model_id || null,
-              hasModel: q.has_model || false
+              createdAt: new Date(q.createdAt),
+              isTraining: q.isTraining || false,
+              trainingModelId: q.trainingModelId || null,
+              hasModel: q.hasModel || false
             }))
             setQueries(loaded)
           }
@@ -113,11 +113,11 @@ export function QueryStoreProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify({
           name: newQuery.name,
           model: newQuery.model,
-          data_sources: newQuery.dataSources,
+          dataSources: newQuery.dataSources,
           file_id: input.fileId || "",
-          is_training: newQuery.isTraining,
-          has_model: newQuery.hasModel,
-          training_model_id: newQuery.trainingModelId
+          isTraining: newQuery.isTraining,
+          hasModel: newQuery.hasModel,
+          trainingModelId: newQuery.trainingModelId
         }),
       })
       
@@ -127,9 +127,9 @@ export function QueryStoreProvider({ children }: { children: ReactNode }) {
       if (data.id) {
         // Update temp ID with real ID and sync isTraining from backend
         newQuery.id = data.id
-        newQuery.isTraining = data.is_training ?? newQuery.isTraining
+        newQuery.isTraining = data.isTraining ?? newQuery.isTraining
         setQueries(prev => prev.map(q => 
-          q.id === tempId ? { ...q, id: data.id, isTraining: data.is_training ?? q.isTraining } : q
+          q.id === tempId ? { ...q, id: data.id, isTraining: data.isTraining ?? q.isTraining } : q
         ))
       }
     } catch (e) {

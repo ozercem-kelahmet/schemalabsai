@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from "next/server"
 
 export async function PUT(req: NextRequest) {
+  return handleUpdate(req)
+}
+
+export async function POST(req: NextRequest) {
+  return handleUpdate(req)
+}
+
+async function handleUpdate(req: NextRequest) {
   try {
     const body = await req.json()
     const { id, ...updates } = body
@@ -9,13 +17,14 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: "ID required" }, { status: 400 })
     }
     
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"}/api/queries/${id}`, {
-      method: "PUT",
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"
+    const res = await fetch(apiUrl + "/api/queries/update", {
+      method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Cookie": req.headers.get("cookie") || "",
       },
-      body: JSON.stringify(updates),
+      body: JSON.stringify({ id, ...updates }),
     })
     
     const data = await res.json()

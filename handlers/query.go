@@ -12,23 +12,23 @@ import (
 type CreateQueryRequest struct {
 	Name            string   `json:"name"`
 	Model           string   `json:"model"`
-	DataSources     []string `json:"data_sources"`
-	FileID          string   `json:"file_id"`
-	IsTraining      bool     `json:"is_training"`
-	HasModel        bool     `json:"has_model"`
-	TrainingModelID *string  `json:"training_model_id"`
+	DataSources     []string `json:"dataSources"`
+	FileID          string   `json:"fileId"`
+	IsTraining      bool     `json:"isTraining"`
+	HasModel        bool     `json:"hasModel"`
+	TrainingModelID *string  `json:"trainingModelId"`
 }
 
 type QueryResponse struct {
 	ID              string   `json:"id"`
 	Name            string   `json:"name"`
 	Model           string   `json:"model"`
-	DataSources     []string `json:"data_sources"`
-	FileID          string   `json:"file_id"`
-	IsTraining      bool     `json:"is_training"`
-	HasModel        bool     `json:"has_model"`
-	TrainingModelID *string  `json:"training_model_id"`
-	CreatedAt       string   `json:"created_at"`
+	DataSources     []string `json:"dataSources"`
+	FileID          string   `json:"fileId"`
+	IsTraining      bool     `json:"isTraining"`
+	HasModel        bool     `json:"hasModel"`
+	TrainingModelID *string  `json:"trainingModelId"`
+	CreatedAt       string   `json:"createdAt"`
 }
 
 func CreateQueryHandler(w http.ResponseWriter, r *http.Request) {
