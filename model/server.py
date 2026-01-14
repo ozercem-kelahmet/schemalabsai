@@ -165,10 +165,77 @@ def smart_merge_datasets(dataframes, file_names=None):
     if len(prepared_dfs) == 1:
         return prepared_dfs[0]
     
-    merged = pd.concat(prepared_dfs, axis=0, ignore_index=True)
-    merged = merged.fillna(0)
+    def find_best_merge_key(dfs):
+        """Tüm df'lerde ortak olan kolonları bul, en iyi merge key'i seç"""
+        # Tüm df'lerde ortak kolonlar
+        common_cols = set(dfs[0].columns)
+        for df in dfs[1:]:
+            common_cols &= set(df.columns)
+        
+        if not common_cols:
+            return None
+        
+        # Her ortak kolon için unique ratio hesapla - en iyi key yüksek unique, düşük null
+        best_key = None
+        best_score = -1
+        
+        for col in common_cols:
+            try:
+                scores = []
+                for df in dfs:
+                    if col not in df.columns:
+                        continue
+                    total = len(df)
+                    if total == 0:
+                        continue
+                    unique = df[col].nunique()
+                    non_null = df[col].notna().sum()
+                    # Score: unique ratio * non-null ratio
+                    score = (unique / total) * (non_null / total)
+                    scores.append(score)
+                
+                if scores:
+                    avg_score = sum(scores) / len(scores)
+                    # Prefer columns with 'id', 'key', 'num' in name
+                    col_lower = col.lower()
+                    if 'id' in col_lower or 'key' in col_lower or 'num' in col_lower:
+                        avg_score *= 1.2
+                    
+                    if avg_score > best_score:
+                        best_score = avg_score
+                        best_key = col
+            except:
+                continue
+        
+        # Minimum threshold - key en az %10 unique olmalı
+        if best_score < 0.1:
+            return None
+        
+        return best_key
     
-    print(f"Smart merge: {len(dataframes)} datasets -> {merged.shape}")
+    merge_key = find_best_merge_key(prepared_dfs)
+    
+    if merge_key:
+        # Merge on best key
+        merged = prepared_dfs[0]
+        for df in prepared_dfs[1:]:
+            merged = pd.merge(merged, df, on=merge_key, how='outer')
+        merged = merged.fillna(0)
+        print(f"Smart merge (key={merge_key}): {len(dataframes)} datasets -> {merged.shape}")
+    else:
+        # No good key - check row counts
+        row_counts = [len(df) for df in prepared_dfs]
+        if len(set(row_counts)) == 1:
+            # Same rows - column concat
+            merged = pd.concat(prepared_dfs, axis=1)
+            merged = merged.loc[:, ~merged.columns.duplicated()]
+            merged = merged.fillna(0)
+            print(f"Smart merge (col-concat): {len(dataframes)} datasets -> {merged.shape}")
+        else:
+            # Row concat fallback
+            merged = pd.concat(prepared_dfs, axis=0, ignore_index=True)
+            merged = merged.fillna(0)
+            print(f"Smart merge (row-concat): {len(dataframes)} datasets -> {merged.shape}")
     
     return merged
 
