@@ -25,11 +25,7 @@ jobs:
             go mod tidy 2>/dev/null || true
             go build -o schemalabsai main.go
             sudo systemctl stop schemalabs-go || true
-            sudo pkill -9 schemalabsai 2>/dev/null || true
-            sudo pkill -9 -f server.py 2>/dev/null || true
-            sudo pkill -9 -f next 2>/dev/null || true
-            sleep 3
-            sudo systemctl reset-failed schemalabs-go 2>/dev/null || true
+            sleep 2
             sudo systemctl start schemalabs-go
-            sleep 15
-            sudo systemctl is-active schemalabs-go
+            sleep 5
+            systemctl is-active schemalabs-go && echo "Service started successfully"
