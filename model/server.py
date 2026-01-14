@@ -1,4 +1,5 @@
 import os
+from analytics_engine import detect_analytics_type, generate_analytics
 os.environ["FLASK_SKIP_DOTENV"] = "1"
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -796,6 +797,14 @@ def analyze():
         else:
             df = pd.read_csv(file_path, low_memory=False)
         
+        # === ADVANCED ANALYTICS ENGINE ===
+        detected_types = detect_analytics_type(query)
+        if detected_types:
+            print(f"Detected analytics types: {[d['type'] for d in detected_types]}")
+            advanced_analysis = generate_analytics(df, query, detected_types)
+            if advanced_analysis and len(advanced_analysis) > 100:
+                return jsonify({'analysis': advanced_analysis, 'status': 'success'})
+        
         # === COMPACT ANALYSIS (max 8K chars) ===
         num_cols = df.select_dtypes(include=['number']).columns.tolist()
         cat_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
@@ -841,6 +850,80 @@ def analyze():
         
         analysis = f"DATASET: {len(df)} rows, {len(df.columns)} columns\n"
         analysis += f"Numeric: {len(num_cols)} | Categorical: {len(cat_cols)}\n\n"
+        
+        # === ADVANCED ANALYTICS DETECTION ===
+        is_swot = any(w in query for w in ['swot', 'strength', 'weakness', 'opportunity', 'threat'])
+        is_benchmark = any(w in query for w in ['benchmark', 'compare to average', 'vs average', 'team average'])
+        is_risk = any(w in query for w in ['risk', 'injury', 'danger', 'concern'])
+        is_trend = any(w in query for w in ['trend', 'over time', 'progression'])
+        is_anomaly = any(w in query for w in ['outlier', 'anomaly', 'unusual', 'exceptional'])
+        
+        # Extract player name from query if mentioned
+        player_name = None
+        for cat_col in cat_cols:
+            if 'name' in cat_col.lower() or 'player' in cat_col.lower():
+                for val in df[cat_col].dropna().unique():
+                    val_str = str(val).lower()
+                    if len(val_str) > 3 and val_str in query:
+                        player_name = val
+                        break
+                if not player_name:
+                    # Try partial match
+                    query_parts = query.split()
+                    for val in df[cat_col].dropna().unique():
+                        val_parts = str(val).lower().split()
+                        if any(vp in query for vp in val_parts if len(vp) > 3):
+                            player_name = val
+                            break
+        
+        if player_name and (is_swot or is_benchmark):
+            analysis += f"=== PLAYER PROFILE: {player_name} ===\n"
+            for cat_col in cat_cols:
+                if 'name' in cat_col.lower() or 'player' in cat_col.lower():
+                    player_data = df[df[cat_col] == player_name]
+                    if len(player_data) > 0:
+                        analysis += f"Records: {len(player_data)}\n"
+                        for num_col in num_cols[:20]:
+                            try:
+                                player_val = player_data[num_col].mean()
+                                team_avg = df[num_col].mean()
+                                team_std = df[num_col].std()
+                                diff_pct = ((player_val - team_avg) / team_avg * 100) if team_avg != 0 else 0
+                                status = "ABOVE" if player_val > team_avg else "BELOW"
+                                analysis += f"  {num_col}: {player_val:.2f} (Team avg: {team_avg:.2f}, {status} by {abs(diff_pct):.1f}%)\n"
+                            except:
+                                pass
+                        break
+            analysis += "\n"
+        
+        if is_risk and matched_num:
+            analysis += "=== RISK INDICATORS ===\n"
+            for num_col in matched_num[:5]:
+                try:
+                    mean_val = df[num_col].mean()
+                    std_val = df[num_col].std()
+                    high_threshold = mean_val + 2 * std_val
+                    high_risk = df[df[num_col] > high_threshold]
+                    analysis += f"{num_col}: Mean={mean_val:.2f}, Std={std_val:.2f}, High risk threshold={high_threshold:.2f}, Count above={len(high_risk)}\n"
+                except:
+                    pass
+            analysis += "\n"
+        
+        if is_anomaly and matched_num:
+            analysis += "=== OUTLIERS (>2 std dev) ===\n"
+            for num_col in matched_num[:3]:
+                try:
+                    mean_val = df[num_col].mean()
+                    std_val = df[num_col].std()
+                    outliers = df[(df[num_col] > mean_val + 2*std_val) | (df[num_col] < mean_val - 2*std_val)]
+                    if len(outliers) > 0 and matched_cat:
+                        for cat_col in matched_cat[:1]:
+                            analysis += f"{num_col} outliers by {cat_col}:\n"
+                            for _, row in outliers.head(10).iterrows():
+                                analysis += f"  {row[cat_col]}: {row[num_col]:.2f}\n"
+                except:
+                    pass
+            analysis += "\n"
         
         # AUTO-CALCULATE if matching columns found
         if matched_num and matched_cat:

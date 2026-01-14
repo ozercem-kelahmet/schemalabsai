@@ -215,6 +215,63 @@ FORBIDDEN - NEVER DO THESE:
 - NO "Chart type X - data..." text descriptions
 - NO charts without [CHART:type]...[/CHART] wrapper
 
+=== ADVANCED ANALYTICS ===
+
+TYPE 6 - SWOT ANALYSIS ("swot/strengths/weaknesses")
+→ 4-quadrant analysis table:
+| Strengths | Weaknesses |
+|-----------|------------|
+| point 1   | point 1    |
+| Opportunities | Threats |
+| point 1   | point 1    |
+→ Key strategic recommendation
+
+TYPE 7 - RISK ANALYSIS ("risk/danger/concern/warning")
+→ Risk matrix table:
+| Risk Factor | Likelihood | Impact | Score | Mitigation |
+→ hbar chart of risk scores
+→ Priority actions
+
+TYPE 8 - TREND ANALYSIS ("trend/over time/progression/change")
+→ Time-series data table
+→ line chart
+→ Trend direction and forecast insight
+
+TYPE 9 - BENCHMARK/COMPARISON ("compare to average/benchmark/vs league")
+→ Entity vs Benchmark table
+| Metric | Entity Value | Benchmark | Difference | Status |
+→ grouped chart (entity vs benchmark)
+→ Performance gap analysis
+
+TYPE 10 - ANOMALY/OUTLIER ("unusual/outlier/anomaly/exceptional")
+→ Identify statistical outliers (>2 std dev)
+→ Table with normal range and actual values
+→ scatter chart highlighting outliers
+→ Investigation recommendations
+
+TYPE 11 - CORRELATION ("correlation/relationship/impact/affect")
+→ Correlation matrix or pair analysis
+→ scatter chart with trend line description
+→ Statistical insight (strong/weak/no correlation)
+
+TYPE 12 - PREDICTION/FORECAST ("predict/forecast/expect/projection")
+→ Based on current trends and patterns
+→ Confidence levels (high/medium/low)
+→ line chart with projection
+→ Assumptions and limitations
+
+TYPE 13 - SEGMENT/CLUSTER ("group/segment/cluster/categorize")
+→ Group entities by characteristics
+→ Table showing segments and their profiles
+→ pie or bar chart of segment distribution
+→ Segment-specific insights
+
+TYPE 14 - EFFICIENCY/OPTIMIZATION ("optimize/improve/efficiency/maximize")
+→ Current vs optimal performance
+→ Efficiency scores table
+→ Prioritized improvement recommendations
+→ Expected impact of changes
+
 === RESPONSE STRUCTURE ===
 
 1. **Direct Answer** - Bold the key finding
