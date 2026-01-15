@@ -43,6 +43,10 @@ import os
 import sys
 import time
 import threading
+
+# Global GPU device
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
 import tempfile
 import glob
 from pathlib import Path
@@ -1060,8 +1064,8 @@ def predict():
             mask = ~np.isnan(row_norm)
             row_norm = np.nan_to_num(row_norm, nan=0.0)
             
-            X_t = torch.FloatTensor(row_norm)
-            mask_t = torch.FloatTensor(mask.astype(np.float32))
+            X_t = torch.FloatTensor(row_norm).to(device)
+            mask_t = torch.FloatTensor(mask.astype(np.float32)).to(device)
             
             with torch.inference_mode():
                 if mask.mean() < 1.0:
@@ -1131,7 +1135,7 @@ def predict_batch():
         
         values_norm = (values - X_min) / (X_max - X_min + 1e-8)
         
-        X_t = torch.FloatTensor(values_norm)
+        X_t = torch.FloatTensor(values_norm).to(device)
         with torch.inference_mode():
             try:
                 out = model(X_t)
@@ -1567,6 +1571,8 @@ def finetune():
             else:
                 ft_model = TabularFoundationModel(ft_config)
             print(f"Model created successfully, params: {sum(p.numel() for p in ft_model.parameters())}")
+            ft_model = ft_model.to(device)
+            print(f"Model moved to {device}")
             for m in ft_model.modules():
                 if isinstance(m, nn.BatchNorm1d):
                     m.momentum = 0.01
@@ -1658,6 +1664,7 @@ def finetune():
             batches = 0
             
             for batch_idx, (batch_X, batch_y) in enumerate(dataloader):
+                batch_X, batch_y = batch_X.to(device), batch_y.to(device)
                 
                 if np.random.random() > 0.5:
                     noise = torch.randn_like(batch_X) * 0.01
@@ -1818,7 +1825,7 @@ def finetune():
         # Sector tahmini yap
         ft_model.eval()
         with torch.inference_mode():
-            sample_X = torch.FloatTensor(X[:min(100, len(X))])
+            sample_X = torch.FloatTensor(X[:min(100, len(X))]).to(device)
             out = ft_model(sample_X)
             sector_probs = torch.softmax(out['sector'], dim=1)
             sector_conf = sector_probs.max(1).values.mean().item() * 100
