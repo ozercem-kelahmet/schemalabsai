@@ -1297,12 +1297,35 @@ def analyze():
                     
                     X_pred = np.nan_to_num(X_pred, nan=0.0).astype(np.float32)
                     
-                    # Run prediction
+                    # Run prediction in batches to avoid OOM
+                    batch_size = 1000  # Process 1000 rows at a time
+                    all_preds = []
+                    all_confs = []
+                    
                     with torch.no_grad():
-                        X_tensor = torch.FloatTensor(X_pred)
-                        output = ft_model(X_tensor)
+                        for i in range(0, len(X_pred), batch_size):
+                            batch = torch.FloatTensor(X_pred[i:i+batch_size])
+                            output = ft_model(batch)
+                            
+                            if isinstance(output, dict):
+                                logits = output.get('sector', output.get('logits', None))
+                                if logits is None:
+                                    logits = list(output.values())[0]
+                            else:
+                                logits = output
+                            
+                            probs = torch.softmax(logits, dim=-1)
+                            all_preds.extend(probs.argmax(dim=-1).cpu().numpy().tolist())
+                            all_confs.extend(probs.max(dim=-1).values.cpu().numpy().tolist())
+                    
+                    preds = np.array(all_preds)
+                    confs = np.array(all_confs)
+                    
+                    # Skip the old single-batch code
+                    output = None
                         
-                        # Handle different output formats
+                    # Batch processing already done above
+                    if output is not None:
                         if isinstance(output, dict):
                             logits = output.get('sector', output.get('logits', None))
                             if logits is None:
