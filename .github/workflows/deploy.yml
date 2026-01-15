@@ -24,8 +24,7 @@ jobs:
             export PATH=$PATH:/usr/local/go/bin
             go mod tidy 2>/dev/null || true
             go build -o schemalabsai main.go
-            sudo systemctl stop schemalabs-go || true
-            sleep 2
-            sudo systemctl start schemalabs-go
-            sleep 5
-            systemctl is-active schemalabs-go && echo "Service started successfully"
+            cd frontend && npm run build && cd ..
+            sudo systemctl restart schemalabs-go schemalabs-flask schemalabs-frontend
+            sleep 10
+            systemctl is-active schemalabs-go && systemctl is-active schemalabs-frontend && echo "All services running"
