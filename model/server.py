@@ -56,6 +56,70 @@ import threading
 # Global GPU device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
+
+# Fine-tuned model cache - her seferinde yüklememek için
+ft_model_cache = {}
+FT_CACHE_MAX_SIZE = 3  # Max 3 model tut (GPU memory için)
+
+def get_cached_finetuned_model(model_id, config):
+    """Load model from cache or disk"""
+    global ft_model_cache
+    
+    if model_id in ft_model_cache:
+        print(f"Model cache HIT: {model_id}")
+        return ft_model_cache[model_id]
+    
+    print(f"Model cache MISS: {model_id}, loading...")
+    ft_path = f'../checkpoints/{model_id}.pt'
+    ft_ckpt = torch.load(ft_path, map_location='cpu', weights_only=False)
+    
+    ft_model = TabularFoundationModel(config)
+    ft_model.load_state_dict(ft_ckpt['model_state_dict'])
+    ft_model.eval()
+    ft_model = ft_model.to(device)
+    
+    # Cache doluysa en eskiyi sil
+    if len(ft_model_cache) >= FT_CACHE_MAX_SIZE:
+        oldest_key = list(ft_model_cache.keys())[0]
+        print(f"Cache full, removing: {oldest_key}")
+        del ft_model_cache[oldest_key]['model']
+        del ft_model_cache[oldest_key]
+        torch.cuda.empty_cache()
+    
+    ft_model_cache[model_id] = {'model': ft_model, 'ckpt': ft_ckpt}
+    return ft_model_cache[model_id]
+
+# Fine-tuned model cache - her seferinde yüklememek için
+ft_model_cache = {}
+FT_CACHE_MAX_SIZE = 3  # Max 3 model tut (GPU memory için)
+
+def get_cached_finetuned_model(model_id, config):
+    """Load model from cache or disk"""
+    global ft_model_cache
+    
+    if model_id in ft_model_cache:
+        print(f"Model cache HIT: {model_id}")
+        return ft_model_cache[model_id]
+    
+    print(f"Model cache MISS: {model_id}, loading...")
+    ft_path = f'../checkpoints/{model_id}.pt'
+    ft_ckpt = torch.load(ft_path, map_location='cpu', weights_only=False)
+    
+    ft_model = TabularFoundationModel(config)
+    ft_model.load_state_dict(ft_ckpt['model_state_dict'])
+    ft_model.eval()
+    ft_model = ft_model.to(device)
+    
+    # Cache doluysa en eskiyi sil
+    if len(ft_model_cache) >= FT_CACHE_MAX_SIZE:
+        oldest_key = list(ft_model_cache.keys())[0]
+        print(f"Cache full, removing: {oldest_key}")
+        del ft_model_cache[oldest_key]['model']
+        del ft_model_cache[oldest_key]
+        torch.cuda.empty_cache()
+    
+    ft_model_cache[model_id] = {'model': ft_model, 'ckpt': ft_ckpt}
+    return ft_model_cache[model_id]
 import tempfile
 import glob
 from pathlib import Path
@@ -1271,11 +1335,10 @@ def analyze():
                         config['n_features'] = input_dim
                         config['n_classes'] = n_classes
                     
-                    # Create model and load weights
-                    ft_model = TabularFoundationModel(config)
-                    ft_model.load_state_dict(ft_ckpt['model_state_dict'])
-                    ft_model.eval()
-                    ft_model = ft_model.to(device)  # Move to GPU
+                    # Get model from cache or load
+                    cached = get_cached_finetuned_model(model_id, config)
+                    ft_model = cached['model']
+                    ft_ckpt = cached['ckpt']  # Update with cached checkpoint
                     
                     # Prepare data for prediction - sample for large datasets
                     num_cols = df.select_dtypes(include=['number']).columns.tolist()
@@ -1324,9 +1387,8 @@ def analyze():
                     preds = np.array(all_preds)
                     confs = np.array(all_confs)
                     
-                    # Clean up GPU memory
-                    del ft_model
-                    torch.cuda.empty_cache()
+                    # Model is cached, no cleanup needed
+                    # torch.cuda.empty_cache() called only when cache is full
                     
                     # Skip the old single-batch code
                     output = None
