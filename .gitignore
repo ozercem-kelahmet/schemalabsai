@@ -31,3 +31,4 @@ model/finetuned_models/*.pt
 .DS_Store
 data/
 schemalabsai_linux
+schemalabsai_linux
