@@ -1275,6 +1275,7 @@ def analyze():
                     ft_model = TabularFoundationModel(config)
                     ft_model.load_state_dict(ft_ckpt['model_state_dict'])
                     ft_model.eval()
+                    ft_model = ft_model.to(device)  # Move to GPU
                     
                     # Prepare data for prediction - sample for large datasets
                     num_cols = df.select_dtypes(include=['number']).columns.tolist()
@@ -1306,7 +1307,7 @@ def analyze():
                     
                     with torch.no_grad():
                         for i in range(0, len(X_pred), batch_size):
-                            batch = torch.FloatTensor(X_pred[i:i+batch_size])
+                            batch = torch.FloatTensor(X_pred[i:i+batch_size]).to(device)
                             output = ft_model(batch)
                             
                             if isinstance(output, dict):
@@ -1322,6 +1323,10 @@ def analyze():
                     
                     preds = np.array(all_preds)
                     confs = np.array(all_confs)
+                    
+                    # Clean up GPU memory
+                    del ft_model
+                    torch.cuda.empty_cache()
                     
                     # Skip the old single-batch code
                     output = None
