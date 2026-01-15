@@ -38,6 +38,14 @@ import torch.nn.functional as F
 from torch.cuda.amp import autocast, GradScaler
 import numpy as np
 import pandas as pd
+
+
+# GPU accelerated merge with cuDF
+try:
+    import cudf
+    HAS_CUDF = True
+except:
+    HAS_CUDF = False
 from model import TabularFoundationModel, TabularFoundationModelMIRAS
 import os
 import sys
@@ -437,6 +445,38 @@ def is_id_pattern(series, n_samples):
 
 
 def smart_merge_datasets(dataframes, file_names=None):
+    """
+    GPU accelerated merge with cuDF fallback to pandas
+    """
+    global HAS_CUDF
+    
+    # GPU merge if cuDF available
+    if HAS_CUDF and len(dataframes) > 1:
+        try:
+            import cudf
+            print("Using GPU accelerated merge with cuDF")
+            start_time = time.time()
+            
+            # Convert to cuDF
+            cu_dfs = [cudf.DataFrame.from_pandas(df) for df in dataframes]
+            
+            # Simple merge on common columns
+            merged = cu_dfs[0]
+            for i, cu_df in enumerate(cu_dfs[1:], 1):
+                common_cols = list(set(merged.columns) & set(cu_df.columns))
+                if common_cols:
+                    merged = merged.merge(cu_df, on=common_cols[0], how="outer")
+                else:
+                    merged = cudf.concat([merged, cu_df], axis=1)
+            
+            result = merged.to_pandas()
+            print(f"GPU merge completed in {time.time() - start_time:.2f}s")
+            return result.fillna(0)
+        except Exception as e:
+            print(f"GPU merge failed, falling back to CPU: {e}")
+    
+    # Original CPU implementation follows
+
     """
     Birden fazla dataseti akıllıca birleştirir.
     - Player ID mapping otomatik tespit
