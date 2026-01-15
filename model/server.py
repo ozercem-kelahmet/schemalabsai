@@ -1276,9 +1276,11 @@ def analyze():
                     ft_model.load_state_dict(ft_ckpt['model_state_dict'])
                     ft_model.eval()
                     
-                    # Prepare data for prediction
+                    # Prepare data for prediction - sample for large datasets
                     num_cols = df.select_dtypes(include=['number']).columns.tolist()
-                    X_pred = df[num_cols].fillna(0).values.astype(np.float32)
+                    df_sample = df.head(10000) if len(df) > 10000 else df
+                    X_pred = df_sample[num_cols].fillna(0).values.astype(np.float32)
+                    print(f"Fine-tuned prediction: using {len(df_sample)}/{len(df)} rows")
                     
                     # Match feature dimensions
                     if X_pred.shape[1] < input_dim:
