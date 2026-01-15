@@ -16,6 +16,7 @@ type CreateQueryRequest struct {
 	FileID          string   `json:"fileId"`
 	IsTraining      bool     `json:"isTraining"`
 	HasModel        bool     `json:"hasModel"`
+TrainingFailed  bool     `json:"trainingFailed"`
 	TrainingModelID *string  `json:"trainingModelId"`
 }
 
@@ -27,6 +28,7 @@ type QueryResponse struct {
 	FileID          string   `json:"fileId"`
 	IsTraining      bool     `json:"isTraining"`
 	HasModel        bool     `json:"hasModel"`
+TrainingFailed  bool     `json:"trainingFailed"`
 	TrainingModelID *string  `json:"trainingModelId"`
 	CreatedAt       string   `json:"createdAt"`
 }
@@ -128,6 +130,7 @@ func ListQueriesHandler(w http.ResponseWriter, r *http.Request) {
 			DataSources:     fileIDs,
 			IsTraining:      q.IsTraining,
 			HasModel:        q.HasModel,
+TrainingFailed:  q.TrainingFailed,
 			TrainingModelID: q.TrainingModelID,
 			CreatedAt:       q.CreatedAt.Format(time.RFC3339),
 		})

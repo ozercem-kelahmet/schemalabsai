@@ -128,6 +128,7 @@ function SidebarInner() {
   const [editingChatId, setEditingChatId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState("")
   const [isNewChatOpen, setIsNewChatOpen] = useState(false)
+  const [isFineTuneModalOpen, setIsFineTuneModalOpen] = useState(false)
   const [activeTab, setActiveTab] = useState("finetune")
   const [newProjectName, setNewProjectName] = useState("")
   const [selectedModel, setSelectedModel] = useState("gpt-4o")
@@ -217,6 +218,12 @@ function SidebarInner() {
                 progress: 20 + (progress.epoch / progress.epochs) * 70
               }
             }))
+          } else if (progress.status === "failed" && progress.query_id === trainingQueryId) {
+            stopPolling()
+            if (!trainingQueryId.startsWith("temp-")) {
+              updateQuery(trainingQueryId, { isTraining: false, trainingFailed: true })
+            }
+            setTrainingStates(prev => ({ ...prev, [trainingQueryId]: { ...prev[trainingQueryId], status: "failed" } }))
           } else if (progress.status === "completed" && progress.epoch > 0 && progress.epoch === progress.epochs && progress.query_id === trainingQueryId) {
             setTrainingProgress(100)
             setTrainingComplete(true)
@@ -251,6 +258,9 @@ function SidebarInner() {
                   progress: 20 + (progress.epoch / progress.epochs) * 70
                 }
               }))
+            } else if (progress.status === "failed") {
+              updateQuery(query.id, { isTraining: false, trainingFailed: true })
+              setTrainingStates(prev => ({ ...prev, [query.id]: { ...prev[query.id], status: "failed" } }))
             } else if (progress.status === "completed" && progress.epoch > 0) {
               updateQuery(query.id, { isTraining: false, hasModel: true, trainingModelId: progress.model_id })
               setTrainingStates(prev => {
@@ -1039,6 +1049,16 @@ function SidebarInner() {
                                 autoFocus
                               />
                             </div>
+                          ) : (query.trainingFailed || trainingStates[query.id]?.status === "failed") ? (
+                            <SidebarMenuButton 
+                              isActive={pathname === "/playground/" + query.id} 
+                              tooltip={query.name + " (Failed)"} 
+                              className="pl-7" 
+                              onClick={() => handleQueryClick(query)}
+                            >
+                              <span className="text-xs text-red-500 mr-1">Training Failed</span>
+                              <span className="truncate max-w-[120px] block text-red-500">{query.name}</span>
+                            </SidebarMenuButton>
                           ) : query.isTraining ? (
                             <SidebarMenuButton 
                               isActive={false} 
@@ -1050,7 +1070,7 @@ function SidebarInner() {
                               <span className="text-xs text-emerald-500 mr-1">
                                 {trainingStates[query.id] ? `Training ${trainingStates[query.id].epoch}/${trainingStates[query.id].epochs}` : "Training..."}
                               </span>
-                              <span className="truncate max-w-[120px] block">{query.name}</span>
+                              <span className="truncate max-w-[120px] block ">{query.name}</span>
                             </SidebarMenuButton>
                           ) : (
                             <SidebarMenuButton 
@@ -1059,7 +1079,7 @@ function SidebarInner() {
                               className="pl-7"
                               onClick={() => handleQueryClick(query)}
                             >
-                              <span className="truncate max-w-[120px] block">{query.name}</span>
+                              <span className="truncate max-w-[120px] block ">{query.name}</span>
                             </SidebarMenuButton>
                           )}
                         </ContextMenuTrigger>

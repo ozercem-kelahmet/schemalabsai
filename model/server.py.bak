@@ -1,3 +1,6 @@
+import os
+from analytics_engine import detect_analytics_type, generate_analytics
+os.environ["FLASK_SKIP_DOTENV"] = "1"
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -26,14 +29,20 @@ class NaNSafeEncoder(json.JSONEncoder):
 
 app_json_encoder = NaNSafeEncoder
 import torch
+torch.backends.mkldnn.enabled = True
+torch.set_float32_matmul_precision("medium")
+torch.set_num_threads(8)
+torch.set_num_interop_threads(4)
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.cuda.amp import autocast, GradScaler
 import numpy as np
 import pandas as pd
 from model import TabularFoundationModel, TabularFoundationModelMIRAS
 import os
 import sys
 import time
+import threading
 import tempfile
 import glob
 from pathlib import Path
@@ -42,6 +51,207 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.utils.class_weight import compute_class_weight
 from sklearn.cluster import KMeans
 
+
+
+def detect_and_fix_type_mismatch(df):
+    report = {"fixed_columns": [], "total_fixes": 0}
+    
+    for col in df.columns:
+        if df[col].dtype == 'object':
+            numeric_count = 0
+            non_numeric_values = []
+            
+            for val in df[col].dropna().head(100):
+                try:
+                    float(str(val).replace(',', '').replace('$', '').replace('%', ''))
+                    numeric_count += 1
+                except:
+                    non_numeric_values.append(val)
+            
+            total = len(df[col].dropna().head(100))
+            if total > 0 and numeric_count / total > 0.8:
+                def safe_convert(x):
+                    try:
+                        return float(str(x).replace(',', '').replace('$', '').replace('%', ''))
+                    except:
+                        return np.nan
+                
+                df[col] = df[col].apply(safe_convert)
+                report["fixed_columns"].append({"column": col, "non_numeric_values": non_numeric_values[:5], "converted_to": "numeric"})
+                report["total_fixes"] += len(non_numeric_values)
+    
+    return df, report
+
+
+def detect_scale_inconsistency(df):
+    report = {"scaled_columns": [], "total_adjustments": 0}
+    numeric_cols = df.select_dtypes(include=['number']).columns
+    
+    for col in numeric_cols:
+        series = df[col].dropna()
+        if len(series) < 10:
+            continue
+        
+        Q1 = series.quantile(0.25)
+        Q3 = series.quantile(0.75)
+        IQR = Q3 - Q1
+        
+        if IQR == 0:
+            continue
+        
+        upper_bound = Q3 + 3 * IQR
+        extreme_high = series[series > upper_bound * 10]
+        
+        if len(extreme_high) > 0:
+            median_val = series.median()
+            for idx in extreme_high.index:
+                val = df.loc[idx, col]
+                if val > median_val * 500:
+                    ratio = val / median_val if median_val != 0 else 0
+                    if 500 < ratio < 1500:
+                        df.loc[idx, col] = val / 1000
+                        report["total_adjustments"] += 1
+                    elif 500000 < ratio < 1500000:
+                        df.loc[idx, col] = val / 1000000
+                        report["total_adjustments"] += 1
+            
+            if report["total_adjustments"] > 0:
+                report["scaled_columns"].append({"column": col, "issue": "scale_mismatch", "median": float(median_val)})
+    
+    return df, report
+
+
+def smart_data_cleaning(df, use_midas=False, midas_model=None):
+    cleaning_report = {"original_shape": df.shape, "type_fixes": {}, "scale_fixes": {}, "missing_fixes": {}, "final_shape": None}
+    
+    df, type_report = detect_and_fix_type_mismatch(df)
+    cleaning_report["type_fixes"] = type_report
+    
+    df, scale_report = detect_scale_inconsistency(df)
+    cleaning_report["scale_fixes"] = scale_report
+    
+    numeric_cols = df.select_dtypes(include=['number']).columns
+    missing_before = df[numeric_cols].isna().sum().sum()
+    
+    if use_midas and midas_model is not None:
+        try:
+            X = df[numeric_cols].values.astype(np.float32)
+            mask = np.isnan(X)
+            if mask.any():
+                X_imp = midas_model.impute(torch.FloatTensor(np.nan_to_num(X)), torch.BoolTensor(mask))
+                df[numeric_cols] = X_imp.numpy()
+                cleaning_report["missing_fixes"]["method"] = "midas"
+        except:
+            df[numeric_cols] = df[numeric_cols].fillna(df[numeric_cols].median())
+            cleaning_report["missing_fixes"]["method"] = "median_fallback"
+    else:
+        df[numeric_cols] = df[numeric_cols].fillna(df[numeric_cols].median())
+        cleaning_report["missing_fixes"]["method"] = "median"
+    
+    missing_after = df[numeric_cols].isna().sum().sum()
+    cleaning_report["missing_fixes"]["before"] = int(missing_before)
+    cleaning_report["missing_fixes"]["after"] = int(missing_after)
+    cleaning_report["missing_fixes"]["fixed"] = int(missing_before - missing_after)
+    cleaning_report["final_shape"] = df.shape
+    return df, cleaning_report
+
+def detect_foreign_keys(dfs, file_names=None):
+    relations = []
+    for i, df1 in enumerate(dfs):
+        for j, df2 in enumerate(dfs):
+            if i >= j:
+                continue
+            for col1 in df1.columns:
+                for col2 in df2.columns:
+                    if col1 == col2:
+                        continue
+                    try:
+                        vals1 = set(df1[col1].dropna().astype(str))
+                        vals2 = set(df2[col2].dropna().astype(str))
+                        if len(vals1) == 0 or len(vals2) == 0:
+                            continue
+                        overlap = len(vals1 & vals2) / min(len(vals1), len(vals2))
+                        if overlap > 0.7:
+                            relations.append({
+                                "table1": file_names[i] if file_names else f"df{i}",
+                                "col1": col1,
+                                "table2": file_names[j] if file_names else f"df{j}",
+                                "col2": col2,
+                                "overlap": overlap
+                            })
+                    except:
+                        continue
+    return relations
+
+
+def detect_time_columns(df):
+    time_cols = []
+    for col in df.columns:
+        col_lower = col.lower()
+        if any(t in col_lower for t in ['date', 'time', 'timestamp', 'datetime']):
+            time_cols.append(col)
+            continue
+        if df[col].dtype in ['int64', 'float64']:
+            continue
+        try:
+            sample = df[col].dropna().head(20).astype(str)
+            if sample.str.contains(r'[-/]').sum() < len(sample) * 0.5:
+                continue
+            pd.to_datetime(sample, errors='raise')
+            time_cols.append(col)
+        except:
+            continue
+    return time_cols
+
+
+def add_time_features(df, time_col):
+    try:
+        df[time_col] = pd.to_datetime(df[time_col], errors='coerce')
+        df[f'{time_col}_year'] = df[time_col].dt.year
+        df[f'{time_col}_month'] = df[time_col].dt.month
+        df[f'{time_col}_day'] = df[time_col].dt.day
+        df[f'{time_col}_dayofweek'] = df[time_col].dt.dayofweek
+        df[f'{time_col}_hour'] = df[time_col].dt.hour.fillna(0)
+        df[f'{time_col}_quarter'] = df[time_col].dt.quarter
+    except:
+        pass
+    return df
+
+
+def add_lag_features(df, time_col, value_cols, lags=[1, 3, 7]):
+    if time_col not in df.columns:
+        return df
+    try:
+        df = df.sort_values(time_col)
+        for col in value_cols[:5]:
+            for lag in lags:
+                df[f'{col}_lag{lag}'] = df[col].shift(lag)
+            df[f'{col}_rolling3'] = df[col].rolling(3, min_periods=1).mean()
+            df[f'{col}_rolling7'] = df[col].rolling(7, min_periods=1).mean()
+    except:
+        pass
+    return df
+
+
+def smart_time_series_prep(df):
+    report = {"time_columns": [], "features_added": 0}
+    time_cols = detect_time_columns(df)
+    report["time_columns"] = time_cols
+    
+    if not time_cols:
+        return df, report
+    
+    main_time_col = time_cols[0]
+    df = add_time_features(df, main_time_col)
+    report["features_added"] += 6
+    
+    numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+    if numeric_cols:
+        original_cols = len(df.columns)
+        df = add_lag_features(df, main_time_col, numeric_cols[:5])
+        report["features_added"] += len(df.columns) - original_cols
+    
+    return df, report
 
 def is_time_pattern(series):
     """Değerlerin zaman formatı olup olmadığını kontrol et"""
@@ -130,7 +340,7 @@ def smart_merge_datasets(dataframes, file_names=None):
         player_col = find_player_col(df)
         df = df.copy()
         
-        if player_col:
+        if player_col and player_col != "player_num":
             if player_col == 'Player Full Name (P)':
                 df['player_num'] = df[player_col].apply(extract_player_num)
             elif df[player_col].dtype in ['int64', 'float64']:
@@ -161,10 +371,89 @@ def smart_merge_datasets(dataframes, file_names=None):
     if len(prepared_dfs) == 1:
         return prepared_dfs[0]
     
-    merged = pd.concat(prepared_dfs, axis=0, ignore_index=True)
-    merged = merged.fillna(0)
+    def find_best_merge_key(dfs):
+        """Tüm df'lerde ortak olan kolonları bul, en iyi merge key'i seç"""
+        # Tüm df'lerde ortak kolonlar
+        common_cols = set(dfs[0].columns)
+        for df in dfs[1:]:
+            common_cols &= set(df.columns)
+        
+        if not common_cols:
+            return None
+        
+        # Her ortak kolon için unique ratio hesapla - en iyi key yüksek unique, düşük null
+        best_key = None
+        best_score = -1
+        
+        for col in common_cols:
+            try:
+                scores = []
+                for df in dfs:
+                    if col not in df.columns:
+                        continue
+                    total = len(df)
+                    if total == 0:
+                        continue
+                    unique = df[col].nunique()
+                    non_null = df[col].notna().sum()
+                    # Score: unique ratio * non-null ratio
+                    score = (unique / total) * (non_null / total)
+                    scores.append(score)
+                
+                if scores:
+                    avg_score = sum(scores) / len(scores)
+                    # Prefer columns with 'id', 'key', 'num' in name
+                    col_lower = col.lower()
+                    if 'id' in col_lower or 'key' in col_lower or 'num' in col_lower:
+                        avg_score *= 1.2
+                    
+                    if avg_score > best_score:
+                        best_score = avg_score
+                        best_key = col
+            except:
+                continue
+        
+        # Minimum threshold - key en az %10 unique olmalı
+        if best_score < 0.1:
+            return None
+        
+        return best_key
     
-    print(f"Smart merge: {len(dataframes)} datasets -> {merged.shape}")
+    fk_relations = detect_foreign_keys(prepared_dfs, file_names)
+    if fk_relations:
+        print(f"Detected foreign keys: {fk_relations}")
+    merge_key = find_best_merge_key(prepared_dfs)
+    
+    if merge_key:
+        sorted_dfs = sorted(prepared_dfs, key=len, reverse=True)
+        merged = sorted_dfs[0]
+        
+        for df in sorted_dfs[1:]:
+            if len(df) > len(merged) * 0.5:
+                df_agg = df.groupby(merge_key).mean(numeric_only=True).reset_index()
+                for col in df.columns:
+                    if col != merge_key and col not in df_agg.columns:
+                        df_agg[col] = df.groupby(merge_key)[col].first().values
+                merged = pd.merge(merged, df_agg, on=merge_key, how='left')
+            else:
+                df_agg = df.groupby(merge_key).mean(numeric_only=True).reset_index()
+                merged = pd.merge(merged, df_agg, on=merge_key, how='left')
+        merged = merged.fillna(0)
+        print(f"DEBUG MERGE: {len(dataframes)} files -> {merged.shape}")
+    else:
+        # No good key - check row counts
+        row_counts = [len(df) for df in prepared_dfs]
+        if len(set(row_counts)) == 1:
+            # Same rows - column concat
+            merged = pd.concat(prepared_dfs, axis=1)
+            merged = merged.loc[:, ~merged.columns.duplicated()]
+            merged = merged.fillna(0)
+            print(f"Smart merge (col-concat): {len(dataframes)} datasets -> {merged.shape}")
+        else:
+            # Row concat fallback
+            merged = pd.concat(prepared_dfs, axis=0, ignore_index=True)
+            merged = merged.fillna(0)
+            print(f"Smart merge (row-concat): {len(dataframes)} datasets -> {merged.shape}")
     
     return merged
 
@@ -479,10 +768,56 @@ finetuned_models = {}
 training_sessions = {}
 training_progress = {"epoch": 0, "epochs": 0, "accuracy": 0.0, "loss": 0.0, "status": "idle", "eta": "0%", "start_time": 0}
 
+# Session'ları dosyaya kaydet - Flask restart'ta kaybolmasın
+SESSIONS_FILE = '/tmp/schemalabs_training_sessions.json'
+
+def _load_sessions():
+    """Load sessions and mark stale trainings as failed"""
+    global training_sessions
+    try:
+        if os.path.exists(SESSIONS_FILE):
+            with open(SESSIONS_FILE, 'r') as f:
+                training_sessions = json.load(f)
+                # Mark stale trainings as failed on restart
+                for qid, sess in training_sessions.items():
+                    if sess.get("status") in ["training", "preparing", "merging", "processing", "starting"]:
+                        sess["status"] = "failed"
+                        user_id = session.get("user_id") or request.headers.get("X-User-ID")
+                        if user_id:
+                            try:
+                                import psycopg2
+                                conn = psycopg2.connect(os.getenv("DATABASE_URL"))
+                                cur = conn.cursor()
+                                cur.execute("SELECT email FROM users WHERE id = %s", (user_id,))
+                                result = cur.fetchone()
+                                if result:
+                                    send_training_email(result[0], "failed", "model", error=str(e))
+                                cur.close()
+                                conn.close()
+                            except Exception as ex:
+                                print(f"Email send failed: {ex}")
+                        sess["error"] = "Training failed - connection lost"
+                        sess["notification"] = "Training failed. Please try again."
+    except:
+        training_sessions = {}
+
+def _save_sessions():
+    try:
+        with open(SESSIONS_FILE, 'w') as f:
+            json.dump(training_sessions, f)
+    except:
+        pass
+
 def get_session(query_id):
+    _load_sessions()
     if query_id not in training_sessions:
         training_sessions[query_id] = {"epoch": 0, "epochs": 0, "accuracy": 0.0, "loss": 0.0, "status": "idle", "eta": "0%", "start_time": 0, "query_id": query_id}
+        _save_sessions()
     return training_sessions[query_id]
+
+def save_session(query_id, session):
+    training_sessions[query_id] = session
+    _save_sessions()
 
 
 @app.route('/health', methods=['GET'])
@@ -566,7 +901,7 @@ def predict():
             X_t = torch.FloatTensor(row_norm)
             mask_t = torch.FloatTensor(mask.astype(np.float32))
             
-            with torch.no_grad():
+            with torch.inference_mode():
                 if mask.mean() < 1.0:
                     X_imp = midas.impute(X_t, mask_t)
                 else:
@@ -635,7 +970,7 @@ def predict_batch():
         values_norm = (values - X_min) / (X_max - X_min + 1e-8)
         
         X_t = torch.FloatTensor(values_norm)
-        with torch.no_grad():
+        with torch.inference_mode():
             try:
                 out = model(X_t)
                 sec_logits = out.get('sector', None)
@@ -700,6 +1035,14 @@ def analyze():
         else:
             df = pd.read_csv(file_path, low_memory=False)
         
+        # === ADVANCED ANALYTICS ENGINE ===
+        detected_types = detect_analytics_type(query)
+        if detected_types:
+            print(f"Detected analytics types: {[d['type'] for d in detected_types]}")
+            advanced_analysis = generate_analytics(df, query, detected_types)
+            if advanced_analysis and len(advanced_analysis) > 100:
+                return jsonify({'analysis': advanced_analysis, 'status': 'success'})
+        
         # === COMPACT ANALYSIS (max 8K chars) ===
         num_cols = df.select_dtypes(include=['number']).columns.tolist()
         cat_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
@@ -745,6 +1088,80 @@ def analyze():
         
         analysis = f"DATASET: {len(df)} rows, {len(df.columns)} columns\n"
         analysis += f"Numeric: {len(num_cols)} | Categorical: {len(cat_cols)}\n\n"
+        
+        # === ADVANCED ANALYTICS DETECTION ===
+        is_swot = any(w in query for w in ['swot', 'strength', 'weakness', 'opportunity', 'threat'])
+        is_benchmark = any(w in query for w in ['benchmark', 'compare to average', 'vs average', 'team average'])
+        is_risk = any(w in query for w in ['risk', 'injury', 'danger', 'concern'])
+        is_trend = any(w in query for w in ['trend', 'over time', 'progression'])
+        is_anomaly = any(w in query for w in ['outlier', 'anomaly', 'unusual', 'exceptional'])
+        
+        # Extract player name from query if mentioned
+        player_name = None
+        for cat_col in cat_cols:
+            if 'name' in cat_col.lower() or 'player' in cat_col.lower():
+                for val in df[cat_col].dropna().unique():
+                    val_str = str(val).lower()
+                    if len(val_str) > 3 and val_str in query:
+                        player_name = val
+                        break
+                if not player_name:
+                    # Try partial match
+                    query_parts = query.split()
+                    for val in df[cat_col].dropna().unique():
+                        val_parts = str(val).lower().split()
+                        if any(vp in query for vp in val_parts if len(vp) > 3):
+                            player_name = val
+                            break
+        
+        if player_name and (is_swot or is_benchmark):
+            analysis += f"=== PLAYER PROFILE: {player_name} ===\n"
+            for cat_col in cat_cols:
+                if 'name' in cat_col.lower() or 'player' in cat_col.lower():
+                    player_data = df[df[cat_col] == player_name]
+                    if len(player_data) > 0:
+                        analysis += f"Records: {len(player_data)}\n"
+                        for num_col in num_cols[:20]:
+                            try:
+                                player_val = player_data[num_col].mean()
+                                team_avg = df[num_col].mean()
+                                team_std = df[num_col].std()
+                                diff_pct = ((player_val - team_avg) / team_avg * 100) if team_avg != 0 else 0
+                                status = "ABOVE" if player_val > team_avg else "BELOW"
+                                analysis += f"  {num_col}: {player_val:.2f} (Team avg: {team_avg:.2f}, {status} by {abs(diff_pct):.1f}%)\n"
+                            except:
+                                pass
+                        break
+            analysis += "\n"
+        
+        if is_risk and matched_num:
+            analysis += "=== RISK INDICATORS ===\n"
+            for num_col in matched_num[:5]:
+                try:
+                    mean_val = df[num_col].mean()
+                    std_val = df[num_col].std()
+                    high_threshold = mean_val + 2 * std_val
+                    high_risk = df[df[num_col] > high_threshold]
+                    analysis += f"{num_col}: Mean={mean_val:.2f}, Std={std_val:.2f}, High risk threshold={high_threshold:.2f}, Count above={len(high_risk)}\n"
+                except:
+                    pass
+            analysis += "\n"
+        
+        if is_anomaly and matched_num:
+            analysis += "=== OUTLIERS (>2 std dev) ===\n"
+            for num_col in matched_num[:3]:
+                try:
+                    mean_val = df[num_col].mean()
+                    std_val = df[num_col].std()
+                    outliers = df[(df[num_col] > mean_val + 2*std_val) | (df[num_col] < mean_val - 2*std_val)]
+                    if len(outliers) > 0 and matched_cat:
+                        for cat_col in matched_cat[:1]:
+                            analysis += f"{num_col} outliers by {cat_col}:\n"
+                            for _, row in outliers.head(10).iterrows():
+                                analysis += f"  {row[cat_col]}: {row[num_col]:.2f}\n"
+                except:
+                    pass
+            analysis += "\n"
         
         # AUTO-CALCULATE if matching columns found
         if matched_num and matched_cat:
@@ -838,8 +1255,10 @@ def finetune():
         analyze_only = request.form.get('analyze_only', 'false').lower() == 'true'
         
         session = get_session(query_id)
+        print(f"DEBUG FINETUNE START: query_id={query_id}, epochs_req={epochs_req}, analyze_only={analyze_only}")
         # Reset session for new training
-        session.update({"epoch": 0, "epochs": 0, "accuracy": 0.0, "loss": 0.0, "status": "starting", "eta": "0%", "start_time": time.time()})
+        session.update({"epoch": 0, "epochs": 0, "accuracy": 0.0, "loss": 0.0, "status": "starting", "eta": "0%", "start_time": time.time(), "query_id": query_id})
+        save_session(query_id, session)
         
         merge_files = request.form.get('merge_files', 'false').lower() == 'true'
         
@@ -896,6 +1315,10 @@ def finetune():
         target_col = auto_select_target(df, target_column)
         print(f"Auto-selected target: {target_col}")
         
+        df, cleaning_report = smart_data_cleaning(df)
+        df, ts_report = smart_time_series_prep(df)
+        print(f"Time series prep: {ts_report}")
+        print(f"Data cleaning: {cleaning_report}")
         numeric_df = df.select_dtypes(include=['number'])
         # Agnostik: Tüm sayısal kolonları feature olarak kullan
         col_mapping, feature_cols = smart_column_mapping(numeric_df.columns.tolist(), target_col)
@@ -933,6 +1356,7 @@ def finetune():
                 "smart_batch_size": smart_batch,
                 "classes": le.classes_.tolist()
             })
+        
         
         # StandardScaler ile normalize et - her türlü veri range'i için
         scaler = StandardScaler()
@@ -981,6 +1405,26 @@ def finetune():
             else:
                 ft_model = TabularFoundationModel(ft_config)
             print(f"Model created successfully, params: {sum(p.numel() for p in ft_model.parameters())}")
+            for m in ft_model.modules():
+                if isinstance(m, nn.BatchNorm1d):
+                    m.momentum = 0.01
+            if hasattr(torch, "compile") and torch.cuda.is_available():
+                try:
+                    ft_model = torch.compile(ft_model, mode="default", backend="eager")
+                    print("Model compiled for CPU optimization")
+                except:
+                    pass
+                try:
+                    ft_model = torch.quantization.quantize_dynamic(ft_model, {nn.Linear}, dtype=torch.qint8)
+                    print("Model quantized to INT8")
+                except:
+                    pass
+        except Exception as e:
+            print(f"ERROR creating model: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+        
         except Exception as e:
             print(f"ERROR creating model: {e}")
             import traceback
@@ -992,17 +1436,35 @@ def finetune():
         epochs = epochs_req if epochs_req > 0 else dyn_cfg['epochs']
         
         optimizer = AdamW(ft_model.parameters(), lr=dyn_cfg['lr'], weight_decay=0.01)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+        warmup_epochs = min(3, epochs // 5)
+        def warmup_lambda(epoch):
+            if epoch < warmup_epochs:
+                return (epoch + 1) / warmup_epochs
+            return 1.0
+        warmup_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, warmup_lambda)
+        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs - warmup_epochs)
+        scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer, [warmup_scheduler, cosine_scheduler], milestones=[warmup_epochs])
         loss_fn = nn.CrossEntropyLoss()
         
+        # AMP for 2x speedup
+        use_amp = torch.cuda.is_available()
+        scaler = GradScaler() if use_amp else None
+        gradient_accumulation_steps = 2  # Effective batch size *= 2
+        
         session["status"] = "training"
+        # Aynı progress'i Redis'e de yaz (async için)
+        try:
+            from async_training import redis_client
+            import json
+            redis_client.setex(f"training:{query_id}", 3600, json.dumps(session))
+        except: pass
         session["start_time"] = time.time()
         session["epochs"] = epochs
         session["epoch"] = 0
         session["accuracy"] = 0.0
         session["loss"] = 0.0
         session["eta"] = "calculating..."
-        training_progress.update(session); training_sessions[query_id] = session if "query_id" in dir() and query_id else training_progress
+        training_progress.update(session); save_session(query_id, session) if "query_id" in dir() and query_id else training_progress
         
         # Süre optimizasyonu - epoch başına max sample
         if len(X) > 10000:
@@ -1018,37 +1480,66 @@ def finetune():
         max_epochs = 500  # Maksimum epoch limiti
         current_epoch = 0
         
+        # DataLoader ile paralel data loading
+        from torch.utils.data import TensorDataset, DataLoader
+        dataset = TensorDataset(torch.FloatTensor(X[:max_samples_per_epoch]), torch.LongTensor(y[:max_samples_per_epoch]))
+        num_workers = 4 if torch.cuda.is_available() else 0
+        pin_mem = torch.cuda.is_available()
+        prefetch = 2 if num_workers > 0 else None
+        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=pin_mem, prefetch_factor=prefetch)
+        
         while current_epoch < max_epochs:
             print(f"Epoch {current_epoch + 1} starting...")
             ft_model.train()
-            idx = np.random.permutation(len(X))
             total_loss = 0
             correct = 0
             batches = 0
             
-            for i in range(0, min(len(X), max_samples_per_epoch) - batch_size + 1, batch_size):
-                batch_idx = idx[i:i+batch_size]
-                batch_X = torch.FloatTensor(X[batch_idx])
-                batch_y = torch.LongTensor(y[batch_idx])
+            for batch_idx, (batch_X, batch_y) in enumerate(dataloader):
                 
                 if np.random.random() > 0.5:
                     noise = torch.randn_like(batch_X) * 0.01
                     batch_X = batch_X + noise
+                    batch_X = batch_X.contiguous()
                 
-                optimizer.zero_grad()
-                out = ft_model(batch_X)
-                logits = out['output']
-                # Classification + Sector loss
-                # Sector: aynı class'takiler benzer sector'e
-                sector_logits = out['sector']
-                sector_targets = batch_y % ft_model.n_sectors  # Class'a göre sector
-                sector_loss = nn.CrossEntropyLoss()(sector_logits, sector_targets)
-                mcm_loss = out.get('mcm_loss', torch.tensor(0.0))
-                miras_loss = out.get('miras_loss', torch.tensor(0.0))
-                loss = loss_fn(logits, batch_y) + sector_loss + 0.1 * mcm_loss + 0.05 * miras_loss
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(ft_model.parameters(), 1.0)
-                optimizer.step()
+                
+                # Forward pass
+                if use_amp:
+                    with autocast():
+                        out = ft_model(batch_X)
+                        logits = out['output']
+                        sector_logits = out['sector']
+                        sector_targets = batch_y % ft_model.n_sectors
+                        sector_loss = nn.CrossEntropyLoss()(sector_logits, sector_targets)
+                        mcm_loss = out.get('mcm_loss', torch.tensor(0.0))
+                        miras_loss = out.get('miras_loss', torch.tensor(0.0))
+                        loss = loss_fn(logits, batch_y) + sector_loss + 0.1 * mcm_loss + 0.05 * miras_loss
+                        loss = loss / gradient_accumulation_steps
+                    scaler.scale(loss).backward()
+                    if (batch_idx + 1) % gradient_accumulation_steps == 0:
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(ft_model.parameters(), 0.5 if not torch.cuda.is_available() else 1.0)
+                        scaler.step(optimizer)
+                        scaler.update()
+                        optimizer.zero_grad()
+                else:
+                    out = ft_model(batch_X)
+                    logits = out['output']
+                    sector_logits = out['sector']
+                    sector_targets = batch_y % ft_model.n_sectors
+                    sector_loss = nn.CrossEntropyLoss()(sector_logits, sector_targets)
+                    mcm_loss = out.get('mcm_loss', torch.tensor(0.0))
+                    miras_loss = out.get('miras_loss', torch.tensor(0.0))
+                    loss = loss_fn(logits, batch_y) + sector_loss + 0.1 * mcm_loss + 0.05 * miras_loss
+                    loss = loss / gradient_accumulation_steps
+                    if True:
+                        loss.backward()
+                    else:
+                        continue
+                    if (batch_idx + 1) % gradient_accumulation_steps == 0:
+                        torch.nn.utils.clip_grad_norm_(ft_model.parameters(), 0.5 if not torch.cuda.is_available() else 1.0)
+                        optimizer.step()
+                        optimizer.zero_grad()
                 
                 total_loss += loss.item()
                 correct += (logits.argmax(1) == batch_y).sum().item()
@@ -1089,7 +1580,7 @@ def finetune():
             session["accuracy"] = acc
             session["loss"] = avg_loss
             session["eta"] = eta
-            training_progress.update(session); training_sessions[query_id] = session if "query_id" in dir() and query_id else training_progress
+            training_progress.update(session); save_session(query_id, session) if "query_id" in dir() and query_id else training_progress
             
             print(f"Epoch {current_epoch}: Acc={acc:.1f}% (best={best_acc:.1f}%)")
             
@@ -1113,10 +1604,25 @@ def finetune():
             ft_model.load_state_dict(best_state)
         
         session["status"] = "completed"
+        # Get user email from session/database
+        user_id = session.get("user_id") or request.headers.get("X-User-ID")
+        if user_id:
+            try:
+                import psycopg2
+                conn = psycopg2.connect(os.getenv("DATABASE_URL"))
+                cur = conn.cursor()
+                cur.execute("SELECT email FROM users WHERE id = %s", (user_id,))
+                result = cur.fetchone()
+                if result:
+                    send_training_email(result[0], "completed", "model", best_acc)
+                cur.close()
+                conn.close()
+            except Exception as e:
+                print(f"Email send failed: {e}")
         session["accuracy"] = best_acc
         session["epochs"] = current_epoch
         session["epoch"] = current_epoch
-        training_progress.update(session); training_sessions[query_id] = session if "query_id" in dir() and query_id else training_progress
+        training_progress.update(session); save_session(query_id, session) if "query_id" in dir() and query_id else training_progress
         
         from datetime import datetime; timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         ft_path = f'../checkpoints/model_finetuned_{timestamp}.pt'
@@ -1135,6 +1641,15 @@ def finetune():
             'config': ft_config
         }, ft_path)
         
+        # ONNX export for faster CPU inference
+        try:
+            onnx_path = ft_path.replace(".pt", ".onnx")
+            dummy_input = torch.randn(1, input_dim)
+            torch.onnx.export(ft_model, dummy_input, onnx_path, input_names=["input"], output_names=["output"], dynamic_axes={"input": {0: "batch"}, "output": {0: "batch"}})
+            print(f"ONNX model saved: {onnx_path}")
+        except Exception as e:
+            print(f"ONNX export failed: {e}")
+        
         # Temp dosya varsa sil (tek dosya modunda)
         try:
             if 'temp_file' in dir() and temp_file and hasattr(temp_file, 'name'):
@@ -1144,11 +1659,11 @@ def finetune():
         
         model_id = f"model_finetuned_{timestamp}"
         session["model_id"] = model_id
-        training_progress.update(session); training_sessions[query_id] = session if "query_id" in dir() and query_id else training_progress
+        training_progress.update(session); save_session(query_id, session) if "query_id" in dir() and query_id else training_progress
         
         # Sector tahmini yap
         ft_model.eval()
-        with torch.no_grad():
+        with torch.inference_mode():
             sample_X = torch.FloatTensor(X[:min(100, len(X))])
             out = ft_model(sample_X)
             sector_probs = torch.softmax(out['sector'], dim=1)
@@ -1182,6 +1697,7 @@ def finetune():
 
 @app.route('/training/progress', methods=['GET'])
 def get_training_progress():
+    _load_sessions()
     query_id = request.args.get("query_id")
     if query_id and query_id in training_sessions:
         return jsonify(training_sessions[query_id])
@@ -1257,98 +1773,149 @@ def miras_info():
         "integrated_in": "TabularFoundationModelMIRAS"
     })
 
-if __name__ == '__main__':
-    from waitress import serve
-    serve(app, host='0.0.0.0', port=SERVER_PORT, threads=4)
 
-@app.route('/predict/finetuned', methods=['POST'])
-def predict_finetuned():
+
+# ============= ASYNC TRAINING ENDPOINTS =============
+@app.route('/finetune/async', methods=['POST'])
+def finetune_async():
+    """
+    Async fine-tune endpoint - /finetune'u thread'de çalıştırır
+    """
+    import uuid
+    import threading
+    import tempfile
+    import shutil
+    from werkzeug.datastructures import FileStorage
+    
+    task_id = str(uuid.uuid4())
+    
+    # Form data'yı kopyala
+    form_data = dict(request.form)
+    form_data['query_id'] = task_id
+    
+    # Create session immediately
+    session = get_session(task_id)
+    session.update({"epoch": 0, "epochs": 0, "accuracy": 0.0, "loss": 0.0, "status": "starting", "eta": "0%", "start_time": time.time(), "query_id": task_id})
+    save_session(task_id, session)
+    
+    # Dosyaları geçici dizine kaydet
+    temp_files = []
+    if 'file' in request.files:
+        files = request.files.getlist('file')
+        for f in files:
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
+            f.save(temp_file.name)
+            temp_file.close()
+            temp_files.append(temp_file.name)
+    
+    # Thread'de finetune çalıştır
+    def run_finetune():
+        try:
+            # Geçici dosyaları aç
+            file_storages = []
+            for temp_path in temp_files:
+                file_storages.append(open(temp_path, 'rb'))
+            
+            with app.test_request_context(
+                method='POST',
+                data=form_data,
+                content_type='multipart/form-data'
+            ):
+                # request.files'ı manuel oluştur
+                from werkzeug.datastructures import FileStorage, MultiDict
+                files_dict = MultiDict()
+                for i, f in enumerate(file_storages):
+                    files_dict.add('file', FileStorage(f, filename=f'file_{i}.csv'))
+                
+                with app.request_context((request.environ.copy())):
+                    request.files = files_dict
+                    finetune()
+            
+            # Cleanup
+            for f in file_storages:
+                f.close()
+            for temp_path in temp_files:
+                try: os.unlink(temp_path)
+                except: pass
+                
+        except Exception as e:
+            print(f"Async training error: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    thread = threading.Thread(target=run_finetune, daemon=True)
+    thread.start()
+    
+    return jsonify({
+        'status': 'started',
+        'task_id': task_id,
+        'message': 'Training started in background'
+    })
+
+@app.route('/training/status/<task_id>', methods=['GET'])
+def training_status(task_id):
+    """Training status döner (Redis'ten)"""
+    from async_training import get_training_status
+    status = get_training_status(task_id)
+    return jsonify(status)
+
+# Load sessions on startup and mark stale trainings
+_load_sessions()
+_save_sessions()  # Save after marking stale
+
+if __name__ == '__main__':
+    port = int(os.getenv('FLASK_PORT', 6000))
+    import logging
+    log = logging.getLogger('werkzeug')
+    log.setLevel(logging.ERROR)
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+
+# Email notification
+def send_training_email(user_email, status, model_name, accuracy=None, error=None):
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+    
+    sender = os.getenv("SMTP_EMAIL")
+    password = os.getenv("SMTP_PASSWORD")
+    
+    if not sender or not password:
+        print("Email credentials not configured")
+        return
+    
+    subject = f"Training {'Completed' if status == 'completed' else 'Failed'} - {model_name}"
+    
+    if status == "completed":
+        body = f"""
+        Your model training has completed successfully!
+        
+        Model: {model_name}
+        Accuracy: {accuracy}%
+        
+        You can now use this model in SchemaLabs AI.
+        """
+    else:
+        body = f"""
+        Your model training has failed.
+        
+        Model: {model_name}
+        Error: {error}
+        
+        Please check your data and try again.
+        """
+    
+    msg = MIMEMultipart()
+    msg['From'] = sender
+    msg['To'] = user_email
+    msg['Subject'] = subject
+    msg.attach(MIMEText(body, 'plain'))
+    
     try:
-        data = request.json
-        values = np.array(data['values'], dtype=np.float32)
-        model_id = data.get('model_id', '')
-        
-        if values.ndim == 1:
-            values = values.reshape(1, -1)
-        
-        checkpoints_dir = '../checkpoints'
-        model_path = None
-        for f in os.listdir(checkpoints_dir):
-            if model_id in f and f.endswith('.pt'):
-                model_path = os.path.join(checkpoints_dir, f)
-                break
-        
-        if not model_path:
-            return jsonify({"error": "Model not found"}), 404
-        
-        checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
-        
-        # Dinamik config - checkpoint'tan al
-        n_features = checkpoint.get('n_features', 10)
-        n_classes = checkpoint.get('n_classes', 10)
-        
-        config = {
-            'd_model': 256,
-            'n_heads': 8,
-            'n_layers': 2,
-            'schema_layers': 2,
-            'n_latents': 64,
-            'n_features': n_features,
-            'n_classes': n_classes,
-            'vocab_size': 50000,
-            'n_types': 10,
-            'max_cols': max(128, n_features + 10)  # Dinamik
-        }
-        
-        model = TabularFoundationModel(config)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        model.eval()
-        
-        if values.shape[1] != config['n_features']:
-            if values.shape[1] < config['n_features']:
-                pad = np.zeros((values.shape[0], config['n_features'] - values.shape[1]), dtype=np.float32)
-                values = np.hstack([values, pad])
-            else:
-                values = values[:, :config['n_features']]
-        
-        X_t = torch.FloatTensor(values)
-        
-        with torch.no_grad():
-            out = model(X_t)
-            logits = out['output']
-            probs = F.softmax(logits, dim=1)
-            conf, pred = probs.max(1)
-        
-        class_names = checkpoint.get('class_names', [])
-        
-        results = []
-        for i in range(len(values)):
-            pred_id = pred[i].item()
-            pred_name = class_names[pred_id] if pred_id < len(class_names) else f"class_{pred_id}"
-            results.append({
-                "class": pred_name,
-                "class_id": pred_id,
-                "confidence": float(conf[i].item()),
-                "probabilities": probs[i].tolist()
-            })
-        
-        if model.online_learning_enabled and 'label' in data:
-            labels = torch.LongTensor(data['label'])
-            model.self_learn(X_t, labels)
-            torch.save({
-                'model_state_dict': model.state_dict(),
-                'n_features': config['n_features'],
-                'n_classes': config['n_classes'],
-                'class_names': class_names,
-                'feature_cols': checkpoint.get('feature_cols', [])
-            }, model_path)
-        
-        return jsonify({
-            "predictions": results,
-            "model_id": model_id,
-            "status": "success"
-        })
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(sender, password)
+        server.send_message(msg)
+        server.quit()
+        print(f"Email sent to {user_email}")
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        print(f"Email send failed: {e}")

@@ -11,6 +11,7 @@ export type QueryItem = {
   isTraining?: boolean
   hasModel?: boolean
   trainingModelId?: string | null
+  trainingFailed?: boolean
 }
 
 type AddQueryInput = {
@@ -22,6 +23,7 @@ type AddQueryInput = {
   isTraining?: boolean
   hasModel?: boolean
   trainingModelId?: string | null
+  trainingFailed?: boolean
   skipBackend?: boolean
 }
 
@@ -66,7 +68,8 @@ export function QueryStoreProvider({ children }: { children: ReactNode }) {
               createdAt: new Date(q.createdAt),
               isTraining: q.isTraining || false,
               trainingModelId: q.trainingModelId || null,
-              hasModel: q.hasModel || false
+              hasModel: q.hasModel || false,
+              trainingFailed: q.trainingFailed || false
             }))
             setQueries(loaded)
           }

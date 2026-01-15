@@ -1111,12 +1111,22 @@ function TrainingIndicator({ progress }: { progress: { epoch: number, epochs: nu
           <span className="text-[10px] sm:text-xs font-bold text-primary">SL</span>
         </div>
         <div className="flex-1 bg-card border border-border rounded-2xl p-5 space-y-5">
-          {/* Header with spinner */}
-          <div className="text-center">
-            <Loader2 className="h-10 w-10 text-primary mx-auto mb-3 animate-spin" />
-            <h3 className="text-base font-semibold text-foreground">Fine-tuning...</h3>
-            <p className="text-sm text-muted-foreground mt-1">Training... Epoch {progress.epoch}/{progress.epochs}</p>
-          </div>
+          {/* Header with spinner or failed message */}
+          {progress.status === "failed" ? (
+            <div className="text-center">
+              <div className="h-10 w-10 mx-auto mb-3 rounded-full bg-red-100 flex items-center justify-center">
+                <span className="text-red-600 text-xl">✕</span>
+              </div>
+              <h3 className="text-base font-semibold text-red-600">Training Failed</h3>
+              <p className="text-sm text-muted-foreground mt-1">Training failed. Please try again.</p>
+            </div>
+          ) : (
+            <div className="text-center">
+              <Loader2 className="h-10 w-10 text-primary mx-auto mb-3 animate-spin" />
+              <h3 className="text-base font-semibold text-foreground">Fine-tuning...</h3>
+              <p className="text-sm text-muted-foreground mt-1">Training... Epoch {progress.epoch}/{progress.epochs}</p>
+            </div>
+          )}
           
           {/* Progress bar */}
           <div className="space-y-2">
@@ -1163,7 +1173,7 @@ export default function PlaygroundQueryPage() {
   const { user } = useAuth()
   const queryId = params.id as string
 
-  const { getQuery, isLoaded } = useQueryStore()
+  const { getQuery, isLoaded, updateQuery } = useQueryStore()
   const currentQuery = getQuery(queryId)
 
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
@@ -1202,12 +1212,37 @@ export default function PlaygroundQueryPage() {
     loadFiles()
   }, [])
 
+  // Check training status on page load
+  useEffect(() => {
+    const checkInitialStatus = async () => {
+      console.log("checkInitialStatus called, currentQuery.id:", currentQuery?.id)
+      if (currentQuery?.id) {
+        try {
+          const progress = await api.getTrainingProgress(currentQuery.id)
+          console.log("Initial progress check result:", progress)
+          if (progress.status === "failed") {
+            console.log("Setting trainingProgress to failed")
+            setTrainingProgress(prev => {
+              console.log("prev state:", prev)
+              return { epoch: 0, epochs: 10, batch: 0, batches: 100, accuracy: 0, loss: 0, eta: "", status: "failed" }
+            })
+            updateQuery(currentQuery.id, { isTraining: false, trainingFailed: true })
+          }
+        } catch (e) {
+          console.error("Initial status check error:", e)
+        }
+      }
+    }
+    checkInitialStatus()
+  }, [currentQuery?.id])
+
   // Training progress polling
   useEffect(() => {
     if (currentQuery?.isTraining) {
       const poll = async () => {
         try {
           const progress = await api.getTrainingProgress(currentQuery.id)
+          console.log("Initial progress check result:", progress)
           if (progress.status === "training") {
             setTrainingProgress({
               epoch: progress.epoch || 0,
@@ -1219,6 +1254,17 @@ export default function PlaygroundQueryPage() {
               eta: progress.eta || "",
               status: "training"
             })
+          } else if (progress.status === "failed") {
+            console.log("Setting trainingProgress to failed")
+            setTrainingProgress(prev => {
+              console.log("prev state:", prev)
+              return { epoch: 0, epochs: 10, batch: 0, batches: 100, accuracy: 0, loss: 0, eta: "", status: "failed" }
+            })
+            updateQuery(currentQuery.id, { isTraining: false, trainingFailed: true })
+            if (pollRef.current) {
+              clearInterval(pollRef.current)
+              pollRef.current = null
+            }
           } else if (progress.status === "completed") {
             setTrainingProgress(prev => ({ ...prev, status: "completed", accuracy: progress.accuracy }))
             if (pollRef.current) {
@@ -1664,10 +1710,12 @@ export default function PlaygroundQueryPage() {
             <div className="flex-1 flex flex-col">
               <ScrollArea className="flex-1 p-3 sm:p-6" ref={scrollRef}>
                 <div className="max-w-3xl mx-auto space-y-4 sm:space-y-6 pt-12 sm:pt-14 pb-4">
-                  {messages.map((message, i) => (
+                  {(trainingProgress.status !== "failed" && !currentQuery?.trainingFailed) && messages.map((message, i) => (
                     <MessageBubble userName={user?.name} key={i} message={message} />
                   ))}
-                  {currentQuery?.isTraining ? (
+                  {(trainingProgress.status === "failed" || currentQuery?.trainingFailed) ? (
+                    <div className="flex flex-col items-center justify-center py-20"><div className="text-red-500 text-4xl mb-4">⚠</div><h3 className="text-lg font-semibold text-red-600 mb-2">Training Failed</h3><p className="text-sm text-muted-foreground">Please try again.</p></div>
+                  ) : currentQuery?.isTraining ? (
                     <TrainingIndicator progress={trainingProgress} />
                   ) : isLoading ? (
                     <TypingIndicator />

@@ -772,11 +772,43 @@ training_progress = {"epoch": 0, "epochs": 0, "accuracy": 0.0, "loss": 0.0, "sta
 SESSIONS_FILE = '/tmp/schemalabs_training_sessions.json'
 
 def _load_sessions():
+    """Load sessions and mark stale trainings as failed"""
     global training_sessions
     try:
         if os.path.exists(SESSIONS_FILE):
             with open(SESSIONS_FILE, 'r') as f:
                 training_sessions = json.load(f)
+                # Mark stale trainings as failed on restart
+                for qid, sess in training_sessions.items():
+                    if sess.get("status") in ["training", "preparing", "merging", "processing", "starting"]:
+                        sess["status"] = "failed"
+                        user_id = session.get("user_id") or request.headers.get("X-User-ID")
+                        if user_id:
+                            try:
+                                import psycopg2
+                                conn = psycopg2.connect(os.getenv("DATABASE_URL"))
+                                cur = conn.cursor()
+                                cur.execute("SELECT email FROM users WHERE id = %s", (user_id,))
+                                result = cur.fetchone()
+                                if result:
+                                    send_training_email(result[0], "failed", "model", error=str(e))
+                                cur.close()
+                                conn.close()
+                            except Exception as ex:
+                                print(f"Email send failed: {ex}")
+                        sess["error"] = "Training failed - connection lost"
+                        sess["notification"] = "Training failed. Please try again."
+                        # Update DB training_failed flag
+                        try:
+                            import psycopg2
+                            conn = psycopg2.connect(os.getenv("DATABASE_URL"))
+                            cur = conn.cursor()
+                            cur.execute("UPDATE queries SET training_failed = TRUE, is_training = FALSE WHERE id = %s", (qid,))
+                            conn.commit()
+                            cur.close()
+                            conn.close()
+                        except Exception as db_ex:
+                            print(f"DB update failed: {db_ex}")
     except:
         training_sessions = {}
 
@@ -1236,7 +1268,8 @@ def finetune():
         session = get_session(query_id)
         print(f"DEBUG FINETUNE START: query_id={query_id}, epochs_req={epochs_req}, analyze_only={analyze_only}")
         # Reset session for new training
-        session.update({"epoch": 0, "epochs": 0, "accuracy": 0.0, "loss": 0.0, "status": "starting", "eta": "0%", "start_time": time.time(), "query_id": query_id})
+        session.update({"epoch": 0, "epochs": 0, "accuracy": 0.0, "loss": 0.0, "status": "starting", "eta": "0%", "start_time": time.time(), "query_id": query_id, "user_id": request.headers.get("X-User-ID")})
+        save_session(query_id, session)
         
         merge_files = request.form.get('merge_files', 'false').lower() == 'true'
         
@@ -1582,6 +1615,21 @@ def finetune():
             ft_model.load_state_dict(best_state)
         
         session["status"] = "completed"
+        # Get user email from session/database
+        user_id = session.get("user_id") or request.headers.get("X-User-ID")
+        if user_id:
+            try:
+                import psycopg2
+                conn = psycopg2.connect(os.getenv("DATABASE_URL"))
+                cur = conn.cursor()
+                cur.execute("SELECT email FROM users WHERE id = %s", (user_id,))
+                result = cur.fetchone()
+                if result:
+                    send_training_email(result[0], "completed", "model", best_acc)
+                cur.close()
+                conn.close()
+            except Exception as e:
+                print(f"Email send failed: {e}")
         session["accuracy"] = best_acc
         session["epochs"] = current_epoch
         session["epoch"] = current_epoch
@@ -1604,6 +1652,7 @@ def finetune():
             'config': ft_config
         }, ft_path)
         
+        
         # ONNX export for faster CPU inference
         try:
             onnx_path = ft_path.replace(".pt", ".onnx")
@@ -1612,7 +1661,6 @@ def finetune():
             print(f"ONNX model saved: {onnx_path}")
         except Exception as e:
             print(f"ONNX export failed: {e}")
-        
         # Temp dosya varsa sil (tek dosya modunda)
         try:
             if 'temp_file' in dir() and temp_file and hasattr(temp_file, 'name'):
@@ -1656,10 +1704,24 @@ def finetune():
     except Exception as e:
         import traceback
         traceback.print_exc()
+        # Update DB training_failed flag
+        query_id = request.form.get("query_id") or request.args.get("query_id")
+        if query_id:
+            try:
+                import psycopg2
+                conn = psycopg2.connect(os.getenv("DATABASE_URL"))
+                cur = conn.cursor()
+                cur.execute("UPDATE queries SET training_failed = TRUE, is_training = FALSE WHERE id = %s", (query_id,))
+                conn.commit()
+                cur.close()
+                conn.close()
+            except Exception as db_ex:
+                print(f"DB update failed: {db_ex}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/training/progress', methods=['GET'])
 def get_training_progress():
+    _load_sessions()
     query_id = request.args.get("query_id")
     if query_id and query_id in training_sessions:
         return jsonify(training_sessions[query_id])
@@ -1755,6 +1817,11 @@ def finetune_async():
     form_data = dict(request.form)
     form_data['query_id'] = task_id
     
+    # Create session immediately
+    session = get_session(task_id)
+    session.update({"epoch": 0, "epochs": 0, "accuracy": 0.0, "loss": 0.0, "status": "starting", "eta": "0%", "start_time": time.time(), "query_id": task_id})
+    save_session(task_id, session)
+    
     # Dosyaları geçici dizine kaydet
     temp_files = []
     if 'file' in request.files:
@@ -1816,9 +1883,63 @@ def training_status(task_id):
     status = get_training_status(task_id)
     return jsonify(status)
 
+# Load sessions on startup and mark stale trainings
+_load_sessions()
+_save_sessions()  # Save after marking stale
+
 if __name__ == '__main__':
     port = int(os.getenv('FLASK_PORT', 6000))
     import logging
     log = logging.getLogger('werkzeug')
     log.setLevel(logging.ERROR)
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+
+# Email notification
+def send_training_email(user_email, status, model_name, accuracy=None, error=None):
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+    
+    sender = os.getenv("SMTP_EMAIL")
+    password = os.getenv("SMTP_PASSWORD")
+    
+    if not sender or not password:
+        print("Email credentials not configured")
+        return
+    
+    subject = f"Training {'Completed' if status == 'completed' else 'Failed'} - {model_name}"
+    
+    if status == "completed":
+        body = f"""
+        Your model training has completed successfully!
+        
+        Model: {model_name}
+        Accuracy: {accuracy}%
+        
+        You can now use this model in SchemaLabs AI.
+        """
+    else:
+        body = f"""
+        Your model training has failed.
+        
+        Model: {model_name}
+        Error: {error}
+        
+        Please check your data and try again.
+        """
+    
+    msg = MIMEMultipart()
+    msg['From'] = sender
+    msg['To'] = user_email
+    msg['Subject'] = subject
+    msg.attach(MIMEText(body, 'plain'))
+    
+    try:
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(sender, password)
+        server.send_message(msg)
+        server.quit()
+        print(f"Email sent to {user_email}")
+    except Exception as e:
+        print(f"Email send failed: {e}")

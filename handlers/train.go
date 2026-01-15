@@ -65,7 +65,8 @@ func TrainHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Epochs == 0 {
+
+if req.Epochs == 0 {
 		req.Epochs = 5
 	}
 	if req.BatchSize == 0 {
@@ -239,7 +240,9 @@ func MultiTrainHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Epochs == 0 {
+fmt.Printf("DEBUG MultiTrain: QueryID=%s, ModelName=%s\n", req.QueryID, req.ModelName)
+
+if req.Epochs == 0 {
 		req.Epochs = 5
 	}
 	if req.BatchSize == 0 {

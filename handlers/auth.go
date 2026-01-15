@@ -319,6 +319,7 @@ type Query struct {
 	UserID          string    `json:"user_id"`
 	IsTraining      bool      `json:"is_training"`
 	HasModel        bool      `json:"has_model"`
+TrainingFailed  bool      `gorm:"column:training_failed" json:"trainingFailed"`
 	TrainingModelID *string   `json:"training_model_id"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
