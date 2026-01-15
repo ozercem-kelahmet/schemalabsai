@@ -103,7 +103,7 @@ def detect_scale_inconsistency(df):
             for idx in extreme_high.index:
                 val = df.loc[idx, col]
                 if val > median_val * 500:
-                    ratio = val / median_val
+                    ratio = val / median_val if median_val != 0 else 0
                     if 500 < ratio < 1500:
                         df.loc[idx, col] = val / 1000
                         report["total_adjustments"] += 1
@@ -148,6 +148,8 @@ def smart_data_cleaning(df, use_midas=False, midas_model=None):
     cleaning_report["missing_fixes"]["before"] = int(missing_before)
     cleaning_report["missing_fixes"]["after"] = int(missing_after)
     cleaning_report["missing_fixes"]["fixed"] = int(missing_before - missing_after)
+    cleaning_report["final_shape"] = df.shape
+    return df, cleaning_report
 
 def detect_foreign_keys(dfs, file_names=None):
     relations = []
@@ -247,10 +249,6 @@ def smart_time_series_prep(df):
     
     return df, report
 
-    cleaning_report["final_shape"] = df.shape
-    
-    return df, cleaning_report
-
 def is_time_pattern(series):
     """Değerlerin zaman formatı olup olmadığını kontrol et"""
     sample = series.dropna().head(20).astype(str)
@@ -338,7 +336,7 @@ def smart_merge_datasets(dataframes, file_names=None):
         player_col = find_player_col(df)
         df = df.copy()
         
-        if player_col:
+        if player_col and player_col != "player_num":
             if player_col == 'Player Full Name (P)':
                 df['player_num'] = df[player_col].apply(extract_player_num)
             elif df[player_col].dtype in ['int64', 'float64']:
@@ -423,12 +421,21 @@ def smart_merge_datasets(dataframes, file_names=None):
     merge_key = find_best_merge_key(prepared_dfs)
     
     if merge_key:
-        # Merge on best key
-        merged = prepared_dfs[0]
-        for df in prepared_dfs[1:]:
-            merged = pd.merge(merged, df, on=merge_key, how='outer')
+        sorted_dfs = sorted(prepared_dfs, key=len, reverse=True)
+        merged = sorted_dfs[0]
+        
+        for df in sorted_dfs[1:]:
+            if len(df) > len(merged) * 0.5:
+                df_agg = df.groupby(merge_key).mean(numeric_only=True).reset_index()
+                for col in df.columns:
+                    if col != merge_key and col not in df_agg.columns:
+                        df_agg[col] = df.groupby(merge_key)[col].first().values
+                merged = pd.merge(merged, df_agg, on=merge_key, how='left')
+            else:
+                df_agg = df.groupby(merge_key).mean(numeric_only=True).reset_index()
+                merged = pd.merge(merged, df_agg, on=merge_key, how='left')
         merged = merged.fillna(0)
-        print(f"Smart merge (key={merge_key}): {len(dataframes)} datasets -> {merged.shape}")
+        print(f"DEBUG MERGE: {len(dataframes)} files -> {merged.shape}")
     else:
         # No good key - check row counts
         row_counts = [len(df) for df in prepared_dfs]
@@ -1223,6 +1230,7 @@ def finetune():
         analyze_only = request.form.get('analyze_only', 'false').lower() == 'true'
         
         session = get_session(query_id)
+        print(f"DEBUG FINETUNE START: query_id={query_id}, epochs_req={epochs_req}, analyze_only={analyze_only}")
         # Reset session for new training
         session.update({"epoch": 0, "epochs": 0, "accuracy": 0.0, "loss": 0.0, "status": "starting", "eta": "0%", "start_time": time.time(), "query_id": query_id})
         
