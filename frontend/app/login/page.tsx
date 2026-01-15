@@ -539,7 +539,7 @@ export default function LoginPage() {
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
                     <>
-                      Send Verification Code
+                      Sign Up
                       <ArrowRight className="ml-2 h-4 w-4" />
                     </>
                   )}

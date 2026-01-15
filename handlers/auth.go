@@ -1636,7 +1636,7 @@ func checkRateLimit(keyID string, limit string) bool {
 	return true
 }
 
-// Email service instance
+
 var emailService *EmailService
 
 func initEmailService() {
