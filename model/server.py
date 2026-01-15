@@ -1779,7 +1779,7 @@ def finetune():
             import psycopg2
             conn = psycopg2.connect(os.getenv("DATABASE_URL"))
             cur = conn.cursor()
-            cur.execute("SELECT u.email FROM users u JOIN queries q ON u.id = q.user_id WHERE q.id = %s", (query_id,))
+            cur.execute("SELECT u.email, u.name FROM users u JOIN queries q ON u.id = q.user_id WHERE q.id = %s", (query_id,))
             result = cur.fetchone()
             if result:
                 print(f"Sending completion email to {result[0]}")
