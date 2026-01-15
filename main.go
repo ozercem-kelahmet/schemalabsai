@@ -51,10 +51,22 @@ func startNextJsServer() {
 	exec.Command("rm", "-rf", "./frontend/node_modules/.cache").Run()
 	time.Sleep(time.Millisecond * 500)
 
-	exec.Command("rm", "-rf", "./frontend/.next").Run()
-	cmd := exec.Command("npm", "start")
+	var cmd *exec.Cmd
+	if os.Getenv("APP_ENV") == "production" {
+		log.Println("Building frontend...")
+		buildCmd := exec.Command("npm", "run", "build")
+		buildCmd.Dir = "./frontend"
+		buildCmd.Run()
+		cmd = exec.Command("npm", "start")
+	} else {
+		exec.Command("rm", "-rf", "./frontend/.next").Run()
+		cmd = exec.Command("npm", "run", "dev")
+	}
 	cmd.Dir = "./frontend"
 	cmd.Env = append(os.Environ(), "BROWSER=none")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	log.Println("Starting Next.js...")
 	cmd.Start()
 }
 
@@ -108,7 +120,7 @@ func main() {
 	}
 	
 	if !isPortInUse(frontendPort) {
-		// go startNextJsServer() // Managed by schemalabs-frontend service
+		go startNextJsServer()
 	} else {
 		log.Println("Next.js already running on port", frontendPort)
 	}

@@ -380,8 +380,6 @@ export function SchemaProcessingAnimation({
               <div className="text-xs text-muted-foreground mt-1">Accuracy</div>
             </div>
             <div className="p-3 bg-secondary/50 rounded-xl text-center">
-              <div className="text-xl font-bold text-blue-500">{trainingProgress.eta || "..."}</div>
-              <div className="text-xs text-muted-foreground mt-1">ETA</div>
             </div>
           </div>
         ) : dataSourcesLength > 0 ? (

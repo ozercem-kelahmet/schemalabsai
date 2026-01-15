@@ -886,9 +886,6 @@ function SidebarInner() {
                               )}
                               <h3 className="text-lg font-semibold">{trainingProgress >= 100 ? "Training Complete!" : "Fine-tuning..."}</h3>
                               <p className="text-sm text-muted-foreground mt-1">{trainingStatus}</p>
-                              {trainingETA && !trainingComplete && (
-                                <p className="text-xs text-muted-foreground mt-1">ETA: {trainingETA}</p>
-                              )}
                             </div>
                               {trainingComplete && mergedCsvPath && (
                                 <a 
