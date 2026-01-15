@@ -16,15 +16,41 @@ jobs:
           host: 34.9.180.204
           username: ozercemkelahmet
           key: ${{ secrets.GCP_SSH_KEY }}
-          command_timeout: 10m
+          command_timeout: 15m
           script: |
             cd /opt/schemalabsai
+            
+            # Git pull
             git fetch origin
+            CHANGED=$(git diff --name-only HEAD origin/main)
             git reset --hard origin/main
-            export PATH=$PATH:/usr/local/go/bin
-            go mod tidy 2>/dev/null || true
-            go build -o schemalabsai main.go
-            cd frontend && npm run build && cd ..
+            
+            # Go build only if .go files changed
+            if echo "$CHANGED" | grep -q '\.go$'; then
+              echo "Go files changed, rebuilding..."
+              export PATH=$PATH:/usr/local/go/bin
+              go build -o schemalabsai main.go
+              sudo systemctl restart schemalabs-go
+            fi
+            
+            # Frontend build only if frontend files changed
+            if echo "$CHANGED" | grep -q 'frontend/'; then
+              echo "Frontend files changed, rebuilding..."
+              cd frontend && npm run build && cd ..
+              sudo systemctl restart schemalabs-frontend
+            fi
+            
+            # Flask restart only if model files changed
+            if echo "$CHANGED" | grep -q 'model/'; then
+              echo "Model files changed, restarting Flask..."
+              sudo systemctl restart schemalabs-flask
+            fi
+            
+            # Always restart all services to be safe
             sudo systemctl restart schemalabs-go schemalabs-flask schemalabs-frontend
+            
             sleep 10
-            systemctl is-active schemalabs-go && systemctl is-active schemalabs-frontend && echo "All services running"
+            echo "Services status:"
+            systemctl is-active schemalabs-go
+            systemctl is-active schemalabs-flask
+            systemctl is-active schemalabs-frontend
