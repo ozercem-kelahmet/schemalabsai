@@ -1,5 +1,6 @@
 import os
 from analytics_engine import detect_analytics_type, generate_analytics
+from smart_analyzer import smart_analyze
 os.environ["FLASK_SKIP_DOTENV"] = "1"
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -1219,6 +1220,7 @@ def analyze():
     try:
         data = request.json
         file_id = data.get('file_id', '')
+        model_id = data.get('model_id', '')  # Fine-tuned model ID
         query = data.get('query', data.get('message', '')).lower()
         
         uploads_dir = '../uploads'
@@ -1241,13 +1243,124 @@ def analyze():
         else:
             df = pd.read_csv(file_path, low_memory=False)
         
+        # === FINE-TUNED MODEL PREDICTION ===
+        ft_prediction_text = ""
+        if model_id and model_id != "none":
+            try:
+                ft_path = f'../checkpoints/{model_id}.pt'
+                if os.path.exists(ft_path):
+                    ft_ckpt = torch.load(ft_path, map_location='cpu', weights_only=False)
+                    
+                    # Get model info
+                    class_names = ft_ckpt.get('class_names', [])
+                    feature_cols = ft_ckpt.get('feature_cols', [])
+                    config = ft_ckpt.get('config', {})
+                    n_classes = ft_ckpt.get('n_classes', len(class_names))
+                    input_dim = ft_ckpt.get('input_dim', config.get('n_features', 110))
+                    accuracy = ft_ckpt.get('accuracy', 0)
+                    
+                    # Rebuild config if needed
+                    if not config:
+                        config = {
+                            'd_model': 128, 'n_heads': 4, 'n_layers': 2,
+                            'schema_layers': 2, 'n_latents': 16,
+                            'n_features': input_dim, 'n_classes': n_classes,
+                            'vocab_size': 50000, 'n_types': 10, 'max_cols': 128
+                        }
+                    else:
+                        config['n_features'] = input_dim
+                        config['n_classes'] = n_classes
+                    
+                    # Create model and load weights
+                    ft_model = TabularFoundationModel(config)
+                    ft_model.load_state_dict(ft_ckpt['model_state_dict'])
+                    ft_model.eval()
+                    
+                    # Prepare data for prediction
+                    num_cols = df.select_dtypes(include=['number']).columns.tolist()
+                    X_pred = df[num_cols].fillna(0).values.astype(np.float32)
+                    
+                    # Match feature dimensions
+                    if X_pred.shape[1] < input_dim:
+                        X_pred = np.hstack([X_pred, np.zeros((X_pred.shape[0], input_dim - X_pred.shape[1]))])
+                    elif X_pred.shape[1] > input_dim:
+                        X_pred = X_pred[:, :input_dim]
+                    
+                    # Normalize using saved scaler if available
+                    if 'scaler' in ft_ckpt and ft_ckpt['scaler'] is not None:
+                        try:
+                            X_pred = ft_ckpt['scaler'].transform(X_pred)
+                        except:
+                            X_pred = (X_pred - X_pred.mean(axis=0)) / (X_pred.std(axis=0) + 1e-8)
+                    else:
+                        X_pred = (X_pred - X_pred.mean(axis=0)) / (X_pred.std(axis=0) + 1e-8)
+                    
+                    X_pred = np.nan_to_num(X_pred, nan=0.0).astype(np.float32)
+                    
+                    # Run prediction
+                    with torch.no_grad():
+                        X_tensor = torch.FloatTensor(X_pred)
+                        output = ft_model(X_tensor)
+                        
+                        # Handle different output formats
+                        if isinstance(output, dict):
+                            logits = output.get('sector', output.get('logits', None))
+                            if logits is None:
+                                logits = list(output.values())[0]
+                        else:
+                            logits = output
+                        
+                        probs = torch.softmax(logits, dim=-1)
+                        preds = probs.argmax(dim=-1).numpy()
+                        confs = probs.max(dim=-1).values.numpy()
+                    
+                    # Build prediction summary
+                    ft_prediction_text = f"\n=== FINE-TUNED MODEL PREDICTIONS ===\n"
+                    ft_prediction_text += f"Model: {model_id}\n"
+                    ft_prediction_text += f"Training Accuracy: {accuracy*100:.1f}%\n"
+                    ft_prediction_text += f"Classes: {', '.join(class_names[:10])}{'...' if len(class_names) > 10 else ''}\n"
+                    ft_prediction_text += f"Total Predictions: {len(preds)}\n\n"
+                    
+                    # Class distribution
+                    from collections import Counter
+                    pred_counts = Counter(preds)
+                    ft_prediction_text += "CLASS DISTRIBUTION:\n"
+                    for cls_idx, count in pred_counts.most_common(10):
+                        cls_name = class_names[cls_idx] if cls_idx < len(class_names) else f"class_{cls_idx}"
+                        pct = count / len(preds) * 100
+                        ft_prediction_text += f"  {cls_name}: {count} ({pct:.1f}%)\n"
+                    
+                    # Sample predictions with confidence
+                    ft_prediction_text += "\nSAMPLE PREDICTIONS (top 10):\n"
+                    for i in range(min(10, len(preds))):
+                        cls_name = class_names[preds[i]] if preds[i] < len(class_names) else f"class_{preds[i]}"
+                        ft_prediction_text += f"  Row {i+1}: {cls_name} (conf: {confs[i]*100:.1f}%)\n"
+                    
+                    ft_prediction_text += "\n"
+                    print(f"Fine-tuned model prediction completed: {len(preds)} rows, {n_classes} classes")
+                else:
+                    ft_prediction_text = f"\n[Fine-tuned model not found: {model_id}]\n"
+            except Exception as e:
+                ft_prediction_text = f"\n[Fine-tuned model error: {str(e)}]\n"
+                print(f"Fine-tuned prediction error: {e}")
+                import traceback
+                traceback.print_exc()
+        
         # === ADVANCED ANALYTICS ENGINE ===
         detected_types = detect_analytics_type(query)
         if detected_types:
             print(f"Detected analytics types: {[d['type'] for d in detected_types]}")
             advanced_analysis = generate_analytics(df, query, detected_types)
             if advanced_analysis and len(advanced_analysis) > 100:
-                return jsonify({'analysis': advanced_analysis, 'status': 'success'})
+                return jsonify({'analysis': ft_prediction_text + advanced_analysis, 'status': 'success'})
+        
+        # === SMART UNIVERSAL ANALYSIS ===
+        try:
+            smart_result = smart_analyze(df, query)
+            if smart_result and len(smart_result) > 200:
+                return jsonify({'analysis': ft_prediction_text + smart_result, 'status': 'success'})
+        except Exception as e:
+            print(f"Smart analyze error: {e}")
         
         # === COMPACT ANALYSIS (max 8K chars) ===
         num_cols = df.select_dtypes(include=['number']).columns.tolist()
@@ -1292,7 +1405,7 @@ def analyze():
         matched_num = [c[0] for c in sorted(matched_num, key=lambda x: -x[1])]
         matched_cat = [c[0] for c in sorted(matched_cat, key=lambda x: -x[1])]
         
-        analysis = f"DATASET: {len(df)} rows, {len(df.columns)} columns\n"
+        analysis = ft_prediction_text + f"DATASET: {len(df)} rows, {len(df.columns)} columns\n"
         analysis += f"Numeric: {len(num_cols)} | Categorical: {len(cat_cols)}\n\n"
         
         # === ADVANCED ANALYTICS DETECTION ===

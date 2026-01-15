@@ -565,14 +565,91 @@ def generate_analytics(df, query, detected_types):
         elif atype in ['comparison', 'peer', 'competitive']:
             analysis += generate_benchmark(df, query, num_cols, cat_cols)
         else:
-            # Generic analysis
+            # DYNAMIC QUERY-AWARE ANALYSIS
             analysis += f"=== {atype.upper()} ANALYSIS ===\n"
-            analysis += f"Dataset: {len(df)} rows, {len(df.columns)} columns\n"
-            for col in num_cols[:10]:
-                try:
-                    analysis += f"  {col}: avg={df[col].mean():.2f}, min={df[col].min():.2f}, max={df[col].max():.2f}\n"
-                except:
-                    pass
+            analysis += f"Dataset: {len(df)} rows, {len(df.columns)} columns\n\n"
+            
+            # Extract keywords from query
+            query_words = [w.lower() for w in re.sub(r'[^a-zA-Z0-9\s]', '', query).split() if len(w) > 2]
+            
+            # Find matching columns based on query
+            matched_num = []
+            matched_cat = []
+            # Score-based matching for numeric columns
+            scored_num = []
+            for col in num_cols:
+                col_lower = col.lower()
+                score = 0
+                for w in query_words:
+                    if w in col_lower:
+                        score += len(w) * 2
+                        if col_lower.startswith(w) or col_lower.endswith(w):
+                            score += 10
+                    if col_lower in w:
+                        score += len(col_lower)
+                if score > 0:
+                    scored_num.append((col, score))
+            matched_num = [c[0] for c in sorted(scored_num, key=lambda x: -x[1])]
+            # Priority: name columns first, then other matches
+            name_cols = [c for c in cat_cols if 'name' in c.lower()]
+            for col in name_cols:
+                col_lower = col.lower()
+                for w in query_words:
+                    if w in col_lower:
+                        matched_cat.insert(0, col)  # High priority
+                        break
+                else:
+                    matched_cat.append(col)  # Name cols are always useful
+            
+            for col in cat_cols:
+                if col in matched_cat:
+                    continue
+                col_lower = col.lower()
+                for w in query_words:
+                    if w in col_lower:
+                        matched_cat.append(col)
+                        break
+            
+            # Use matched columns or fallback to first ones
+            target_num = matched_num[:5] if matched_num else num_cols[:5]
+            target_cat = matched_cat[:2] if matched_cat else [c for c in cat_cols if 'name' in c.lower()][:2]
+            if not target_cat:
+                target_cat = cat_cols[:2]
+            
+            # Generate grouped analysis if we have both
+            if target_num and target_cat:
+                for num_col in target_num[:3]:
+                    for cat_col in target_cat[:1]:
+                        try:
+                            # Determine aggregation from query
+                            if any(w in query for w in ['average', 'avg', 'mean']):
+                                result = df.groupby(cat_col)[num_col].mean().sort_values(ascending=False)
+                                agg_name = "AVERAGE"
+                            elif any(w in query for w in ['max', 'highest', 'top', 'best']):
+                                result = df.groupby(cat_col)[num_col].max().sort_values(ascending=False)
+                                agg_name = "MAX"
+                            elif any(w in query for w in ['min', 'lowest', 'least']):
+                                result = df.groupby(cat_col)[num_col].min().sort_values(ascending=True)
+                                agg_name = "MIN"
+                            elif any(w in query for w in ['count', 'how many']):
+                                result = df.groupby(cat_col)[num_col].count().sort_values(ascending=False)
+                                agg_name = "COUNT"
+                            else:
+                                result = df.groupby(cat_col)[num_col].sum().sort_values(ascending=False)
+                                agg_name = "TOTAL"
+                            
+                            analysis += f"{agg_name} {num_col} BY {cat_col}:\n"
+                            for idx, val in list(result.items())[:15]:
+                                analysis += f"  {idx}: {val:.2f}\n"
+                            analysis += "\n"
+                        except Exception as e:
+                            pass
+            elif target_num:
+                for col in target_num[:5]:
+                    try:
+                        analysis += f"{col}: total={df[col].sum():.2f}, avg={df[col].mean():.2f}, max={df[col].max():.2f}, min={df[col].min():.2f}\n"
+                    except:
+                        pass
             analysis += "\n"
     
     return analysis
