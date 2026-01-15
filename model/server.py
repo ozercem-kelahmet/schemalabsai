@@ -29,6 +29,10 @@ class NaNSafeEncoder(json.JSONEncoder):
 
 app_json_encoder = NaNSafeEncoder
 import torch
+torch.backends.mkldnn.enabled = True
+torch.set_float32_matmul_precision("medium")
+torch.set_num_threads(8)
+torch.set_num_interop_threads(4)
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.cuda.amp import autocast, GradScaler
@@ -876,7 +880,7 @@ def predict():
             X_t = torch.FloatTensor(row_norm)
             mask_t = torch.FloatTensor(mask.astype(np.float32))
             
-            with torch.no_grad():
+            with torch.inference_mode():
                 if mask.mean() < 1.0:
                     X_imp = midas.impute(X_t, mask_t)
                 else:
@@ -945,7 +949,7 @@ def predict_batch():
         values_norm = (values - X_min) / (X_max - X_min + 1e-8)
         
         X_t = torch.FloatTensor(values_norm)
-        with torch.no_grad():
+        with torch.inference_mode():
             try:
                 out = model(X_t)
                 sec_logits = out.get('sector', None)
@@ -1379,6 +1383,20 @@ def finetune():
             else:
                 ft_model = TabularFoundationModel(ft_config)
             print(f"Model created successfully, params: {sum(p.numel() for p in ft_model.parameters())}")
+            for m in ft_model.modules():
+                if isinstance(m, nn.BatchNorm1d):
+                    m.momentum = 0.01
+            if hasattr(torch, "compile") and torch.cuda.is_available():
+                try:
+                    ft_model = torch.compile(ft_model, mode="default", backend="eager")
+                    print("Model compiled for CPU optimization")
+                except:
+                    pass
+                try:
+                    ft_model = torch.quantization.quantize_dynamic(ft_model, {nn.Linear}, dtype=torch.qint8)
+                    print("Model quantized to INT8")
+                except:
+                    pass
         except Exception as e:
             print(f"ERROR creating model: {e}")
             import traceback
@@ -1396,11 +1414,19 @@ def finetune():
         epochs = epochs_req if epochs_req > 0 else dyn_cfg['epochs']
         
         optimizer = AdamW(ft_model.parameters(), lr=dyn_cfg['lr'], weight_decay=0.01)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+        warmup_epochs = min(3, epochs // 5)
+        def warmup_lambda(epoch):
+            if epoch < warmup_epochs:
+                return (epoch + 1) / warmup_epochs
+            return 1.0
+        warmup_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, warmup_lambda)
+        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs - warmup_epochs)
+        scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer, [warmup_scheduler, cosine_scheduler], milestones=[warmup_epochs])
         loss_fn = nn.CrossEntropyLoss()
         
         # AMP for 2x speedup
-        scaler = GradScaler()
+        use_amp = torch.cuda.is_available()
+        scaler = GradScaler() if use_amp else None
         gradient_accumulation_steps = 2  # Effective batch size *= 2
         
         session["status"] = "training"
@@ -1435,7 +1461,10 @@ def finetune():
         # DataLoader ile paralel data loading
         from torch.utils.data import TensorDataset, DataLoader
         dataset = TensorDataset(torch.FloatTensor(X[:max_samples_per_epoch]), torch.LongTensor(y[:max_samples_per_epoch]))
-        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2, pin_memory=True)
+        num_workers = 4 if torch.cuda.is_available() else 0
+        pin_mem = torch.cuda.is_available()
+        prefetch = 2 if num_workers > 0 else None
+        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=pin_mem, prefetch_factor=prefetch)
         
         while current_epoch < max_epochs:
             print(f"Epoch {current_epoch + 1} starting...")
@@ -1449,9 +1478,29 @@ def finetune():
                 if np.random.random() > 0.5:
                     noise = torch.randn_like(batch_X) * 0.01
                     batch_X = batch_X + noise
+                    batch_X = batch_X.contiguous()
                 
-                # AMP forward pass
-                with autocast():
+                
+                # Forward pass
+                if use_amp:
+                    with autocast():
+                        out = ft_model(batch_X)
+                        logits = out['output']
+                        sector_logits = out['sector']
+                        sector_targets = batch_y % ft_model.n_sectors
+                        sector_loss = nn.CrossEntropyLoss()(sector_logits, sector_targets)
+                        mcm_loss = out.get('mcm_loss', torch.tensor(0.0))
+                        miras_loss = out.get('miras_loss', torch.tensor(0.0))
+                        loss = loss_fn(logits, batch_y) + sector_loss + 0.1 * mcm_loss + 0.05 * miras_loss
+                        loss = loss / gradient_accumulation_steps
+                    scaler.scale(loss).backward()
+                    if (batch_idx + 1) % gradient_accumulation_steps == 0:
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(ft_model.parameters(), 0.5 if not torch.cuda.is_available() else 1.0)
+                        scaler.step(optimizer)
+                        scaler.update()
+                        optimizer.zero_grad()
+                else:
                     out = ft_model(batch_X)
                     logits = out['output']
                     sector_logits = out['sector']
@@ -1460,18 +1509,15 @@ def finetune():
                     mcm_loss = out.get('mcm_loss', torch.tensor(0.0))
                     miras_loss = out.get('miras_loss', torch.tensor(0.0))
                     loss = loss_fn(logits, batch_y) + sector_loss + 0.1 * mcm_loss + 0.05 * miras_loss
-                    loss = loss / gradient_accumulation_steps  # Scale loss
-                
-                # AMP backward pass
-                scaler.scale(loss).backward()
-                
-                # Gradient accumulation - update every N steps
-                if (batch_idx + 1) % gradient_accumulation_steps == 0:
-                    scaler.unscale_(optimizer)
-                    torch.nn.utils.clip_grad_norm_(ft_model.parameters(), 1.0)
-                    scaler.step(optimizer)
-                    scaler.update()
-                    optimizer.zero_grad()
+                    loss = loss / gradient_accumulation_steps
+                    if True:
+                        loss.backward()
+                    else:
+                        continue
+                    if (batch_idx + 1) % gradient_accumulation_steps == 0:
+                        torch.nn.utils.clip_grad_norm_(ft_model.parameters(), 0.5 if not torch.cuda.is_available() else 1.0)
+                        optimizer.step()
+                        optimizer.zero_grad()
                 
                 total_loss += loss.item()
                 correct += (logits.argmax(1) == batch_y).sum().item()
@@ -1558,6 +1604,15 @@ def finetune():
             'config': ft_config
         }, ft_path)
         
+        # ONNX export for faster CPU inference
+        try:
+            onnx_path = ft_path.replace(".pt", ".onnx")
+            dummy_input = torch.randn(1, input_dim)
+            torch.onnx.export(ft_model, dummy_input, onnx_path, input_names=["input"], output_names=["output"], dynamic_axes={"input": {0: "batch"}, "output": {0: "batch"}})
+            print(f"ONNX model saved: {onnx_path}")
+        except Exception as e:
+            print(f"ONNX export failed: {e}")
+        
         # Temp dosya varsa sil (tek dosya modunda)
         try:
             if 'temp_file' in dir() and temp_file and hasattr(temp_file, 'name'):
@@ -1571,7 +1626,7 @@ def finetune():
         
         # Sector tahmini yap
         ft_model.eval()
-        with torch.no_grad():
+        with torch.inference_mode():
             sample_X = torch.FloatTensor(X[:min(100, len(X))])
             out = ft_model(sample_X)
             sector_probs = torch.softmax(out['sector'], dim=1)
