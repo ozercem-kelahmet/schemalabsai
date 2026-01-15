@@ -11,12 +11,15 @@ git add -A
 git commit -m "Deploy $(date '+%Y-%m-%d %H:%M')" || true
 git push origin main || true
 
-# 2. Servisleri durdur
+# 2. Servisleri durdur ve portları temizle
 echo "🛑 Stopping services..."
 gcloud compute ssh schemalabsai-prod-gpu001 --zone=us-central1-b --command="
 sudo systemctl stop schemalabs-go schemalabs-flask schemalabs-frontend || true
 sleep 2
-sudo fuser -k 8080/tcp 6000/tcp 3000/tcp 2>/dev/null || true
+sudo pkill -f 'next-server' || true
+sudo pkill -f 'schemalabsai' || true
+sudo pkill -f 'server.py' || true
+sleep 2
 "
 
 # 3. Core dosyaları yolla
@@ -37,22 +40,22 @@ echo 'Building Go...'
 /usr/local/go/bin/go build -o schemalabsai
 
 echo 'Installing Python dependencies...'
-sudo /opt/schemalabsai/venv/bin/pip install psycopg2-binary -q 2>/dev/null
+sudo /opt/schemalabsai/venv/bin/pip install psycopg2-binary -q 2>/dev/null || true
 
 echo 'Installing npm dependencies...'
 cd /opt/schemalabsai/frontend
-npm install --silent 2>/dev/null
+npm install --silent 2>/dev/null || true
 
 echo 'Building frontend...'
 npm run build
 
 echo 'Starting services...'
 sudo systemctl start schemalabs-flask
-sleep 2
+sleep 3
 sudo systemctl start schemalabs-frontend
-sleep 2
+sleep 3
 sudo systemctl start schemalabs-go
-sleep 2
+sleep 3
 
 echo ''
 echo '✅ Services status:'
