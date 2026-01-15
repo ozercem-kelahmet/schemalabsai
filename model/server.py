@@ -1576,7 +1576,7 @@ def finetune():
             for m in ft_model.modules():
                 if isinstance(m, nn.BatchNorm1d):
                     m.momentum = 0.01
-            if hasattr(torch, "compile") and torch.cuda.is_available():
+            if hasattr(torch, "compile") and not torch.cuda.is_available():
                 try:
                     ft_model = torch.compile(ft_model, mode="default", backend="eager")
                     print("Model compiled for CPU optimization")
