@@ -1680,8 +1680,8 @@ def finetune():
                         sector_logits = out['sector']
                         sector_targets = batch_y % ft_model.n_sectors
                         sector_loss = nn.CrossEntropyLoss()(sector_logits, sector_targets)
-                        mcm_loss = out.get('mcm_loss', torch.tensor(0.0))
-                        miras_loss = out.get('miras_loss', torch.tensor(0.0))
+                        mcm_loss = out.get('mcm_loss', torch.tensor(0.0, device=device))
+                        miras_loss = out.get('miras_loss', torch.tensor(0.0, device=device))
                         loss = loss_fn(logits, batch_y) + sector_loss + 0.1 * mcm_loss + 0.05 * miras_loss
                         loss = loss / gradient_accumulation_steps
                     scaler.scale(loss).backward()
@@ -1697,8 +1697,8 @@ def finetune():
                     sector_logits = out['sector']
                     sector_targets = batch_y % ft_model.n_sectors
                     sector_loss = nn.CrossEntropyLoss()(sector_logits, sector_targets)
-                    mcm_loss = out.get('mcm_loss', torch.tensor(0.0))
-                    miras_loss = out.get('miras_loss', torch.tensor(0.0))
+                    mcm_loss = out.get('mcm_loss', torch.tensor(0.0, device=device))
+                    miras_loss = out.get('miras_loss', torch.tensor(0.0, device=device))
                     loss = loss_fn(logits, batch_y) + sector_loss + 0.1 * mcm_loss + 0.05 * miras_loss
                     loss = loss / gradient_accumulation_steps
                     if True:
