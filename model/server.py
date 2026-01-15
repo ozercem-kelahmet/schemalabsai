@@ -50,7 +50,158 @@ from torch.optim import AdamW
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.utils.class_weight import compute_class_weight
 from sklearn.cluster import KMeans
+def send_training_email(user_email, status, model_name, accuracy=None, error=None, user_name=None):
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+    
+    sender = os.getenv("SMTP_EMAIL")
+    password = os.getenv("SMTP_PASSWORD")
+    
+    if not sender or not password:
+        print("Email credentials not configured")
+        return
+    
+    display_name = user_name if user_name else "there"
+    
+    if status == "completed":
+        subject = "Model Training Complete - SchemaLabs AI"
+        html = f"""
+<!DOCTYPE html>
+<html>
+<body style="margin:0; padding:0; background:#000000; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#000000; padding:40px 20px;">
+<tr><td align="center">
+<table width="560" cellpadding="0" cellspacing="0" style="background:#0a0a0a; border:1px solid #222; border-radius:12px;">
 
+<tr><td style="padding:35px 40px; border-bottom:1px solid #222;">
+<table width="100%" cellpadding="0" cellspacing="0">
+<tr>
+<td><p style="color:#fff; font-size:20px; font-weight:700; margin:0; letter-spacing:-0.5px;">SchemaLabs<span style="color:#666;">AI</span></p></td>
+</tr>
+</table>
+</td></tr>
+
+<tr><td style="padding:40px;">
+<p style="color:#888; font-size:15px; margin:0 0 20px 0;">Hi {display_name},</p>
+<h1 style="color:#fff; margin:0 0 12px 0; font-size:28px; font-weight:600;">Training Complete ✓</h1>
+<p style="color:#666; font-size:15px; margin:0; line-height:1.6;">Your fine-tuned model is ready to use</p>
+</td></tr>
+
+<tr><td style="padding:0 40px 40px 40px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#111; border:1px solid #222; border-radius:8px;">
+<tr>
+<td style="padding:24px; border-right:1px solid #222;" width="50%">
+<p style="color:#555; font-size:11px; text-transform:uppercase; letter-spacing:1.5px; margin:0 0 8px 0;">Model</p>
+<p style="color:#fff; font-size:16px; margin:0; font-weight:500;">{model_name}</p>
+</td>
+<td style="padding:24px;" width="50%">
+<p style="color:#555; font-size:11px; text-transform:uppercase; letter-spacing:1.5px; margin:0 0 8px 0;">Accuracy</p>
+<p style="color:#fff; font-size:22px; margin:0; font-weight:600;">{accuracy:.1f}%</p>
+</td>
+</tr>
+</table>
+</td></tr>
+
+<tr><td style="padding:0 40px 40px 40px;">
+<table width="100%" cellpadding="0" cellspacing="0">
+<tr><td align="center">
+<a href="https://schemalabs.ai" style="display:inline-block; background:#fff; color:#000; padding:14px 40px; border-radius:6px; text-decoration:none; font-weight:600; font-size:14px;">Open Dashboard</a>
+</td></tr>
+</table>
+</td></tr>
+
+<tr><td style="padding:20px 40px; border-top:1px solid #222; background:#050505;">
+<table width="100%" cellpadding="0" cellspacing="0">
+<tr>
+<td><p style="color:#444; font-size:12px; margin:0;">© 2025 SchemaLabs AI</p></td>
+<td align="right"><p style="color:#333; font-size:11px; margin:0;">Intelligent Data Analysis</p></td>
+</tr>
+</table>
+</td></tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>
+"""
+    else:
+        subject = "Training Failed - SchemaLabs AI"
+        html = f"""
+<!DOCTYPE html>
+<html>
+<body style="margin:0; padding:0; background:#000000; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#000000; padding:40px 20px;">
+<tr><td align="center">
+<table width="560" cellpadding="0" cellspacing="0" style="background:#0a0a0a; border:1px solid #222; border-radius:12px;">
+
+<tr><td style="padding:35px 40px; border-bottom:1px solid #222;">
+<table width="100%" cellpadding="0" cellspacing="0">
+<tr>
+<td><p style="color:#fff; font-size:20px; font-weight:700; margin:0; letter-spacing:-0.5px;">SchemaLabs<span style="color:#666;">AI</span></p></td>
+</tr>
+</table>
+</td></tr>
+
+<tr><td style="padding:40px;">
+<p style="color:#888; font-size:15px; margin:0 0 20px 0;">Hi {display_name},</p>
+<h1 style="color:#fff; margin:0 0 12px 0; font-size:28px; font-weight:600;">Training Failed</h1>
+<p style="color:#666; font-size:15px; margin:0; line-height:1.6;">Something went wrong during training</p>
+</td></tr>
+
+<tr><td style="padding:0 40px 40px 40px;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#111; border:1px solid #2a2a2a; border-radius:8px;">
+<tr><td style="padding:20px;">
+<p style="color:#555; font-size:11px; text-transform:uppercase; letter-spacing:1.5px; margin:0 0 10px 0;">Error Details</p>
+<p style="color:#e55; font-size:13px; margin:0; font-family:'SF Mono',Monaco,monospace; word-break:break-all; line-height:1.5;">{error}</p>
+</td></tr>
+</table>
+</td></tr>
+
+<tr><td style="padding:0 40px 15px 40px;">
+<p style="color:#555; font-size:13px; margin:0; line-height:1.6;">Please check your data and configuration, then try again.</p>
+</td></tr>
+
+<tr><td style="padding:0 40px 40px 40px;">
+<table width="100%" cellpadding="0" cellspacing="0">
+<tr><td align="center">
+<a href="https://schemalabs.ai" style="display:inline-block; background:#fff; color:#000; padding:14px 40px; border-radius:6px; text-decoration:none; font-weight:600; font-size:14px;">Try Again</a>
+</td></tr>
+</table>
+</td></tr>
+
+<tr><td style="padding:20px 40px; border-top:1px solid #222; background:#050505;">
+<table width="100%" cellpadding="0" cellspacing="0">
+<tr>
+<td><p style="color:#444; font-size:12px; margin:0;">© 2025 SchemaLabs AI</p></td>
+<td align="right"><p style="color:#333; font-size:11px; margin:0;">Intelligent Data Analysis</p></td>
+</tr>
+</table>
+</td></tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>
+"""
+    
+    msg = MIMEMultipart('alternative')
+    msg['From'] = f"SchemaLabs AI <{sender}>"
+    msg['To'] = user_email
+    msg['Subject'] = subject
+    msg.attach(MIMEText(html, 'html'))
+    
+    try:
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(sender, password)
+        server.send_message(msg)
+        server.quit()
+        print(f"Email sent to {user_email}")
+    except Exception as e:
+        print(f"Email send failed: {e}")
 
 
 def detect_and_fix_type_mismatch(df):
@@ -788,10 +939,10 @@ def _load_sessions():
                                 import psycopg2
                                 conn = psycopg2.connect(os.getenv("DATABASE_URL"))
                                 cur = conn.cursor()
-                                cur.execute("SELECT email FROM users WHERE id = %s", (user_id,))
+                                cur.execute("SELECT email, name FROM users WHERE id = %s", (user_id,))
                                 result = cur.fetchone()
                                 if result:
-                                    send_training_email(result[0], "failed", "model", error=str(e))
+                                    send_training_email(result[0], "failed", "model", error=str(e), user_name=result[1] if len(result) > 1 else None)
                                 cur.close()
                                 conn.close()
                             except Exception as ex:
@@ -1616,20 +1767,20 @@ def finetune():
         
         session["status"] = "completed"
         # Get user email from session/database
-        user_id = session.get("user_id") or request.headers.get("X-User-ID")
-        if user_id:
-            try:
-                import psycopg2
-                conn = psycopg2.connect(os.getenv("DATABASE_URL"))
-                cur = conn.cursor()
-                cur.execute("SELECT email FROM users WHERE id = %s", (user_id,))
-                result = cur.fetchone()
-                if result:
-                    send_training_email(result[0], "completed", "model", best_acc)
-                cur.close()
-                conn.close()
-            except Exception as e:
-                print(f"Email send failed: {e}")
+        # Get user email from DB via query_id
+        try:
+            import psycopg2
+            conn = psycopg2.connect(os.getenv("DATABASE_URL"))
+            cur = conn.cursor()
+            cur.execute("SELECT u.email FROM users u JOIN queries q ON u.id = q.user_id WHERE q.id = %s", (query_id,))
+            result = cur.fetchone()
+            if result:
+                print(f"Sending completion email to {result[0]}")
+                send_training_email(result[0], "completed", "model", best_acc, user_name=result[1] if len(result) > 1 else None)
+            cur.close()
+            conn.close()
+        except Exception as e:
+            print(f"Email send failed: {e}")
         session["accuracy"] = best_acc
         session["epochs"] = current_epoch
         session["epoch"] = current_epoch
@@ -1653,14 +1804,6 @@ def finetune():
         }, ft_path)
         
         
-        # ONNX export for faster CPU inference
-        try:
-            onnx_path = ft_path.replace(".pt", ".onnx")
-            dummy_input = torch.randn(1, input_dim)
-            torch.onnx.export(ft_model, dummy_input, onnx_path, input_names=["input"], output_names=["output"], dynamic_axes={"input": {0: "batch"}, "output": {0: "batch"}})
-            print(f"ONNX model saved: {onnx_path}")
-        except Exception as e:
-            print(f"ONNX export failed: {e}")
         # Temp dosya varsa sil (tek dosya modunda)
         try:
             if 'temp_file' in dir() and temp_file and hasattr(temp_file, 'name'):
@@ -1894,52 +2037,5 @@ if __name__ == '__main__':
     log.setLevel(logging.ERROR)
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
+
 # Email notification
-def send_training_email(user_email, status, model_name, accuracy=None, error=None):
-    import smtplib
-    from email.mime.text import MIMEText
-    from email.mime.multipart import MIMEMultipart
-    
-    sender = os.getenv("SMTP_EMAIL")
-    password = os.getenv("SMTP_PASSWORD")
-    
-    if not sender or not password:
-        print("Email credentials not configured")
-        return
-    
-    subject = f"Training {'Completed' if status == 'completed' else 'Failed'} - {model_name}"
-    
-    if status == "completed":
-        body = f"""
-        Your model training has completed successfully!
-        
-        Model: {model_name}
-        Accuracy: {accuracy}%
-        
-        You can now use this model in SchemaLabs AI.
-        """
-    else:
-        body = f"""
-        Your model training has failed.
-        
-        Model: {model_name}
-        Error: {error}
-        
-        Please check your data and try again.
-        """
-    
-    msg = MIMEMultipart()
-    msg['From'] = sender
-    msg['To'] = user_email
-    msg['Subject'] = subject
-    msg.attach(MIMEText(body, 'plain'))
-    
-    try:
-        server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.starttls()
-        server.login(sender, password)
-        server.send_message(msg)
-        server.quit()
-        print(f"Email sent to {user_email}")
-    except Exception as e:
-        print(f"Email send failed: {e}")
