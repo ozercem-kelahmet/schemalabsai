@@ -30,3 +30,4 @@ model/finetuned_models/*.pt
 # OS
 .DS_Store
 data/
+schemalabsai_linux
