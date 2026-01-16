@@ -690,7 +690,7 @@ def generate_analytics(df, query, detected_types):
             
             # Priority 2: Non-technical columns
             if not target_cat:
-                technical = ['_id', 'id_', '_num', 'num_', '_code', 'code_', '_key', '_uuid', '_index']
+                technical = ['_id', 'id_', '_num', 'num_', '_code', 'code_', '_key', '_uuid', '_index', 'unnamed']
                 for col in matched_cat if matched_cat else cat_cols:
                     if any(t in col.lower() for t in technical):
                         continue

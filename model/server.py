@@ -1613,17 +1613,31 @@ def analyze():
         # === AGGREGATED DATA (dynamic grouping) ===
         group_col = None
         
-        # Priority 1: Columns with "name" (universal - any domain)
+        # Priority 1: Columns with "name" - VALIDATE content!
         for col in cat_cols:
             if 'name' in col.lower() and 'file' not in col.lower() and 'user' not in col.lower():
                 nunique = df[col].nunique()
                 if 2 <= nunique <= 100:
-                    group_col = col
-                    break
+                    # Validate: not "[Word] [Number]" pattern
+                    sample_vals = df[col].dropna().head(20).astype(str).tolist()
+                    if len(sample_vals) > 0:
+                        pattern_count = 0
+                        for v in sample_vals:
+                            v_lower = v.lower().strip()
+                            parts = v_lower.split()
+                            if len(parts) >= 2 and parts[-1].isdigit():
+                                pattern_count += 1
+                        if pattern_count / len(sample_vals) < 0.5:
+                            group_col = col
+                            print(f"SERVER AGGREGATION: Using {col} (validated)")
+                            break
+                        else:
+                            print(f"SERVER: Skipping {col} - contains codes")
+                            continue
         
-        # Priority 2: Exclude technical patterns (id, num, code, uuid, key, index)
+        # Priority 2: Exclude technical patterns AND Unnamed columns
         if not group_col:
-            technical = ['_id', 'id_', '_num', 'num_', '_code', 'code_', '_key', '_uuid', '_index']
+            technical = ['_id', 'id_', '_num', 'num_', '_code', 'code_', '_key', '_uuid', '_index', 'unnamed']
             for col in cat_cols:
                 if any(t in col.lower() for t in technical):
                     continue
