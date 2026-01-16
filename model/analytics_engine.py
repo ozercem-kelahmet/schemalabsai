@@ -688,16 +688,27 @@ def generate_analytics(df, query, detected_types):
                                         print(f"Skipping {col} - contains codes")
                                         continue
             
-            # Priority 2: Non-technical columns
+            # Priority 2: Non-technical columns - VALIDATE!
             if not target_cat:
                 technical = ['_id', 'id_', '_num', 'num_', '_code', 'code_', '_key', '_uuid', '_index', 'unnamed']
                 for col in matched_cat if matched_cat else cat_cols:
                     if any(t in col.lower() for t in technical):
                         continue
-                    if df[col].nunique() >= 2 and df[col].nunique() <= 100:
-                        target_cat = [col]
-                        print(f"Analytics GROUP BY (non-tech): {col}")
-                        break
+                    nunique = df[col].nunique()
+                    if nunique >= 2 and nunique <= 100:
+                        # VALIDATE content
+                        sample_vals = df[col].dropna().head(20).astype(str).tolist()
+                        if len(sample_vals) > 0:
+                            pattern_count = 0
+                            for v in sample_vals:
+                                v_lower = v.lower().strip()
+                                parts = v_lower.split()
+                                if len(parts) >= 2 and parts[-1].isdigit():
+                                    pattern_count += 1
+                            if pattern_count / len(sample_vals) < 0.5:
+                                target_cat = [col]
+                                print(f"Analytics GROUP BY (validated): {col}")
+                                break
             
             # Priority 3: Fallback
             if not target_cat:

@@ -1643,8 +1643,19 @@ def analyze():
                     continue
                 nunique = df[col].nunique()
                 if 2 <= nunique <= 100:
-                    group_col = col
-                    break
+                    # VALIDATE CONTENT
+                    sample_vals = df[col].dropna().head(20).astype(str).tolist()
+                    if len(sample_vals) > 0:
+                        pattern_count = 0
+                        for v in sample_vals:
+                            v_lower = v.lower().strip()
+                            parts = v_lower.split()
+                            if len(parts) >= 2 and parts[-1].isdigit():
+                                pattern_count += 1
+                        if pattern_count / len(sample_vals) < 0.5:
+                            group_col = col
+                            print(f"SERVER: Using {col} (validated)")
+                            break
         
         # Priority 3: Any categorical (last resort)
         if not group_col:
