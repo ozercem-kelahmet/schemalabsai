@@ -1672,9 +1672,6 @@ def analyze():
                     pass
         
         # Add analytics result if exists
-        if analytics_result:
-            analysis += "\n" + analytics_result
-        
         # Truncate if still too long
         if len(analysis) > 8000:
             analysis = analysis[:8000] + "\n...(truncated)"
