@@ -1290,10 +1290,28 @@ def analyze():
         uploads_dir = '../uploads'
         file_path = None
         if os.path.exists(uploads_dir):
+            # Find matching file - try exact match first, then prefix match
+            matching_files = []
             for f in os.listdir(uploads_dir):
-                if len(file_id) >= 8 and f.startswith(file_id[:8]):
-                    file_path = os.path.join(uploads_dir, f)
-                    break
+                # Exact match with full file_id
+                if file_id and (f.startswith(file_id + "_") or f.startswith(file_id + ".")):
+                    full_path = os.path.join(uploads_dir, f)
+                    matching_files.append((full_path, os.path.getmtime(full_path), 'exact'))
+                # Fallback: prefix match with first 8 chars
+                elif len(file_id) >= 8 and f.startswith(file_id[:8]):
+                    full_path = os.path.join(uploads_dir, f)
+                    matching_files.append((full_path, os.path.getmtime(full_path), 'prefix'))
+            
+            if matching_files:
+                # Prefer exact matches, then sort by time
+                exact = [m for m in matching_files if m[2] == 'exact']
+                if exact:
+                    exact.sort(key=lambda x: x[1], reverse=True)
+                    file_path = exact[0][0]
+                else:
+                    matching_files.sort(key=lambda x: x[1], reverse=True)
+                    file_path = matching_files[0][0]
+                print(f"Selected file: {file_path}")
         
         if not file_path:
             return jsonify({'analysis': 'File not found.', 'status': 'error'})

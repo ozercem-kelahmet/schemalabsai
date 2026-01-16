@@ -34,7 +34,15 @@ sleep 2
 /usr/local/go/bin/go build -o schemalabsai
 cd frontend && npm run build
 sudo systemctl start schemalabs-flask
-sleep 2
+echo "Waiting for Flask to start..."
+for i in {1..10}; do
+    if curl -s http://localhost:6000/health > /dev/null 2>&1; then
+        echo "Flask is ready"
+        break
+    fi
+    sleep 1
+done
+sleep 1
 sudo systemctl start schemalabs-frontend
 sleep 2
 sudo systemctl start schemalabs-go
