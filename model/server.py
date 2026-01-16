@@ -539,55 +539,59 @@ def smart_merge_with_prefix(dataframes, file_names=None):
     """
     global HAS_CUDF
     
-    # GPU merge if cuDF available
+    # GPU merge if cuDF available - fully dynamic
     if HAS_CUDF and len(dataframes) > 1:
         try:
             import cudf
             print("Using GPU accelerated merge with cuDF")
             start_time = time.time()
             
-            # Add prefix to avoid duplicate columns
-            prefixed_dfs = []
-            for i, df in enumerate(dataframes):
-                prefix = file_names[i].split('_')[0][:10] if file_names and i < len(file_names) else f"df{i}"
-                # Keep common ID columns without prefix
-                id_cols = ['Player', 'player_id', 'match_id', 'Date', 'Team', 'id', 'ID']
-                new_cols = {}
-                for col in df.columns:
-                    if col in id_cols or col.lower() in [c.lower() for c in id_cols]:
-                        new_cols[col] = col
-                    else:
-                        new_cols[col] = f"{prefix}_{col}"
-                prefixed_dfs.append(df.rename(columns=new_cols))
+            # Find common columns across ALL dataframes (potential merge keys)
+            common_cols = set(dataframes[0].columns)
+            for df in dataframes[1:]:
+                common_cols &= set(df.columns)
             
-            # Convert to cuDF
-            cu_dfs = [cudf.DataFrame.from_pandas(df) for df in prefixed_dfs]
-            
-            # Find best merge key
-            common_cols = set(cu_dfs[0].columns)
-            for cu_df in cu_dfs[1:]:
-                common_cols &= set(cu_df.columns)
-            
+            # Find best merge key dynamically - high cardinality, non-null
             merge_key = None
-            for candidate in ['Player', 'player_id', 'match_id', 'id', 'ID', 'Date']:
-                if candidate in common_cols:
-                    merge_key = candidate
-                    break
+            best_score = 0
+            for col in common_cols:
+                try:
+                    scores = []
+                    for df in dataframes:
+                        nunique = df[col].nunique()
+                        non_null = df[col].notna().sum() / len(df)
+                        scores.append(nunique * non_null)
+                    avg_score = sum(scores) / len(scores)
+                    if avg_score > best_score:
+                        best_score = avg_score
+                        merge_key = col
+                except:
+                    continue
             
             if merge_key:
-                # Merge on common key
+                print(f"GPU merge key: {merge_key}")
+                # Add prefix to non-merge columns
+                prefixed_dfs = []
+                for i, df in enumerate(dataframes):
+                    prefix = file_names[i].split('_')[0][:8] if file_names and i < len(file_names) else f"f{i}"
+                    new_cols = {col: col if col == merge_key else f"{prefix}_{col}" for col in df.columns}
+                    prefixed_dfs.append(df.rename(columns=new_cols))
+                
+                # Convert to cuDF and merge
+                cu_dfs = [cudf.DataFrame.from_pandas(df) for df in prefixed_dfs]
                 merged = cu_dfs[0]
                 for cu_df in cu_dfs[1:]:
-                    # Drop duplicate columns before merge (except merge key)
-                    cols_to_drop = [c for c in cu_df.columns if c in merged.columns and c != merge_key]
-                    if cols_to_drop:
-                        cu_df = cu_df.drop(columns=cols_to_drop)
                     merged = merged.merge(cu_df, on=merge_key, how='outer')
             else:
-                # No common key - concat columns
+                # No common key - simple column concat with prefix
+                print("GPU merge: no common key, using column concat")
+                prefixed_dfs = []
+                for i, df in enumerate(dataframes):
+                    prefix = file_names[i].split('_')[0][:8] if file_names and i < len(file_names) else f"f{i}"
+                    new_cols = {col: f"{prefix}_{col}" for col in df.columns}
+                    prefixed_dfs.append(df.rename(columns=new_cols))
+                cu_dfs = [cudf.DataFrame.from_pandas(df) for df in prefixed_dfs]
                 merged = cudf.concat(cu_dfs, axis=1)
-                # Remove duplicate columns
-                merged = merged.loc[:, ~merged.columns.duplicated()]
             
             result = merged.to_pandas()
             print(f"GPU merge completed in {time.time() - start_time:.2f}s, shape: {result.shape}")
