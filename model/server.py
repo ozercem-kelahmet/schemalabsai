@@ -615,9 +615,12 @@ def smart_merge_datasets(dataframes, file_names=None):
         if len(df) == 0:
             continue
         
+        # Common columns that should NOT get prefix
+        common_cols = ["Player", "Team", "Date", "Name", "player_num", "Rk", "Gcar", "Gtm", "Opp", "Result", "Type", "GS", "MP"]
+        
         new_cols = {}
         for col in df.columns:
-            if col == 'player_num':
+            if col in common_cols or col.lower() in [c.lower() for c in common_cols]:
                 new_cols[col] = col
             else:
                 new_cols[col] = f'{prefix}_{col}'
