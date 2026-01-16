@@ -629,11 +629,41 @@ def generate_analytics(df, query, detected_types):
                         matched_cat.append(col)
                         break
             
-            # Use matched columns or fallback to first ones
+            # Use matched columns or fallback with PRIORITY
             target_num = matched_num[:5] if matched_num else num_cols[:5]
-            target_cat = matched_cat[:2] if matched_cat else [c for c in cat_cols if 'name' in c.lower()][:2]
+            
+            # PRIORITY GROUPING (same as server.py)
+            target_cat = []
+            
+            # Priority 1: Columns with "name" (universal)
+            for col in matched_cat if matched_cat else cat_cols:
+                if 'name' in col.lower() and 'file' not in col.lower() and 'user' not in col.lower():
+                    if df[col].nunique() >= 2 and df[col].nunique() <= 100:
+                        target_cat = [col]
+                        print(f"Analytics GROUP BY (name): {col}")
+                        break
+            
+            # Priority 2: Non-technical columns
             if not target_cat:
-                target_cat = cat_cols[:2]
+                technical = ['_id', 'id_', '_num', 'num_', '_code', 'code_', '_key', '_uuid', '_index']
+                for col in matched_cat if matched_cat else cat_cols:
+                    if any(t in col.lower() for t in technical):
+                        continue
+                    if df[col].nunique() >= 2 and df[col].nunique() <= 100:
+                        target_cat = [col]
+                        print(f"Analytics GROUP BY (non-tech): {col}")
+                        break
+            
+            # Priority 3: Fallback
+            if not target_cat:
+                for col in matched_cat if matched_cat else cat_cols:
+                    if df[col].nunique() >= 2 and df[col].nunique() <= 100:
+                        target_cat = [col]
+                        print(f"Analytics GROUP BY (fallback): {col}")
+                        break
+            
+            if not target_cat:
+                target_cat = cat_cols[:1]
             
             # Generate grouped analysis if we have both
             if target_num and target_cat:
