@@ -635,13 +635,27 @@ def generate_analytics(df, query, detected_types):
             # PRIORITY GROUPING (same as server.py)
             target_cat = []
             
-            # Priority 1: Columns with "name" (universal)
+            # Priority 1: "full name" pattern (most likely entity names)
             for col in matched_cat if matched_cat else cat_cols:
-                if 'name' in col.lower() and 'file' not in col.lower() and 'user' not in col.lower():
+                col_lower = col.lower()
+                if 'full' in col_lower and 'name' in col_lower:
                     if df[col].nunique() >= 2 and df[col].nunique() <= 100:
                         target_cat = [col]
-                        print(f"Analytics GROUP BY (name): {col}")
+                        print(f"Analytics GROUP BY (full name): {col}")
                         break
+            
+            # Priority 2: "name" without technical suffixes
+            if not target_cat:
+                for col in matched_cat if matched_cat else cat_cols:
+                    col_lower = col.lower()
+                    # Has "name" but NOT technical patterns
+                    if 'name' in col_lower and 'file' not in col_lower and 'user' not in col_lower:
+                        # Exclude: type.name, outcome.name, technique.name, etc.
+                        if '.name' not in col_lower and not col_lower.endswith('type.name'):
+                            if df[col].nunique() >= 2 and df[col].nunique() <= 100:
+                                target_cat = [col]
+                                print(f"Analytics GROUP BY (name): {col}")
+                                break
             
             # Priority 2: Non-technical columns
             if not target_cat:
