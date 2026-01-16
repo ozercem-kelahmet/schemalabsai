@@ -72,17 +72,24 @@ def score_column_match(col_name: str, query_words: list) -> float:
     
     return total_score / len(query_words)
 
-def is_id_column(col_name: str) -> bool:
-    """Check if column is an ID column"""
+def is_id_column(col_name: str, series=None, n_samples=None) -> bool:
+    """Check if column is an ID column - fully dynamic"""
     col_lower = col_name.lower()
-    # Ends with _id or is exactly 'id', 'index', etc.
-    if col_lower.endswith('_id') or col_lower.endswith('id'):
-        return True
-    if col_lower in ['id', 'index', 'idx', 'key', 'code', 'uuid', 'guid']:
-        return True
-    if col_lower.startswith('id_') or col_lower.startswith('index_'):
-        return True
-    return False
+    # Name-based detection
+    is_id_name = any(x in col_lower for x in ['_id', 'id_', '.id', 'index', '_key', 'key_'])
+    is_id_name = is_id_name or col_lower.endswith('id') or col_lower == 'id'
+    is_id_name = is_id_name or col_lower in ['idx', 'code', 'uuid', 'guid']
+    is_id_name = is_id_name or col_lower.startswith('id_') or col_lower.startswith('index_')
+    
+    # Value-based detection - high cardinality = likely ID
+    if not is_id_name and series is not None and n_samples is not None and n_samples > 0:
+        try:
+            nunique = series.nunique()
+            if nunique > n_samples * 0.8:  # Very high cardinality
+                is_id_name = True
+        except:
+            pass
+    return is_id_name
 
 def is_name_column(col_name: str) -> bool:
     """Check if column is a name/label column (good for groupby)"""

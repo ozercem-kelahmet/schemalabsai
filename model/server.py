@@ -1,6 +1,6 @@
 import os
 from analytics_engine import detect_analytics_type, generate_analytics
-from smart_analyzer import smart_analyze
+# smart_analyzer removed - LLM handles column matching directly
 os.environ["FLASK_SKIP_DOTENV"] = "1"
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -1547,21 +1547,15 @@ def analyze():
                 import traceback
                 traceback.print_exc()
         
-        # === ADVANCED ANALYTICS ENGINE ===
+        # === ANALYTICS ENGINE (178 special types: SWOT, Risk, Pareto, etc.) ===
         detected_types = detect_analytics_type(query)
-        if detected_types:
-            print(f"Detected analytics types: {[d['type'] for d in detected_types]}")
+        if detected_types and detected_types[0]['score'] >= 5:  # Only high-confidence matches
+            print(f"Analytics type detected: {detected_types[0]['type']} (score: {detected_types[0]['score']})")
             advanced_analysis = generate_analytics(df, query, detected_types)
             if advanced_analysis and len(advanced_analysis) > 100:
                 return jsonify({'analysis': ft_prediction_text + advanced_analysis, 'status': 'success'})
         
-        # === SMART UNIVERSAL ANALYSIS ===
-        try:
-            smart_result = smart_analyze(df, query)
-            if smart_result and len(smart_result) > 200:
-                return jsonify({'analysis': ft_prediction_text + smart_result, 'status': 'success'})
-        except Exception as e:
-            print(f"Smart analyze error: {e}")
+        # Normal queries: Model prediction + data context -> LLM handles the rest
         
         # === COMPACT ANALYSIS (max 8K chars) ===
         # Filter out ID columns from numeric columns
@@ -1585,193 +1579,47 @@ def analyze():
             print(f"Detected ID columns (excluded from stats): {id_cols[:5]}")
         
         cat_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
-        query_words = [w.lower() for w in query.replace('?', '').replace(',', '').split() if len(w) > 2]
-        # Add common synonyms
-        expanded_words = list(query_words)
-        for w in query_words:
-            if w == 'distance': expanded_words.append('distance_covered')
-            if w == 'speed': expanded_words.append('speed_avg')
-            if w == 'player': expanded_words.extend(['player_in_possession_name', 'player_name'])
-        query_words = expanded_words
         
-        # Smart match: find columns matching query words
-        matched_num = []
-        matched_cat = []
-        
-        # Score columns by how well they match query
-        for col in num_cols:
-            col_lower = col.lower()
-            score = 0
-            for w in query_words:
-                if w in col_lower:
-                    score += len(w)  # Longer match = higher score
-                    if col_lower == w or col_lower.endswith('_' + w) or col_lower.startswith(w + '_'):
-                        score += 10  # Exact/partial match bonus
-            if score > 0:
-                matched_num.append((col, score))
-        
-        for col in cat_cols:
-            col_lower = col.lower()
-            score = 0
-            for w in query_words:
-                if w in col_lower:
-                    score += len(w)
-                    if 'name' in col_lower:
-                        score += 20  # Name columns are better for grouping
-            if score > 0:
-                matched_cat.append((col, score))
-        
-        # Sort by score descending
-        matched_num = [c[0] for c in sorted(matched_num, key=lambda x: -x[1])]
-        matched_cat = [c[0] for c in sorted(matched_cat, key=lambda x: -x[1])]
-        
-        analysis = ft_prediction_text + f"DATASET: {len(df)} rows, {len(df.columns)} columns\n"
+        # === PROFESSIONAL DATA CONTEXT (LLM handles column matching) ===
+        analysis = ft_prediction_text
+        analysis += f"\n=== DATA OVERVIEW ===\n"
+        analysis += f"Total: {len(df)} rows, {len(df.columns)} columns\n"
         analysis += f"Numeric: {len(num_cols)} | Categorical: {len(cat_cols)}\n\n"
         
-        # === ADVANCED ANALYTICS DETECTION ===
-        is_swot = any(w in query for w in ['swot', 'strength', 'weakness', 'opportunity', 'threat'])
-        is_benchmark = any(w in query for w in ['benchmark', 'compare to average', 'vs average', 'team average'])
-        is_risk = any(w in query for w in ['risk', 'injury', 'danger', 'concern'])
-        is_trend = any(w in query for w in ['trend', 'over time', 'progression'])
-        is_anomaly = any(w in query for w in ['outlier', 'anomaly', 'unusual', 'exceptional'])
-        
-        # Extract player name from query if mentioned
-        player_name = None
-        for cat_col in cat_cols:
-            if 'name' in cat_col.lower() or 'player' in cat_col.lower():
-                for val in df[cat_col].dropna().unique():
-                    val_str = str(val).lower()
-                    if len(val_str) > 3 and val_str in query:
-                        player_name = val
-                        break
-                if not player_name:
-                    # Try partial match
-                    query_parts = query.split()
-                    for val in df[cat_col].dropna().unique():
-                        val_parts = str(val).lower().split()
-                        if any(vp in query for vp in val_parts if len(vp) > 3):
-                            player_name = val
-                            break
-        
-        if player_name and (is_swot or is_benchmark):
-            analysis += f"=== PLAYER PROFILE: {player_name} ===\n"
-            for cat_col in cat_cols:
-                if 'name' in cat_col.lower() or 'player' in cat_col.lower():
-                    player_data = df[df[cat_col] == player_name]
-                    if len(player_data) > 0:
-                        analysis += f"Records: {len(player_data)}\n"
-                        for num_col in num_cols[:20]:
-                            try:
-                                player_val = player_data[num_col].mean()
-                                team_avg = df[num_col].mean()
-                                team_std = df[num_col].std()
-                                diff_pct = ((player_val - team_avg) / team_avg * 100) if team_avg != 0 else 0
-                                status = "ABOVE" if player_val > team_avg else "BELOW"
-                                analysis += f"  {num_col}: {player_val:.2f} (Team avg: {team_avg:.2f}, {status} by {abs(diff_pct):.1f}%)\n"
-                            except:
-                                pass
-                        break
-            analysis += "\n"
-        
-        if is_risk and matched_num:
-            analysis += "=== RISK INDICATORS ===\n"
-            for num_col in matched_num[:5]:
-                try:
-                    mean_val = df[num_col].mean()
-                    std_val = df[num_col].std()
-                    high_threshold = mean_val + 2 * std_val
-                    high_risk = df[df[num_col] > high_threshold]
-                    analysis += f"{num_col}: Mean={mean_val:.2f}, Std={std_val:.2f}, High risk threshold={high_threshold:.2f}, Count above={len(high_risk)}\n"
-                except:
-                    pass
-            analysis += "\n"
-        
-        if is_anomaly and matched_num:
-            analysis += "=== OUTLIERS (>2 std dev) ===\n"
-            for num_col in matched_num[:3]:
-                try:
-                    mean_val = df[num_col].mean()
-                    std_val = df[num_col].std()
-                    outliers = df[(df[num_col] > mean_val + 2*std_val) | (df[num_col] < mean_val - 2*std_val)]
-                    if len(outliers) > 0 and matched_cat:
-                        for cat_col in matched_cat[:1]:
-                            analysis += f"{num_col} outliers by {cat_col}:\n"
-                            for _, row in outliers.head(10).iterrows():
-                                analysis += f"  {row[cat_col]}: {row[num_col]:.2f}\n"
-                except:
-                    pass
-            analysis += "\n"
-        
-        # AUTO-CALCULATE if matching columns found
-        if matched_num and matched_cat:
-            analysis += "=== QUERY RESULT ===\n"
-            for num_col in matched_num[:2]:
-                for cat_col in matched_cat[:1]:
-                    try:
-                        if any(w in query for w in ['average', 'avg', 'mean']):
-                            result = df.groupby(cat_col)[num_col].mean().sort_values(ascending=False)
-                            agg = "AVG"
-                        elif any(w in query for w in ['count', 'how many']):
-                            result = df.groupby(cat_col)[num_col].count().sort_values(ascending=False)
-                            agg = "COUNT"
-                        elif any(w in query for w in ['max', 'highest']):
-                            result = df.groupby(cat_col)[num_col].max().sort_values(ascending=False)
-                            agg = "MAX"
-                        elif any(w in query for w in ['min', 'lowest']):
-                            result = df.groupby(cat_col)[num_col].min().sort_values(ascending=True)
-                            agg = "MIN"
-                        else:
-                            result = df.groupby(cat_col)[num_col].sum().sort_values(ascending=False)
-                            agg = "TOTAL"
-                        analysis += f"\n{agg} {num_col} BY {cat_col}:\n"
-                        for idx, val in list(result.items())[:25]:
-                            analysis += f"  {idx}: {val:.2f}\n"
-                    except:
-                        pass
-            analysis += "\n"
-        elif matched_num:
-            analysis += "=== MATCHED METRICS ===\n"
-            for col in matched_num[:3]:
-                analysis += f"{col}: sum={df[col].sum():.2f}, avg={df[col].mean():.2f}\n"
-            analysis += "\n"
-
-        
-        # ALL numeric column names listed, stats for first 30
-        analysis += "NUMERIC COLUMNS:\n"
-        for i, col in enumerate(num_cols):
+        # List all numeric columns with basic stats (ID columns already filtered)
+        analysis += "=== NUMERIC COLUMNS ===\n"
+        for col in num_cols[:50]:  # First 50
             try:
-                if i < 30:
-                    analysis += f"  {col}: avg={df[col].mean():.2f}, min={df[col].min():.2f}, max={df[col].max():.2f}\n"
-                else:
-                    # Just list the name
-                    pass
+                analysis += f"{col}: avg={df[col].mean():.2f}, min={df[col].min():.2f}, max={df[col].max():.2f}\n"
             except:
                 pass
-        # List ALL remaining column names compactly
-        if len(num_cols) > 30:
-            remaining = num_cols[30:]
-            analysis += f"  MORE NUMERIC ({len(remaining)}): {', '.join(remaining)}\n"
+        if len(num_cols) > 50:
+            analysis += f"... and {len(num_cols) - 50} more numeric columns\n"
         
-        # Categorical columns with values (max 10)
-        analysis += "\nCATEGORICAL COLUMNS:\n"
-        for col in cat_cols[:10]:
-            nunique = df[col].nunique()
-            if nunique <= 15:
-                vals = df[col].dropna().unique().tolist()
-                analysis += f"  {col}: {vals}\n"
-            else:
-                top = df[col].value_counts().head(5).index.tolist()
-                analysis += f"  {col} ({nunique} unique): {top}...\n"
-        if len(cat_cols) > 10:
-            analysis += f"  ... +{len(cat_cols)-10} more categorical columns\n"
+        # List categorical columns with unique counts
+        analysis += "\n=== CATEGORICAL COLUMNS ===\n"
+        for col in cat_cols[:20]:  # First 20
+            try:
+                nunique = df[col].nunique()
+                sample_vals = df[col].dropna().unique()[:5]
+                analysis += f"{col}: {nunique} unique values (e.g., {', '.join(str(v) for v in sample_vals)})\n"
+            except:
+                pass
+        if len(cat_cols) > 20:
+            analysis += f"... and {len(cat_cols) - 20} more categorical columns\n"
         
-        # Sample rows (5 rows, max 8 columns)
-        show_cols = (cat_cols[:2] + num_cols[:6])[:8]
-        analysis += f"\nSAMPLE DATA ({len(show_cols)} cols):\n"
-        analysis += " | ".join([c[:15] for c in show_cols]) + "\n"
-        for _, row in df.head(5).iterrows():
-            vals = [str(row[c])[:12] for c in show_cols]
-            analysis += " | ".join(vals) + "\n"
+        analysis += "\n"
+        
+        # Sample data for LLM context (5 rows)
+        analysis += "=== SAMPLE DATA (first 5 rows) ===\n"
+        sample_cols = cat_cols[:3] + num_cols[:5]  # Mix of categorical and numeric
+        if sample_cols:
+            try:
+                sample_df = df[sample_cols].head(5)
+                analysis += sample_df.to_string(index=False) + "\n"
+            except:
+                pass
+
         
         # Truncate if still too long
         if len(analysis) > 8000:

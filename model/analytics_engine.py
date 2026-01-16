@@ -536,11 +536,30 @@ def generate_injury_risk(df, num_cols, cat_cols):
     return analysis + "\n"
 
 
+def is_id_column(col_name, series, n_samples):
+    """Check if column is an ID/index - should be excluded from stats"""
+    col_lower = col_name.lower()
+    # Name-based detection
+    is_id_name = any(x in col_lower for x in ['_id', 'id_', '.id', 'index', '_key', 'key_'])
+    is_id_name = is_id_name or col_lower.endswith('id') or col_lower == 'id'
+    # Value-based detection - high cardinality, sequential
+    if not is_id_name and len(series) > 0:
+        nunique = series.nunique()
+        if nunique > n_samples * 0.8:  # Very high cardinality
+            is_id_name = True
+    return is_id_name
+
 def generate_analytics(df, query, detected_types):
     """Main analytics generator"""
     analysis = ""
-    num_cols = df.select_dtypes(include=['number']).columns.tolist()
+    # Filter out ID columns from numeric columns
+    all_num_cols = df.select_dtypes(include=['number']).columns.tolist()
+    num_cols = [col for col in all_num_cols if not is_id_column(col, df[col], len(df))]
     cat_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+    
+    if len(all_num_cols) != len(num_cols):
+        excluded = set(all_num_cols) - set(num_cols)
+        print(f"Analytics: Excluded ID columns from stats: {list(excluded)[:5]}")
     
     for detection in detected_types[:2]:
         atype = detection['type']
