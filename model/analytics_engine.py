@@ -661,7 +661,7 @@ def generate_analytics(df, query, detected_types):
                             print(f"Skipping {col} - contains codes")
                             continue  # Try next column
             
-            # Priority 2: "name" without technical suffixes
+            # Priority 2: "name" without technical suffixes - VALIDATE content!
             if not target_cat:
                 for col in matched_cat if matched_cat else cat_cols:
                     col_lower = col.lower()
@@ -669,10 +669,24 @@ def generate_analytics(df, query, detected_types):
                     if 'name' in col_lower and 'file' not in col_lower and 'user' not in col_lower:
                         # Exclude: type.name, outcome.name, technique.name, etc.
                         if '.name' not in col_lower and not col_lower.endswith('type.name'):
-                            if df[col].nunique() >= 2 and df[col].nunique() <= 100:
-                                target_cat = [col]
-                                print(f"Analytics GROUP BY (name): {col}")
-                                break
+                            nunique = df[col].nunique()
+                            if nunique >= 2 and nunique <= 100:
+                                # VALIDATE content
+                                sample_vals = df[col].dropna().head(20).astype(str).tolist()
+                                if len(sample_vals) > 0:
+                                    pattern_count = 0
+                                    for v in sample_vals:
+                                        v_lower = v.lower().strip()
+                                        parts = v_lower.split()
+                                        if len(parts) >= 2 and parts[-1].isdigit():
+                                            pattern_count += 1
+                                    if pattern_count / len(sample_vals) < 0.5:
+                                        target_cat = [col]
+                                        print(f"Analytics GROUP BY (name validated): {col}")
+                                        break
+                                    else:
+                                        print(f"Skipping {col} - contains codes")
+                                        continue
             
             # Priority 2: Non-technical columns
             if not target_cat:
