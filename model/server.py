@@ -1316,7 +1316,31 @@ def analyze():
         
         uploads_dir = '../uploads'
         file_path = None
-        if os.path.exists(uploads_dir):
+        
+        # If model_id exists, try to get source_file_id (merged file) from checkpoint
+        if model_id and model_id != "none":
+            try:
+                ft_path = f'../checkpoints/{model_id}.pt'
+                if os.path.exists(ft_path):
+                    ft_ckpt = torch.load(ft_path, map_location='cpu', weights_only=False)
+                    source_file_id = ft_ckpt.get('source_file_id', '')
+                    if source_file_id and '_merged_' in source_file_id:
+                        # Use merged file directly
+                        merged_path = os.path.join(uploads_dir, source_file_id)
+                        if os.path.exists(merged_path):
+                            file_path = merged_path
+                            print(f"Using merged file from model: {file_path}")
+                        else:
+                            # Try to find by prefix
+                            for f in os.listdir(uploads_dir):
+                                if source_file_id[:8] in f and '_merged_' in f:
+                                    file_path = os.path.join(uploads_dir, f)
+                                    print(f"Found merged file: {file_path}")
+                                    break
+            except Exception as e:
+                print(f"Could not load model for source_file_id: {e}")
+        
+        if not file_path and os.path.exists(uploads_dir):
             # Find matching file - try exact match first, then prefix match
             matching_files = []
             for f in os.listdir(uploads_dir):
@@ -2086,6 +2110,9 @@ def finetune():
         from datetime import datetime; timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         ft_path = f'../checkpoints/model_finetuned_{timestamp}.pt'
         
+        # Get merged filename for source_file_id
+        merged_filename_for_ckpt = merged_filename if 'merged_filename' in dir() and merged_filename else None
+        
         torch.save({
             'model_state_dict': ft_model.state_dict(),
             'model_type': 'v1_finetune',
@@ -2097,7 +2124,8 @@ def finetune():
             'n_sectors': ft_model.n_sectors,
             'target_col': target_col,
             'accuracy': best_acc,
-            'config': ft_config
+            'config': ft_config,
+            'source_file_id': merged_filename_for_ckpt
         }, ft_path)
         
         
