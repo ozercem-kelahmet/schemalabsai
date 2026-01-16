@@ -345,13 +345,20 @@ queryIDField.Write([]byte(req.QueryID))
 		loss = l
 	}
 
+
+// Get merged file ID from Flask
+mergedFileID := ""
+if mfid, ok := flaskResp["merged_file_id"].(string); ok && mfid != "" {
+mergedFileID = mfid
+fmt.Printf("DEBUG: Got merged_file_id from Flask: %s\n", mergedFileID)
+}
 	// Save to database
 	if DB != nil && userID != "" {
 		ftModel := FineTunedModel{
 			ID:           uuid.New().String(),
 			Name:         modelName,
 			Version:      1,
-			SourceFileID: strings.Join(req.FileIDs, ","),
+SourceFileID: func() string { if mergedFileID != "" { return mergedFileID }; return strings.Join(req.FileIDs, ",") }(),
 			SourceName:   fmt.Sprintf("%d files merged", len(req.FileIDs)),
 			ModelPath:    modelPath,
 			Accuracy:     accuracy,
