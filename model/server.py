@@ -1524,7 +1524,26 @@ def analyze():
             print(f"Smart analyze error: {e}")
         
         # === COMPACT ANALYSIS (max 8K chars) ===
-        num_cols = df.select_dtypes(include=['number']).columns.tolist()
+        # Filter out ID columns from numeric columns
+        all_num_cols = df.select_dtypes(include=['number']).columns.tolist()
+        num_cols = []
+        id_cols = []
+        for col in all_num_cols:
+            col_lower = col.lower()
+            # Check if column name suggests ID
+            is_id_name = any(x in col_lower for x in ['_id', 'id_', '.id', 'index', '_key', 'key_'])
+            is_id_name = is_id_name or col_lower.endswith('id') or col_lower == 'id'
+            # Check if values suggest ID pattern (high cardinality, sequential)
+            is_id_values = is_id_pattern(df[col], len(df)) if len(df) > 0 else False
+            
+            if is_id_name or is_id_values:
+                id_cols.append(col)
+            else:
+                num_cols.append(col)
+        
+        if id_cols:
+            print(f"Detected ID columns (excluded from stats): {id_cols[:5]}")
+        
         cat_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
         query_words = [w.lower() for w in query.replace('?', '').replace(',', '').split() if len(w) > 2]
         # Add common synonyms
