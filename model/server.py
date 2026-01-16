@@ -1610,16 +1610,43 @@ def analyze():
         
         analysis += "\n"
         
-        # Sample data for LLM context (5 rows)
-        analysis += "=== SAMPLE DATA (first 5 rows) ===\n"
-        sample_cols = cat_cols[:3] + num_cols[:5]  # Mix of categorical and numeric
-        if sample_cols:
+        # === AGGREGATED DATA (dynamic grouping) ===
+        group_col = None
+        for col in cat_cols:
+            nunique = df[col].nunique()
+            if 2 <= nunique <= 100:  # Flexible cardinality
+                group_col = col
+                break
+        
+        if group_col and num_cols:
+            analysis += f"=== AGGREGATED BY {group_col} ===\n"
             try:
-                sample_df = df[sample_cols].head(5)
-                analysis += sample_df.to_string(index=False) + "\n"
-            except:
-                pass
-
+                # Use all numeric columns (ID columns already filtered)
+                agg_dict = {col: ['sum', 'mean'] for col in num_cols[:15]}
+                agg_df = df.groupby(group_col).agg(agg_dict).round(2)
+                
+                # Flatten MultiIndex columns
+                agg_df.columns = ['_'.join(col).strip() for col in agg_df.columns]
+                agg_df = agg_df.reset_index()
+                
+                # Sort by first _sum column
+                sum_cols = [c for c in agg_df.columns if '_sum' in c]
+                if sum_cols:
+                    agg_df = agg_df.sort_values(sum_cols[0], ascending=False)
+                
+                analysis += agg_df.head(50).to_string(index=False) + "\n"
+            except Exception as e:
+                print(f"Aggregation error: {e}")
+                analysis += "=== SAMPLE DATA ===\n"
+                analysis += df[cat_cols[:2] + num_cols[:6]].head(10).to_string(index=False) + "\n"
+        else:
+            analysis += "=== SAMPLE DATA ===\n"
+            sample_cols = cat_cols[:3] + num_cols[:5]
+            if sample_cols:
+                try:
+                    analysis += df[sample_cols].head(10).to_string(index=False) + "\n"
+                except:
+                    pass
         
         # Truncate if still too long
         if len(analysis) > 8000:

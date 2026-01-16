@@ -100,7 +100,7 @@ ANALYTICS_TYPES = {
     
     # COMPARATIVE (81-100)
     'ranking': ['ranking', 'rank', 'top', 'bottom', 'best', 'worst', 'highest', 'lowest'],
-    # 'comparison': ['compare', 'versus', 'vs', 'difference between'],  # Disabled - LLM handles this
+    'comparison': ['compare', 'versus', 'vs', 'difference between'],
     'peer': ['peer', 'similar', 'comparable', 'like'],
     'competitive': ['competitive', 'competitor', 'market position'],
     'yoy': ['year over year', 'yoy', 'annual change'],
