@@ -644,14 +644,22 @@ def generate_analytics(df, query, detected_types):
                         # Validate: Check if values look like real names, not codes
                         sample_vals = df[col].dropna().head(20).astype(str).tolist()
                         # Count how many look like "Player X", "Team X", codes
-                        pattern_count = sum(1 for v in sample_vals if any(p in v.lower() for p in ['player ', 'team ', 'user ']) and any(c.isdigit() for c in v))
+                        # Check if values look like codes: "[Word] [Number]" pattern
+                        pattern_count = 0
+                        for v in sample_vals:
+                            v_lower = v.lower().strip()
+                            # Pattern: word + space + number (e.g., "Player 7", "Team 3", "Cliente 45")
+                            parts = v_lower.split()
+                            if len(parts) >= 2 and parts[-1].isdigit():
+                                pattern_count += 1
                         # If >50% are codes, skip this column
                         if pattern_count / len(sample_vals) < 0.5:
                             target_cat = [col]
                             print(f"Analytics GROUP BY (full name validated): {col}")
                             break
                         else:
-                            print(f"Skipping {col} - contains codes like 'Player 7'")
+                            print(f"Skipping {col} - contains codes")
+                            continue  # Try next column
             
             # Priority 2: "name" without technical suffixes
             if not target_cat:
