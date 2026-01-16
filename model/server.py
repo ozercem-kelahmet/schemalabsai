@@ -511,7 +511,31 @@ def is_id_pattern(series, n_samples):
 
 def smart_merge_datasets(dataframes, file_names=None):
     """
-    GPU accelerated merge with cuDF fallback to pandas
+    Smart merge: row concat if same columns, else column merge with prefix
+    """
+    if len(dataframes) == 0:
+        return None
+    if len(dataframes) == 1:
+        return dataframes[0]
+    
+    # Check if all dataframes have same columns
+    first_cols = set(dataframes[0].columns)
+    same_structure = all(set(df.columns) == first_cols for df in dataframes)
+    
+    if same_structure:
+        # Same columns - simple row concat
+        merged = pd.concat(dataframes, axis=0, ignore_index=True)
+        merged = merged.fillna(0)
+        print(f"Row concat (same structure): {len(dataframes)} files -> {merged.shape}")
+        return merged
+    
+    # Different columns - use prefix merge
+    print(f"Column merge (different structure): {len(dataframes)} files")
+    return smart_merge_with_prefix(dataframes, file_names)
+
+def smart_merge_with_prefix(dataframes, file_names=None):
+    """
+    Column merge with prefix for different structure files
     """
     global HAS_CUDF
     
