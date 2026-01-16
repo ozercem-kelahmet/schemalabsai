@@ -635,14 +635,23 @@ def generate_analytics(df, query, detected_types):
             # PRIORITY GROUPING (same as server.py)
             target_cat = []
             
-            # Priority 1: "full name" pattern (most likely entity names)
+            # Priority 1: "full name" pattern - but validate content!
             for col in matched_cat if matched_cat else cat_cols:
                 col_lower = col.lower()
                 if 'full' in col_lower and 'name' in col_lower:
-                    if df[col].nunique() >= 2 and df[col].nunique() <= 100:
-                        target_cat = [col]
-                        print(f"Analytics GROUP BY (full name): {col}")
-                        break
+                    nunique = df[col].nunique()
+                    if nunique >= 2 and nunique <= 100:
+                        # Validate: Check if values look like real names, not codes
+                        sample_vals = df[col].dropna().head(20).astype(str).tolist()
+                        # Count how many look like "Player X", "Team X", codes
+                        pattern_count = sum(1 for v in sample_vals if any(p in v.lower() for p in ['player ', 'team ', 'user ']) and any(c.isdigit() for c in v))
+                        # If >50% are codes, skip this column
+                        if pattern_count / len(sample_vals) < 0.5:
+                            target_cat = [col]
+                            print(f"Analytics GROUP BY (full name validated): {col}")
+                            break
+                        else:
+                            print(f"Skipping {col} - contains codes like 'Player 7'")
             
             # Priority 2: "name" without technical suffixes
             if not target_cat:
