@@ -1549,7 +1549,7 @@ def analyze():
         
         # === ANALYTICS ENGINE (178 special types: SWOT, Risk, Pareto, etc.) ===
         detected_types = detect_analytics_type(query)
-        if detected_types and detected_types[0]['score'] >= 5:  # Only high-confidence matches
+        if detected_types and detected_types[0]['score'] >= 10:  # High confidence only
             print(f"Analytics type detected: {detected_types[0]['type']} (score: {detected_types[0]['score']})")
             advanced_analysis = generate_analytics(df, query, detected_types)
             if advanced_analysis and len(advanced_analysis) > 100:
@@ -1613,26 +1613,26 @@ def analyze():
         # === AGGREGATED DATA (dynamic grouping) ===
         group_col = None
         
-        # Priority 1: Columns with "name" in them (most likely entity names)
+        # Priority 1: Columns with "name" (universal - any domain)
         for col in cat_cols:
-            if 'name' in col.lower() and 'file' not in col.lower():
+            if 'name' in col.lower() and 'file' not in col.lower() and 'user' not in col.lower():
                 nunique = df[col].nunique()
                 if 2 <= nunique <= 100:
                     group_col = col
                     break
         
-        # Priority 2: Common entity columns
+        # Priority 2: Exclude technical patterns (id, num, code, uuid, key, index)
         if not group_col:
-            priority_keywords = ['player', 'team', 'customer', 'product', 'employee', 'user', 'company', 'region', 'category']
+            technical = ['_id', 'id_', '_num', 'num_', '_code', 'code_', '_key', '_uuid', '_index']
             for col in cat_cols:
-                col_lower = col.lower()
-                if any(kw in col_lower for kw in priority_keywords) and 'id' not in col_lower and 'num' not in col_lower:
-                    nunique = df[col].nunique()
-                    if 2 <= nunique <= 100:
-                        group_col = col
-                        break
+                if any(t in col.lower() for t in technical):
+                    continue
+                nunique = df[col].nunique()
+                if 2 <= nunique <= 100:
+                    group_col = col
+                    break
         
-        # Priority 3: Any suitable categorical
+        # Priority 3: Any categorical (last resort)
         if not group_col:
             for col in cat_cols:
                 nunique = df[col].nunique()
