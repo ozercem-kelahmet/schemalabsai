@@ -546,20 +546,51 @@ def smart_merge_with_prefix(dataframes, file_names=None):
             print("Using GPU accelerated merge with cuDF")
             start_time = time.time()
             
-            # Convert to cuDF
-            cu_dfs = [cudf.DataFrame.from_pandas(df) for df in dataframes]
+            # Add prefix to avoid duplicate columns
+            prefixed_dfs = []
+            for i, df in enumerate(dataframes):
+                prefix = file_names[i].split('_')[0][:10] if file_names and i < len(file_names) else f"df{i}"
+                # Keep common ID columns without prefix
+                id_cols = ['Player', 'player_id', 'match_id', 'Date', 'Team', 'id', 'ID']
+                new_cols = {}
+                for col in df.columns:
+                    if col in id_cols or col.lower() in [c.lower() for c in id_cols]:
+                        new_cols[col] = col
+                    else:
+                        new_cols[col] = f"{prefix}_{col}"
+                prefixed_dfs.append(df.rename(columns=new_cols))
             
-            # Simple merge on common columns
-            merged = cu_dfs[0]
-            for i, cu_df in enumerate(cu_dfs[1:], 1):
-                common_cols = list(set(merged.columns) & set(cu_df.columns))
-                if common_cols:
-                    merged = merged.merge(cu_df, on=common_cols[0], how="outer")
-                else:
-                    merged = cudf.concat([merged, cu_df], axis=1)
+            # Convert to cuDF
+            cu_dfs = [cudf.DataFrame.from_pandas(df) for df in prefixed_dfs]
+            
+            # Find best merge key
+            common_cols = set(cu_dfs[0].columns)
+            for cu_df in cu_dfs[1:]:
+                common_cols &= set(cu_df.columns)
+            
+            merge_key = None
+            for candidate in ['Player', 'player_id', 'match_id', 'id', 'ID', 'Date']:
+                if candidate in common_cols:
+                    merge_key = candidate
+                    break
+            
+            if merge_key:
+                # Merge on common key
+                merged = cu_dfs[0]
+                for cu_df in cu_dfs[1:]:
+                    # Drop duplicate columns before merge (except merge key)
+                    cols_to_drop = [c for c in cu_df.columns if c in merged.columns and c != merge_key]
+                    if cols_to_drop:
+                        cu_df = cu_df.drop(columns=cols_to_drop)
+                    merged = merged.merge(cu_df, on=merge_key, how='outer')
+            else:
+                # No common key - concat columns
+                merged = cudf.concat(cu_dfs, axis=1)
+                # Remove duplicate columns
+                merged = merged.loc[:, ~merged.columns.duplicated()]
             
             result = merged.to_pandas()
-            print(f"GPU merge completed in {time.time() - start_time:.2f}s")
+            print(f"GPU merge completed in {time.time() - start_time:.2f}s, shape: {result.shape}")
             return result.fillna(0)
         except Exception as e:
             print(f"GPU merge failed, falling back to CPU: {e}")
@@ -799,12 +830,17 @@ def get_dynamic_config(n_samples, n_features, n_classes):
     
     patience = max(5, min(25, epochs // 4))
     
-    if batch_size <= 8:
-        lr = 0.0005
-    elif batch_size <= 32:
+    # Higher LR for small datasets, lower for large
+    if n_samples < 500:
+        lr = 0.005  # Small dataset - faster learning
+    elif n_samples < 2000:
+        lr = 0.003  # Medium dataset
+    elif batch_size <= 8:
         lr = 0.001
-    else:
+    elif batch_size <= 32:
         lr = 0.002
+    else:
+        lr = 0.003
     
     n_heads = max(4, d_model // 64)
     
