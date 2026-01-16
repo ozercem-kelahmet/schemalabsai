@@ -1612,13 +1612,36 @@ def analyze():
         
         # === AGGREGATED DATA (dynamic grouping) ===
         group_col = None
+        
+        # Priority 1: Columns with "name" in them (most likely entity names)
         for col in cat_cols:
-            nunique = df[col].nunique()
-            if 2 <= nunique <= 100:  # Flexible cardinality
-                group_col = col
-                break
+            if 'name' in col.lower() and 'file' not in col.lower():
+                nunique = df[col].nunique()
+                if 2 <= nunique <= 100:
+                    group_col = col
+                    break
+        
+        # Priority 2: Common entity columns
+        if not group_col:
+            priority_keywords = ['player', 'team', 'customer', 'product', 'employee', 'user', 'company', 'region', 'category']
+            for col in cat_cols:
+                col_lower = col.lower()
+                if any(kw in col_lower for kw in priority_keywords) and 'id' not in col_lower and 'num' not in col_lower:
+                    nunique = df[col].nunique()
+                    if 2 <= nunique <= 100:
+                        group_col = col
+                        break
+        
+        # Priority 3: Any suitable categorical
+        if not group_col:
+            for col in cat_cols:
+                nunique = df[col].nunique()
+                if 2 <= nunique <= 100:
+                    group_col = col
+                    break
         
         if group_col and num_cols:
+            print(f"AGGREGATION: Using group_col={group_col}, nunique={df[group_col].nunique()}")
             analysis += f"=== AGGREGATED BY {group_col} ===\n"
             try:
                 # Use all numeric columns (ID columns already filtered)
