@@ -1701,7 +1701,7 @@ def analyze():
                 analysis += agg_start
                 try:
                     # Use all numeric columns (ID columns already filtered)
-                    agg_dict = {col: ['sum', 'mean'] for col in num_cols[:15]}
+                    agg_dict = {col: ['sum', 'mean'] for col in num_cols}  # ALL numeric columns
                     agg_df = df.groupby(group_col).agg(agg_dict).round(2)
                     
                     # Flatten MultiIndex columns
