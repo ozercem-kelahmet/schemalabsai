@@ -1891,6 +1891,16 @@ def analyze():
         if len(cat_cols) > 20:
             analysis += f"... and {len(cat_cols) - 20} more categorical columns\n"
         
+        
+        # === MULTI-DIMENSIONAL INSIGHTS ===
+        try:
+            stats = get_cached_statistics(file_path, df)
+            insights = generate_multidim_insights(df, num_cols, stats)
+            if insights:
+                analysis += insights + "\n"
+        except Exception as e:
+            print(f"Insights generation error: {e}")
+        
         analysis += "\n"
         # === AGGREGATED DATA (dynamic grouping) ===
         group_col = None
