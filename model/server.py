@@ -1345,6 +1345,32 @@ def predict_batch():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+
+# ============ DATA CACHE ============
+data_cache = {}
+DATA_CACHE_MAX_SIZE = 100
+
+def get_cached_dataframe(file_path):
+    global data_cache
+    if file_path in data_cache:
+        print(f"Data cache HIT: {os.path.basename(file_path)}")
+        return data_cache[file_path].copy()
+    print(f"Data cache MISS: {os.path.basename(file_path)}")
+    df = get_cached_dataframe(file_path)
+    if len(data_cache) >= DATA_CACHE_MAX_SIZE:
+        del data_cache[list(data_cache.keys())[0]]
+    data_cache[file_path] = df
+    return df.copy()
+
+aggregate_cache = {}
+def get_cached_aggregate(file_path, group_col):
+    key = f"{file_path}_{group_col}"
+    return aggregate_cache.get(key)
+
+def set_cached_aggregate(file_path, group_col, result):
+    key = f"{file_path}_{group_col}"
+    aggregate_cache[key] = result
+
 @app.route('/analyze', methods=['POST'])
 def analyze():
     """Smart analyzer - query-aware, token-efficient"""
@@ -1414,7 +1440,7 @@ def analyze():
         elif file_path.endswith(".parquet"):
             df = pd.read_parquet(file_path)
         else:
-            df = pd.read_csv(file_path, low_memory=False)
+            df = get_cached_dataframe(file_path)
         
         # === FINE-TUNED MODEL PREDICTION ===
         ft_prediction_text = ""
@@ -1549,7 +1575,7 @@ def analyze():
         
         # === ANALYTICS ENGINE (178 special types: SWOT, Risk, Pareto, etc.) ===
         detected_types = detect_analytics_type(query)
-        if detected_types and detected_types[0]['score'] >= 10:  # High confidence only
+        if detected_types and detected_types[0]['score'] >= 8:  # High confidence only
             print(f"Analytics type detected: {detected_types[0]['type']} (score: {detected_types[0]['score']})")
             advanced_analysis = generate_analytics(df, query, detected_types)
             if advanced_analysis and len(advanced_analysis) > 100:
@@ -1609,6 +1635,10 @@ def analyze():
             analysis += f"... and {len(cat_cols) - 20} more categorical columns\n"
         
         analysis += "\n"
+                    
+                    # Cache this aggregate result
+                    set_cached_aggregate(file_path, group_col, analysis[analysis.rfind("=== AGGREGATED"):])
+                
         
         # === AGGREGATED DATA (dynamic grouping) ===
         group_col = None
@@ -1666,12 +1696,18 @@ def analyze():
                     break
         
         if group_col and num_cols:
-            print(f"AGGREGATION: Using group_col={group_col}, nunique={df[group_col].nunique()}")
-            analysis += f"=== AGGREGATED BY {group_col} ===\n"
-            try:
-                # Use all numeric columns (ID columns already filtered)
-                agg_dict = {col: ['sum', 'mean'] for col in num_cols[:15]}
-                agg_df = df.groupby(group_col).agg(agg_dict).round(2)
+            # Check aggregate cache first
+            cached_agg = get_cached_aggregate(file_path, group_col)
+            if cached_agg is not None:
+                analysis += cached_agg
+            else:
+                print(f"AGGREGATION: Using group_col={group_col}, nunique={df[group_col].nunique()}")
+                agg_start = f"=== AGGREGATED BY {group_col} ===\n"
+                analysis += agg_start
+                try:
+                    # Use all numeric columns (ID columns already filtered)
+                    agg_dict = {col: ['sum', 'mean'] for col in num_cols[:15]}
+                    agg_df = df.groupby(group_col).agg(agg_dict).round(2)
                 
                 # Flatten MultiIndex columns
                 agg_df.columns = ['_'.join(col).strip() for col in agg_df.columns]

@@ -145,7 +145,7 @@ FILE: ` + filename + `
 === CRITICAL RULES ===
 1. Use ONLY exact numbers from the data above - NEVER invent or estimate
 2. For ratio/efficiency questions, CALCULATE the ratio from available metrics (e.g., sprints÷distance). Only say "not available" if the base metrics themselves are missing
-3. Show Top 5-10 results unless user asks for "all" or "full list"
+3. Show ALL entities if total count is reasonable (<20). For larger datasets, show top 10-15 unless user specifies otherwise
 4. Use **bold** for key values and entity names
 5. No emojis
 6. For general queries like "show analysis" or "analyze the data": provide COMPREHENSIVE analysis with multiple insights, patterns, and key findings from the data
@@ -158,8 +158,8 @@ Examples: "show analysis", "what can you tell me", "explain the data", "give me 
 → Provide COMPREHENSIVE multi-dimensional analysis:
   
   **1. PERFORMANCE OVERVIEW**
-  - Top 5 performers with key metrics
-  - Bottom 5 performers (identify improvement areas)
+  - Top performers with key metrics (show ALL if <20 entities, otherwise top 10)
+  - Bottom performers if relevant (identify improvement areas)
   - Average/median benchmarks
   
   **2. STATISTICAL INSIGHTS**
