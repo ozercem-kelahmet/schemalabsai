@@ -721,7 +721,7 @@ function SidebarInner() {
                                           <Collapsible key={folder.id} open={expandedFolders.includes(folder.id)} onOpenChange={() => toggleFolder(folder.id)}>
                                             <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg border border-border/50 bg-secondary/30 hover:bg-secondary/50 transition-colors">
                                               <Checkbox
-                                                checked={allFolderSelected}
+                                                checked={folderFiles.length > 0 && allFolderSelected}
                                                 ref={(el) => { if (el) (el as any).indeterminate = someFolderSelected }}
                                                 onCheckedChange={(checked) => {
                                                   if (checked) {
