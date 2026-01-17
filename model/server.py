@@ -1719,6 +1719,10 @@ def analyze():
                     agg_df = agg_df.sort_values(sum_cols[0], ascending=False)
                 
                 analysis += agg_df.head(50).to_string(index=False) + "\n"
+                
+                # Cache aggregate result
+                agg_text = analysis[analysis.rfind("=== AGGREGATED"):]
+                set_cached_aggregate(file_path, group_col, agg_text)
             except Exception as e:
                 print(f"Aggregation error: {e}")
                 analysis += "=== SAMPLE DATA ===\n"
