@@ -1635,11 +1635,6 @@ def analyze():
             analysis += f"... and {len(cat_cols) - 20} more categorical columns\n"
         
         analysis += "\n"
-                    
-                    # Cache this aggregate result
-                    set_cached_aggregate(file_path, group_col, analysis[analysis.rfind("=== AGGREGATED"):])
-                
-        
         # === AGGREGATED DATA (dynamic grouping) ===
         group_col = None
         
@@ -1708,25 +1703,25 @@ def analyze():
                     # Use all numeric columns (ID columns already filtered)
                     agg_dict = {col: ['sum', 'mean'] for col in num_cols[:15]}
                     agg_df = df.groupby(group_col).agg(agg_dict).round(2)
+                    
+                    # Flatten MultiIndex columns
+                    agg_df.columns = ['_'.join(col).strip() for col in agg_df.columns]
+                    agg_df = agg_df.reset_index()
                 
-                # Flatten MultiIndex columns
-                agg_df.columns = ['_'.join(col).strip() for col in agg_df.columns]
-                agg_df = agg_df.reset_index()
-                
-                # Sort by first _sum column
-                sum_cols = [c for c in agg_df.columns if '_sum' in c]
-                if sum_cols:
-                    agg_df = agg_df.sort_values(sum_cols[0], ascending=False)
-                
-                analysis += agg_df.head(50).to_string(index=False) + "\n"
-                
-                # Cache aggregate result
-                agg_text = analysis[analysis.rfind("=== AGGREGATED"):]
-                set_cached_aggregate(file_path, group_col, agg_text)
-            except Exception as e:
-                print(f"Aggregation error: {e}")
-                analysis += "=== SAMPLE DATA ===\n"
-                analysis += df[cat_cols[:2] + num_cols[:6]].head(10).to_string(index=False) + "\n"
+                    # Sort by first _sum column
+                    sum_cols = [c for c in agg_df.columns if '_sum' in c]
+                    if sum_cols:
+                        agg_df = agg_df.sort_values(sum_cols[0], ascending=False)
+                    
+                    analysis += agg_df.head(50).to_string(index=False) + "\n"
+                    
+                    # Cache aggregate result
+                    agg_text = analysis[analysis.rfind("=== AGGREGATED"):]
+                    set_cached_aggregate(file_path, group_col, agg_text)
+                except Exception as e:
+                    print(f"Aggregation error: {e}")
+                    analysis += "=== SAMPLE DATA ===\n"
+                    analysis += df[cat_cols[:2] + num_cols[:6]].head(10).to_string(index=False) + "\n"
         else:
             analysis += "=== SAMPLE DATA ===\n"
             sample_cols = cat_cols[:3] + num_cols[:5]
