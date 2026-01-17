@@ -1197,12 +1197,7 @@ export default function PlaygroundQueryPage() {
   const pollRef = useRef<NodeJS.Timeout | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [showScrollButton, setShowScrollButton] = useState(false)
-
-  const scrollToBottom = () => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-    }
-  }
+  const [scrollViewport, setScrollViewport] = useState<HTMLElement | null>(null)
   
   const [panes, setPanes] = useState<ComparePane[]>([
     { id: "1", model: "gpt-4o", messages: [], isLoading: false },
@@ -1386,20 +1381,22 @@ export default function PlaygroundQueryPage() {
   }, [messages, isLoading])
 
   useEffect(() => {
-    const container = scrollRef.current?.querySelector("[data-radix-scroll-area-viewport]")
-    console.log("Container found:", container)
-    if (!container) return
+    const viewport = document.querySelector("[data-radix-scroll-area-viewport]") as HTMLElement
+    setScrollViewport(viewport)
+  }, [])
+
+  useEffect(() => {
+    if (!scrollViewport) return
 
     const handleScroll = () => {
-      console.log("Scroll detected:", { scrollTop, scrollHeight, clientHeight, isNotAtBottom })
-      const { scrollTop, scrollHeight, clientHeight } = container
+      const { scrollTop, scrollHeight, clientHeight } = scrollViewport
       const isNotAtBottom = scrollHeight - scrollTop - clientHeight > 100
       setShowScrollButton(isNotAtBottom)
     }
 
-    container.addEventListener("scroll", handleScroll)
-    return () => container.removeEventListener("scroll", handleScroll)
-  }, [])
+    scrollViewport.addEventListener("scroll", handleScroll)
+    return () => scrollViewport.removeEventListener("scroll", handleScroll)
+  }, [scrollViewport])
 
   const primaryFile = selectedFiles[0]
   const fileNames = selectedFiles.map(f => f.filename)
