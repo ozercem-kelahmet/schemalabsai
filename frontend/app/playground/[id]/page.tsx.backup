@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Columns, Plus, Copy, Clock, Zap, X, Check, Loader2, ArrowDown } from "lucide-react"
+import { Columns, Plus, Copy, Clock, Zap, X, Check, Loader2 } from "lucide-react"
 import AiChat from "@/components/ai-chat"
 import { useAuth } from "@/lib/auth"
 import { useQueryStore } from "@/lib/query-store"
@@ -1196,13 +1196,6 @@ export default function PlaygroundQueryPage() {
   const [trainingProgress, setTrainingProgress] = useState({ epoch: 0, epochs: 10, batch: 0, batches: 100, accuracy: 0, loss: 0, eta: "", status: "" })
   const pollRef = useRef<NodeJS.Timeout | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const [showScrollButton, setShowScrollButton] = useState(false)
-
-  const scrollToBottom = () => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-    }
-  }
   
   const [panes, setPanes] = useState<ComparePane[]>([
     { id: "1", model: "gpt-4o", messages: [], isLoading: false },
@@ -1384,20 +1377,6 @@ export default function PlaygroundQueryPage() {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
   }, [messages, isLoading])
-
-  useEffect(() => {
-    const container = scrollRef.current
-    if (!container) return
-
-    const handleScroll = () => {
-      const { scrollTop, scrollHeight, clientHeight } = container
-      const isNearBottom = scrollHeight - scrollTop - clientHeight > 100
-      setShowScrollButton(isNearBottom)
-    }
-
-    container.addEventListener("scroll", handleScroll)
-    return () => container.removeEventListener("scroll", handleScroll)
-  }, [])
 
   const primaryFile = selectedFiles[0]
   const fileNames = selectedFiles.map(f => f.filename)
@@ -1742,14 +1721,6 @@ export default function PlaygroundQueryPage() {
                     <TypingIndicator />
                   ) : null}
                 </div>
-                {showScrollButton && (
-                  <button
-                    onClick={scrollToBottom}
-                    className="absolute bottom-24 right-6 p-3 bg-background border border-border rounded-full shadow-lg hover:bg-accent transition-all z-10"
-                  >
-                    <ArrowDown className="w-5 h-5" />
-                  </button>
-                )}
               </ScrollArea>
 
               <div className="p-3 sm:p-6 pb-4 sm:pb-8">
