@@ -552,7 +552,7 @@ result, err := callFineTunedModel(req.FineTunedModel, actualFileID, req.Message)
 
 	// Check if Claude model - use non-streaming
 	if isClaudeModel(req.Model) {
-		req.Stream = false
+		req.Stream = true  // Enable streaming for Claude
 		if req.Stream {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set("Cache-Control", "no-cache")
