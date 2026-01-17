@@ -149,7 +149,8 @@ FILE: ` + filename + `
 4. Use **bold** for key values and entity names
 5. No emojis
 6. For general queries like "show analysis" or "analyze the data": provide COMPREHENSIVE analysis with multiple insights, patterns, and key findings from the data
-7. Match response format to query type (see below)
+7. **CHARTS ARE MANDATORY** - Use [CHART:type]...[/CHART] syntax (bar, hbar, scatter, line, pie). NO text descriptions like "Bar Chart:". ONLY use the exact bracket syntax.
+8. Match response format to query type (see below)
 
 === QUERY TYPE DETECTION ===
 
@@ -235,14 +236,89 @@ values2: 50, 45, 35, 30, 20
 title: MetricX vs MetricY
 [/CHART]
 
-CHART TYPES:
-- hbar: Horizontal bar - rankings, comparisons
+CHART TYPES (50+ options):
+
+**COMPARISONS & RANKINGS (10 types)**
+- hbar: Horizontal bar - rankings, comparisons (most common)
 - bar: Vertical bar - categories
-- scatter: Two variables correlation (MUST have values2)
-- grouped: Side-by-side bars (MUST have values2)
+- grouped: Side-by-side comparison bars (MUST have values2)
+- stacked: Stacked bars showing composition
+- waterfall: Sequential positive/negative changes
+- bullet: Target vs actual performance
+- lollipop: Bar + point combination
+- diverging: Positive/negative from center
+- marimekko: Width + height show two dimensions
+- parallel: Compare multiple entities across metrics
+
+**DISTRIBUTIONS & PROPORTIONS (8 types)**
 - pie: Proportions (max 8 slices)
-- line: Trends over sequence
-- radar: Multi-attribute profile
+- donut: Pie with center hole
+- treemap: Hierarchical rectangles by size
+- sunburst: Multi-level hierarchical pie
+- funnel: Conversion/stages (widest to narrowest)
+- pyramid: Population/hierarchy pyramid
+- waffle: Grid of squares showing proportions
+- pictogram: Icon-based percentages
+
+**CORRELATIONS & RELATIONSHIPS (10 types)**
+- scatter: Two variables correlation (MUST have values2)
+- bubble: 3 variables (x, y, size) 
+- heatmap: Matrix of values with color intensity
+- density: Scatter with concentration areas
+- hexbin: Hexagonal binning for dense scatter
+- contour: Topographic-style correlation map
+- network: Nodes and connections
+- chord: Circular relationship diagram
+- sankey: Flow between categories
+- alluvial: Multi-stage flow diagram
+
+**TRENDS & TIME SERIES (12 types)**
+- line: Trends over time/sequence
+- area: Line with filled area below
+- stream: Stacked area showing flow
+- ridge: Multiple overlapping distributions
+- sparkline: Tiny inline trend indicator
+- candlestick: OHLC financial data
+- step: Step-wise changes
+- slope: Start to end comparison lines
+- horizon: Layered area for space efficiency
+- calendar: Time-based heatmap grid
+- gantt: Timeline with duration bars
+- timeline: Sequential events on axis
+
+**MULTI-DIMENSIONAL (10+ types)**
+- radar: Multi-attribute profile (spider/star)
+- polar: Radial bar chart
+- radial: Circular stacked bars
+- boxplot: Distribution with quartiles
+- violin: Distribution density shape
+- beeswarm: Individual points avoiding overlap
+- strip: Random jitter scatter
+- raincloud: Half-violin + box + scatter
+- ridgeline: Overlapping density curves
+- parallel_coordinates: Multi-variable lines
+- andrews: Curve-based multi-dimensional
+- radviz: Radial coordinate visualization
+
+**CHART SELECTION GUIDE BY QUERY:**
+
+1. **Rankings/Top/Best** → hbar, lollipop, bullet
+2. **Compare 2-3 entities** → grouped, diverging, radar
+3. **Compare many entities** → hbar, bar, treemap
+4. **Correlation/Relationship** → scatter, bubble, heatmap
+5. **Proportions/Percentages** → pie, donut, treemap, waffle
+6. **Trends over time** → line, area, stream, sparkline
+7. **Distribution** → violin, boxplot, ridge, density
+8. **Positive/Negative** → waterfall, diverging, bullet
+9. **Multi-metrics per entity** → radar, parallel_coordinates
+10. **Flow/Process** → sankey, funnel, alluvial
+11. **Hierarchical data** → sunburst, treemap
+12. **Dense scatter** → hexbin, density, contour
+13. **Individual values** → beeswarm, strip, raincloud
+14. **Sequential changes** → waterfall, step, slope
+15. **Target vs actual** → bullet, grouped
+
+**ALWAYS USE MULTIPLE CHARTS** for comprehensive analysis (2-5 charts per response).
 
 FORBIDDEN - NEVER DO THESE:
 - NO markdown images: ![text](url)
