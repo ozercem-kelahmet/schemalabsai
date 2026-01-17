@@ -1363,6 +1363,42 @@ def get_cached_dataframe(file_path):
     return df.copy()
 
 aggregate_cache = {}
+
+# Pre-computed statistics cache
+stats_cache = {}
+
+def get_cached_statistics(file_path, df):
+    """Get or compute basic statistics for all numeric columns"""
+    if file_path in stats_cache:
+        print(f"Statistics cache HIT: {os.path.basename(file_path)}")
+        return stats_cache[file_path]
+    
+    print(f"Statistics cache MISS: Computing statistics...")
+    num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    
+    stats = {
+        'min': {},
+        'max': {},
+        'mean': {},
+        'std': {},
+        'median': {},
+        'count': {}
+    }
+    
+    for col in num_cols:
+        try:
+            stats['min'][col] = float(df[col].min())
+            stats['max'][col] = float(df[col].max())
+            stats['mean'][col] = float(df[col].mean())
+            stats['std'][col] = float(df[col].std())
+            stats['median'][col] = float(df[col].median())
+            stats['count'][col] = int(df[col].count())
+        except:
+            pass
+    
+    stats_cache[file_path] = stats
+    return stats
+
 def get_cached_aggregate(file_path, group_col):
     key = f"{file_path}_{group_col}"
     return aggregate_cache.get(key)
@@ -1370,6 +1406,70 @@ def get_cached_aggregate(file_path, group_col):
 def set_cached_aggregate(file_path, group_col, result):
     key = f"{file_path}_{group_col}"
     aggregate_cache[key] = result
+
+
+def generate_multidim_insights(df, num_cols, stats):
+    """Generate correlation, outliers, and trend insights"""
+    insights = ""
+    
+    # 1. CORRELATION MATRIX
+    if len(num_cols) >= 2:
+        try:
+            corr_matrix = df[num_cols[:50]].corr()
+            high_corr = []
+            for i in range(len(corr_matrix.columns)):
+                for j in range(i+1, len(corr_matrix.columns)):
+                    corr_val = corr_matrix.iloc[i, j]
+                    if abs(corr_val) > 0.7:
+                        high_corr.append((corr_matrix.columns[i], corr_matrix.columns[j], corr_val))
+            
+            if high_corr:
+                insights += "\n=== STRONG CORRELATIONS (|r| > 0.7) ===\n"
+                high_corr = sorted(high_corr, key=lambda x: abs(x[2]), reverse=True)[:10]
+                for col1, col2, corr in high_corr:
+                    insights += f"{col1} ↔ {col2}: {corr:.3f}\n"
+        except:
+            pass
+    
+    # 2. OUTLIERS DETECTION
+    outlier_cols = []
+    for col in num_cols[:30]:
+        try:
+            Q1 = df[col].quantile(0.25)
+            Q3 = df[col].quantile(0.75)
+            IQR = Q3 - Q1
+            outliers = df[(df[col] < Q1 - 1.5*IQR) | (df[col] > Q3 + 1.5*IQR)]
+            if len(outliers) > 0:
+                outlier_cols.append((col, len(outliers), len(df)))
+        except:
+            pass
+    
+    if outlier_cols:
+        insights += "\n=== OUTLIERS DETECTED ===\n"
+        outlier_cols = sorted(outlier_cols, key=lambda x: -x[1])[:10]
+        for col, count, total in outlier_cols:
+            pct = (count/total)*100
+            insights += f"{col}: {count} outliers ({pct:.1f}%)\n"
+    
+    # 3. VARIANCE ANALYSIS
+    variance_data = []
+    for col in num_cols[:50]:
+        try:
+            if col in stats['std'] and col in stats['mean']:
+                cv = stats['std'][col] / stats['mean'][col] if stats['mean'][col] != 0 else 0
+                if cv > 0.5:
+                    variance_data.append((col, cv))
+        except:
+            pass
+    
+    if variance_data:
+        insights += "\n=== HIGH VARIABILITY METRICS (CV > 0.5) ===\n"
+        variance_data = sorted(variance_data, key=lambda x: -x[1])[:10]
+        for col, cv in variance_data:
+            insights += f"{col}: CV={cv:.2f}\n"
+    
+    return insights
+
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
@@ -1573,13 +1673,27 @@ def analyze():
                 import traceback
                 traceback.print_exc()
         
-        # === ANALYTICS ENGINE (178 special types: SWOT, Risk, Pareto, etc.) ===
-        detected_types = detect_analytics_type(query)
-        if detected_types and detected_types[0]['score'] >= 8:  # High confidence only
-            print(f"Analytics type detected: {detected_types[0]['type']} (score: {detected_types[0]['score']})")
-            advanced_analysis = generate_analytics(df, query, detected_types)
-            if advanced_analysis and len(advanced_analysis) > 100:
-                return jsonify({'analysis': ft_prediction_text + advanced_analysis, 'status': 'success'})
+        # === ANALYTICS ENGINE (Parallel with model prediction) ===
+        analytics_result = {'detected': None, 'analysis': None}
+        
+        def run_analytics():
+            detected_types = detect_analytics_type(query)
+            if detected_types and detected_types[0]['score'] >= 8:
+                print(f"Analytics type detected: {detected_types[0]['type']} (score: {detected_types[0]['score']})")
+                advanced_analysis = generate_analytics(df, query, detected_types)
+                analytics_result['detected'] = detected_types
+                analytics_result['analysis'] = advanced_analysis
+        
+        # Start analytics in parallel (already computed ft_prediction above)
+        analytics_thread = threading.Thread(target=run_analytics)
+        analytics_thread.start()
+        
+        # Wait for analytics to complete
+        analytics_thread.join(timeout=10)  # Max 10 sec
+        
+        # If analytics found something, use it
+        if analytics_result['analysis'] and len(analytics_result['analysis']) > 100:
+            return jsonify({'analysis': ft_prediction_text + analytics_result['analysis'], 'status': 'success'})
         
         # Normal queries: Model prediction + data context -> LLM handles the rest
         
