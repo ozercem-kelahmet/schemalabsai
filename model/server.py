@@ -1363,7 +1363,7 @@ def get_cached_dataframe(file_path):
         print(f"Data cache HIT: {os.path.basename(file_path)}")
         return data_cache[file_path].copy()
     print(f"Data cache MISS: {os.path.basename(file_path)}")
-    df = get_cached_dataframe(file_path)
+    df = pd.read_csv(file_path)
     if len(data_cache) >= DATA_CACHE_MAX_SIZE:
         del data_cache[list(data_cache.keys())[0]]
     data_cache[file_path] = df
