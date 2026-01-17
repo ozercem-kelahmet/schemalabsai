@@ -166,7 +166,8 @@ FILE: ` + filename + `
 6. For general queries like "show analysis" or "analyze the data": provide COMPREHENSIVE analysis with multiple insights, patterns, and key findings from the data
 7. **CHARTS ARE MANDATORY** - Use [CHART:type]...[/CHART] syntax (bar, hbar, scatter, line, pie). NO text descriptions like "Bar Chart:". ONLY use the exact bracket syntax.
 8. **TABLES MUST BE RICH** - NEVER use 2-column tables. MINIMUM 5 columns, MAXIMUM 10 columns. Always add: Rank, derived metrics (ratios, %), comparisons (vs avg), and context.
-9. **NO BOLD FORMATTING** - Never use **Bold Text** for section titles or numbered headers like "**1. Maximum Speed**" or "**Sprint Performance by Position**". These waste space. Go directly to tables, insights, and charts without any bold headers or titles.
+9. **CLEAN COLUMN NAMES** - Remove dataset prefixes and technical codes from column names in tables. Transform "e37c459c_frame_start_sum" → "Frame Start Sum", "player_id_xyz" → "Player ID". Make column names human-readable.
+10. **NO BOLD FORMATTING** - Never use **Bold Text** for section titles or numbered headers like "**1. Maximum Speed**" or "**Sprint Performance by Position**". These waste space. Go directly to tables, insights, and charts without any bold headers or titles.
 10. Match response format to query type (see below)
 
 === QUERY TYPE DETECTION ===

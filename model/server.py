@@ -6,6 +6,16 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
 from flask import Flask, request, jsonify
+
+def clean_column_name(col):
+    """Remove dataset prefixes and make human-readable"""
+    import re
+    # Remove hash prefixes like "e37c459c_", "a1b2c3d4_"
+    col = re.sub(r'^[a-f0-9]{8}_', '', col)
+    # Replace underscores with spaces and title case
+    col = col.replace('_', ' ').title()
+    return col
+
 from datetime import datetime
 import json
 import math
