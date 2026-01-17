@@ -668,7 +668,7 @@ function SidebarInner() {
                         </TabsTrigger>
                         <TabsTrigger value="models">
                           <FileSpreadsheet className="h-4 w-4 mr-2" />
-                          Select Model
+                          Models
                         </TabsTrigger>
                       </TabsList>
                       
@@ -955,11 +955,26 @@ function SidebarInner() {
                             </div>
                           </div>
                         )}
+
+                        <div className="space-y-2 mt-4">
+                          <Label>LLM Model</Label>
+                          <Select value={selectedModel} onValueChange={setSelectedModel}>
+                            <SelectTrigger className="bg-secondary">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="gpt-4o">GPT-4o</SelectItem>
+                              <SelectItem value="gpt-4o-mini">GPT-4o Mini</SelectItem>
+                              <SelectItem value="claude-sonnet-4-5">Claude Sonnet 4.5</SelectItem>
+                              <SelectItem value="claude-opus-4">Claude Opus 4</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
                       </TabsContent>
                       
                       <TabsContent value="models" className="space-y-4 mt-4">
                         <div className="space-y-2">
-                          <Label>Select a trained model</Label>
+                          <Label>Available Models</Label>
                           <div className="border rounded-lg max-h-[200px] overflow-y-auto overflow-x-hidden bg-secondary/30">
                             {fineTunedModels.length === 0 ? (
                               <p className="text-sm text-muted-foreground p-4 text-center">No models available. Fine-tune a model first.</p>
@@ -976,7 +991,7 @@ function SidebarInner() {
                                             selectedExistingModel === model.id ? "bg-primary/10 border border-primary/30" : "hover:bg-secondary/50 border border-transparent"
                                           )}
                                         >
-                                          <Checkbox checked={selectedExistingModel === model.id} onCheckedChange={() => setSelectedExistingModel(model.id)} />
+                                          <div className="w-4 h-4" />
                                           <Sparkles className="h-4 w-4 text-purple-500" />
                                           <div className="flex flex-col flex-1 min-w-0 overflow-hidden max-w-[250px]">
                                             {editingModelId === model.id ? (
@@ -1018,18 +1033,6 @@ function SidebarInner() {
                         </div>
                         
                         <div className="space-y-2">
-                          <Label>Default Model</Label>
-                          <Select value={selectedModel} onValueChange={setSelectedModel}>
-                            <SelectTrigger className="bg-secondary">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="gpt-4o">GPT-4o</SelectItem>
-                              <SelectItem value="gpt-4o-mini">GPT-4o Mini</SelectItem>
-                              <SelectItem value="claude-sonnet-4-5">Claude Sonnet 4.5</SelectItem>
-                              <SelectItem value="claude-opus-4">Claude Opus 4</SelectItem>
-                            </SelectContent>
-                          </Select>
                         </div>
                         
                         <DialogFooter><Button onClick={handleCreateProject} disabled={!newProjectName.trim() || !selectedExistingModel}>
