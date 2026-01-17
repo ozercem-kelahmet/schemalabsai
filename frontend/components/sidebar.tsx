@@ -629,7 +629,7 @@ function SidebarInner() {
             <SidebarGroupLabel>Playground</SidebarGroupLabel>
             <SidebarMenu>
               <SidebarMenuItem>
-                <Dialog open={isNewChatOpen} onOpenChange={(open) => { if (open) { resetDialog(); setIsNewChatOpen(true); } }}>
+                <Dialog open={isNewChatOpen} onOpenChange={(open) => { if (open) { resetDialog(); setExpandedFolders(["files", ...folders.map(f => f.id)]); setIsNewChatOpen(true); } else { setIsNewChatOpen(false); } }}>
                   <DialogTrigger asChild>
                     <SidebarMenuButton tooltip="New">
                       <Plus />

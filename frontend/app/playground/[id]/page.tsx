@@ -1386,13 +1386,15 @@ export default function PlaygroundQueryPage() {
   }, [messages, isLoading])
 
   useEffect(() => {
-    const container = scrollRef.current
+    const container = scrollRef.current?.querySelector("[data-radix-scroll-area-viewport]")
+    console.log("Container found:", container)
     if (!container) return
 
     const handleScroll = () => {
+      console.log("Scroll detected:", { scrollTop, scrollHeight, clientHeight, isNotAtBottom })
       const { scrollTop, scrollHeight, clientHeight } = container
-      const isNearBottom = scrollHeight - scrollTop - clientHeight > 100
-      setShowScrollButton(isNearBottom)
+      const isNotAtBottom = scrollHeight - scrollTop - clientHeight > 100
+      setShowScrollButton(isNotAtBottom)
     }
 
     container.addEventListener("scroll", handleScroll)
