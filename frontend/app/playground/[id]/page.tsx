@@ -1728,7 +1728,7 @@ export default function PlaygroundQueryPage() {
           </div>
 
           {!compareMode ? (
-            <div className="flex-1 flex flex-col">
+            <div className="flex-1 flex flex-col relative">
               <ScrollArea className="flex-1 p-3 sm:p-6" ref={scrollRef}>
                 <div className="max-w-3xl mx-auto space-y-4 sm:space-y-6 pt-12 sm:pt-14 pb-4">
                   {(trainingProgress.status !== "failed" && !currentQuery?.trainingFailed) && messages.map((message, i) => (
@@ -1742,15 +1742,16 @@ export default function PlaygroundQueryPage() {
                     <TypingIndicator />
                   ) : null}
                 </div>
-                {showScrollButton && (
-                  <button
-                    onClick={scrollToBottom}
-                    className="absolute bottom-24 right-6 p-3 bg-background border border-border rounded-full shadow-lg hover:bg-accent transition-all z-10"
-                  >
-                    <ArrowDown className="w-5 h-5" />
-                  </button>
-                )}
               </ScrollArea>
+
+              {showScrollButton && (
+                <button
+                  onClick={scrollToBottom}
+                  className="absolute bottom-24 right-6 p-3 bg-background border border-border rounded-full shadow-lg hover:bg-accent transition-all z-10"
+                >
+                  <ArrowDown className="w-5 h-5" />
+                </button>
+              )}
 
               <div className="p-3 sm:p-6 pb-4 sm:pb-8">
                 <AiChat
