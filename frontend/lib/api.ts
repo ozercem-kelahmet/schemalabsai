@@ -49,9 +49,10 @@ export const api = {
     return res.json()
   },
 
-  upload: async (file: File) => {
+  upload: async (file: File, folderId?: string) => {
     const formData = new FormData()
     formData.append('file', file)
+    if (folderId) formData.append('folder_id', folderId)
     const res = await fetch(API_BASE + '/upload', {
       method: 'POST',
       credentials: 'include',

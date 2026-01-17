@@ -64,6 +64,7 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userID := r.Header.Get("X-User-ID")
+	folderID := r.FormValue("folder_id")
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
@@ -219,6 +220,7 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 			Columns:      columns,
 			RowCount:     rowCount,
 			UniqueValues: uniqueValues,
+			FolderID:     func() *string { if folderID != "" { return &folderID }; return nil }(),
 		}
 		DB.Create(&uploadedFile)
 	}

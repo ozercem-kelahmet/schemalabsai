@@ -1197,7 +1197,6 @@ export default function PlaygroundQueryPage() {
   const pollRef = useRef<NodeJS.Timeout | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [showScrollButton, setShowScrollButton] = useState(false)
-  const [scrollViewport, setScrollViewport] = useState<HTMLElement | null>(null)
   
   const [panes, setPanes] = useState<ComparePane[]>([
     { id: "1", model: "gpt-4o", messages: [], isLoading: false },
@@ -1380,23 +1379,18 @@ export default function PlaygroundQueryPage() {
     }
   }, [messages, isLoading])
 
+  // Scroll button visibility
   useEffect(() => {
-    const viewport = document.querySelector("[data-radix-scroll-area-viewport]") as HTMLElement
-    setScrollViewport(viewport)
-  }, [])
-
-  useEffect(() => {
-    if (!scrollViewport) return
-
-    const handleScroll = () => {
-      const { scrollTop, scrollHeight, clientHeight } = scrollViewport
-      const isNotAtBottom = scrollHeight - scrollTop - clientHeight > 100
-      setShowScrollButton(isNotAtBottom)
+    const el = scrollRef.current
+    if (!el) return
+    const checkScroll = () => {
+      const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100
+      setShowScrollButton(!isNearBottom)
     }
-
-    scrollViewport.addEventListener("scroll", handleScroll)
-    return () => scrollViewport.removeEventListener("scroll", handleScroll)
-  }, [scrollViewport])
+    el.addEventListener("scroll", checkScroll)
+    checkScroll()
+    return () => el.removeEventListener("scroll", checkScroll)
+  }, [messages])
 
   const primaryFile = selectedFiles[0]
   const fileNames = selectedFiles.map(f => f.filename)
@@ -1727,8 +1721,8 @@ export default function PlaygroundQueryPage() {
           </div>
 
           {!compareMode ? (
-            <div className="flex-1 flex flex-col relative">
-              <ScrollArea className="flex-1 p-3 sm:p-6" ref={scrollRef}>
+            <div className="flex-1 flex flex-col relative min-h-0">
+              <div className="flex-1 min-h-0 p-3 sm:p-6 overflow-y-auto" ref={scrollRef}>
                 <div className="max-w-3xl mx-auto space-y-4 sm:space-y-6 pt-12 sm:pt-14 pb-4">
                   {(trainingProgress.status !== "failed" && !currentQuery?.trainingFailed) && messages.map((message, i) => (
                     <MessageBubble userName={user?.name} key={i} message={message} />
@@ -1741,14 +1735,16 @@ export default function PlaygroundQueryPage() {
                     <TypingIndicator />
                   ) : null}
                 </div>
-              </ScrollArea>
 
+              </div>
+
+              {/* Scroll to bottom button */}
               {showScrollButton && (
                 <button
-                  onClick={scrollToBottom}
-                  className="absolute bottom-24 right-6 p-3 bg-background border border-border rounded-full shadow-lg hover:bg-accent transition-all z-10"
+                  onClick={() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })}
+                  className="absolute bottom-52 left-1/2 -translate-x-1/2 p-2 bg-background border border-border rounded-full shadow-lg hover:bg-accent transition-all z-10"
                 >
-                  <ArrowDown className="w-5 h-5" />
+                  <ArrowDown className="h-4 w-4" />
                 </button>
               )}
 

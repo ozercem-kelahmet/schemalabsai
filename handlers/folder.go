@@ -103,7 +103,7 @@ func MoveFileToFolderHandler(w http.ResponseWriter, r *http.Request) {
 	userID := r.Header.Get("X-User-ID")
 
 	var req struct {
-		FileID   string  `json:"file_id"`
+		FileID   string  `json:"fileId"`
 		FolderID *string `json:"folder_id"`
 	}
 	json.NewDecoder(r.Body).Decode(&req)

@@ -35,7 +35,10 @@ import {
   Search,
   Upload,
   RefreshCw,
+  ChevronLeft,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   Folder,
   FolderPlus,
   Trash2,
@@ -128,6 +131,8 @@ const apiConnections = [
 export default function DataSourcesPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [connectedSources, setConnectedSources] = useState<DataSource[]>([])
+  const [currentPage, setCurrentPage] = useState(1)
+  const itemsPerPage = 20
   const [searchResults, setSearchResults] = useState<DataSource[]>([])
   const [isSearching, setIsSearching] = useState(false)
   const [folders, setFolders] = useState<FolderType[]>([])
@@ -253,7 +258,7 @@ export default function DataSourcesPage() {
     return (bytes / (1024 * 1024)).toFixed(1) + " MB"
   }
 
-  const handleUpload = async (file: File) => {
+  const handleUpload = async (file: File, folderId?: string) => {
     const uploadingFile: UploadingFile = { name: file.name, size: file.size, progress: 0 }
     setUploadingFiles(prev => [...prev, uploadingFile])
     
@@ -264,7 +269,7 @@ export default function DataSourcesPage() {
     }, 100)
     
     try {
-      await api.upload(file)
+      await api.upload(file, folderId)
       clearInterval(progressInterval)
       setUploadingFiles(prev => prev.map(f => f.name === file.name ? { ...f, progress: 100 } : f))
       setTimeout(() => setUploadingFiles(prev => prev.filter(f => f.name !== file.name)), 500)
@@ -316,7 +321,7 @@ export default function DataSourcesPage() {
     setTimeout(() => setActionSuccess(null), 3000)
   }
 
-  const handleMultipleUpload = async (files: File[]) => {
+  const handleMultipleUpload = async (files: File[], folderId?: string) => {
     setUploadError(null)
     setUploadSuccess(null)
     
@@ -336,7 +341,7 @@ export default function DataSourcesPage() {
       }, 100)
       
       try {
-        await api.upload(file)
+        await api.upload(file, folderId)
         clearInterval(progressInterval)
         setUploadingFiles(prev => prev.map(f => f.name === file.name ? { ...f, progress: 100 } : f))
         successCount++
@@ -662,6 +667,10 @@ export default function DataSourcesPage() {
   }
 
   const rootSources = connectedSources.filter((s) => s.folderId === null)
+
+  // Pagination for root sources
+  const totalRootPages = Math.ceil(rootSources.length / itemsPerPage)
+  const paginatedRootSources = rootSources.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage)
 
   const getSourceIcon = (source: DataSource) => {
     if (source.type === "database") return <Database className="h-5 w-5 text-blue-500" />
@@ -1250,7 +1259,75 @@ export default function DataSourcesPage() {
                   </Collapsible>
                 ))}
                 
-                {filteredSources(rootSources).map(renderSourceItem)}
+                {filteredSources(paginatedRootSources).map(renderSourceItem)}
+
+                {/* Pagination */}
+                {totalRootPages > 1 && (
+                  <div className="flex items-center justify-center gap-2 mt-6 pt-4 border-t">
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => setCurrentPage(1)}
+                      disabled={currentPage === 1}
+                    >
+                      <ChevronsLeft className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                      disabled={currentPage === 1}
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    {Array.from({ length: Math.min(5, totalRootPages) }, (_, i) => {
+                      let pageNum;
+                      if (totalRootPages <= 5) {
+                        pageNum = i + 1;
+                      } else if (currentPage <= 3) {
+                        pageNum = i + 1;
+                      } else if (currentPage >= totalRootPages - 2) {
+                        pageNum = totalRootPages - 4 + i;
+                      } else {
+                        pageNum = currentPage - 2 + i;
+                      }
+                      return (
+                        <Button
+                          key={pageNum}
+                          variant={currentPage === pageNum ? "default" : "outline"}
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={() => setCurrentPage(pageNum)}
+                        >
+                          {pageNum}
+                        </Button>
+                      );
+                    })}
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => setCurrentPage(p => Math.min(totalRootPages, p + 1))}
+                      disabled={currentPage === totalRootPages}
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => setCurrentPage(totalRootPages)}
+                      disabled={currentPage === totalRootPages}
+                    >
+                      <ChevronsRight className="h-4 w-4" />
+                    </Button>
+                    <span className="text-sm text-muted-foreground ml-2">
+                      {rootSources.length} files
+                    </span>
+                  </div>
+                )}
                 
                 {connectedSources.length === 0 && (
                   <div className="text-center py-8 text-muted-foreground">

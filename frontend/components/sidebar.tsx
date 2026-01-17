@@ -629,7 +629,7 @@ function SidebarInner() {
             <SidebarGroupLabel>Playground</SidebarGroupLabel>
             <SidebarMenu>
               <SidebarMenuItem>
-                <Dialog open={isNewChatOpen} onOpenChange={(open) => { if (open) { resetDialog(); setExpandedFolders(["files", ...folders.map(f => f.id)]); setIsNewChatOpen(true); } else { setIsNewChatOpen(false); } }}>
+                <Dialog open={isNewChatOpen} onOpenChange={(open) => { if (open) { resetDialog(); setExpandedFolders(["files"]); setIsNewChatOpen(true); } else { setIsNewChatOpen(false); } }}>
                   <DialogTrigger asChild>
                     <SidebarMenuButton tooltip="New">
                       <Plus />
@@ -715,7 +715,6 @@ function SidebarInner() {
                                       {/* Folders */}
                                       {folders.map((folder) => {
                                         const folderFiles = uploadedFiles.filter(f => f.folder_id === folder.id)
-                                        if (folderFiles.length === 0) return null
                                         const allFolderSelected = folderFiles.every(f => selectedFiles.includes(f.file_id))
                                         const someFolderSelected = folderFiles.some(f => selectedFiles.includes(f.file_id)) && !allFolderSelected
                                         return (
