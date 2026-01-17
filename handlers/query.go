@@ -18,6 +18,9 @@ type CreateQueryRequest struct {
 	HasModel        bool     `json:"hasModel"`
 TrainingFailed  bool     `json:"trainingFailed"`
 	TrainingModelID *string  `json:"trainingModelId"`
+	ModelName       string   `json:"modelName"`
+	ModelAccuracy   float64  `json:"modelAccuracy"`
+	SourceCsvName   string   `json:"sourceCsvName"`
 }
 
 type QueryResponse struct {
@@ -62,8 +65,12 @@ func CreateQueryHandler(w http.ResponseWriter, r *http.Request) {
 		IsTraining:      req.IsTraining,
 		HasModel:        req.HasModel,
 		TrainingModelID: req.TrainingModelID,
+		FileID:          req.FileID,
 		CreatedAt:       time.Now(),
 		UpdatedAt:       time.Now(),
+		ModelName:       req.ModelName,
+		ModelAccuracy:   req.ModelAccuracy,
+		SourceCsvName:   req.SourceCsvName,
 	}
 
 	if err := DB.Create(&query).Error; err != nil {
@@ -93,6 +100,7 @@ func CreateQueryHandler(w http.ResponseWriter, r *http.Request) {
 		IsTraining:      req.IsTraining,
 		HasModel:        req.HasModel,
 		TrainingModelID: req.TrainingModelID,
+		FileID:          req.FileID,
 		CreatedAt:       query.CreatedAt.Format(time.RFC3339),
 	})
 }
@@ -133,6 +141,7 @@ func ListQueriesHandler(w http.ResponseWriter, r *http.Request) {
 TrainingFailed:  q.TrainingFailed,
 			TrainingModelID: q.TrainingModelID,
 			CreatedAt:       q.CreatedAt.Format(time.RFC3339),
+			FileID:          q.FileID,
 		})
 	}
 

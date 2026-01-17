@@ -817,12 +817,21 @@ function formatFileSize(bytes: number): string {
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
 }
 
-function generateWelcomeMessage(files: UploadedFile[], queryName: string): string {
+function generateWelcomeMessage(files: UploadedFile[], queryName: string, query?: any): string {
   if (files.length === 0) {
     return "Welcome to \"" + queryName + "\"! Please select data sources to begin analysis."
   }
 
   let msg = "**Welcome to \"" + queryName + "\"**\n\n"
+  
+  // Show fine-tuned model info if available
+  if (query?.modelName && query?.sourceCsvName) {
+    msg += "🤖 **Fine-Tuned Model Information**\n"
+    msg += "   • Model: " + query.modelName + "\n"
+    msg += "   • Trained on: " + query.sourceCsvName + "\n"
+    msg += "   • Accuracy: " + (query.modelAccuracy || 0).toFixed(1) + "%\n\n"
+  }
+  
   msg += "I've loaded " + files.length + " data source" + (files.length > 1 ? "s" : "") + " for analysis:\n\n"
 
   files.forEach((file) => {
@@ -1174,7 +1183,7 @@ export default function PlaygroundQueryPage() {
   const queryId = params.id as string
 
   const { getQuery, isLoaded, updateQuery } = useQueryStore()
-  const currentQuery = getQuery(queryId)
+  const currentQuery = useMemo(() => getQuery(queryId), [queryId, getQuery])
 
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
   const [selectedFiles, setSelectedFiles] = useState<UploadedFile[]>([])
@@ -1318,17 +1327,32 @@ export default function PlaygroundQueryPage() {
 
   useEffect(() => {
     if (currentQuery && uploadedFiles.length > 0 && !hasInitializedChat) { 
-      let files = currentQuery.dataSources
-        .map(id => uploadedFiles.find(f => f.file_id === id))
-        .filter(Boolean) as UploadedFile[]
+      let files: UploadedFile[] = []
       
-      // Fallback: if no matching files, use most recent uploaded file
+      // ÖNCE currentQuery.fileId'ye bak (model'in training file'ı)
+      if (currentQuery.fileId) {
+        const fileById = uploadedFiles.find(f => f.file_id === currentQuery.fileId)
+        if (fileById) {
+          files = [fileById]
+          console.log("Using fileId from query:", currentQuery.fileId, fileById.filename)
+        }
+      }
+      
+      // fileId yoksa dataSources'a bak
+      if (files.length === 0) {
+        files = currentQuery.dataSources
+          .map(id => uploadedFiles.find(f => f.file_id === id))
+          .filter(Boolean) as UploadedFile[]
+      }
+      
+      // Fallback: use most recent
       if (files.length === 0 && uploadedFiles.length > 0) {
         files = [uploadedFiles[uploadedFiles.length - 1]]
         console.log("Using fallback file:", files[0].filename)
       }
       
       setSelectedFiles(files)
+
       
       // Try to load messages from DB first
       if (files.length > 0) {
@@ -1349,18 +1373,18 @@ export default function PlaygroundQueryPage() {
               })
               setMessages(loadedMessages)
             } else {
-              const welcomeMsg = generateWelcomeMessage(files, currentQuery.name)
+              const welcomeMsg = generateWelcomeMessage(files, currentQuery.name, currentQuery)
               setMessages([{ id: "welcome", role: "assistant", content: welcomeMsg, isLoading: false }])
             }
             setHasInitializedChat(true)
           })
           .catch(() => {
-            const welcomeMsg = generateWelcomeMessage(files, currentQuery.name)
+            const welcomeMsg = generateWelcomeMessage(files, currentQuery.name, currentQuery)
             setMessages([{ id: "welcome", role: "assistant", content: welcomeMsg, isLoading: false }])
             setHasInitializedChat(true)
           })
       } else {
-        const welcomeMsg = generateWelcomeMessage(files, currentQuery.name)
+        const welcomeMsg = generateWelcomeMessage(files, currentQuery.name, currentQuery)
         setMessages([{ id: "welcome", role: "assistant", content: welcomeMsg, isLoading: false }])
         setHasInitializedChat(true)
       }

@@ -11,7 +11,11 @@ export type QueryItem = {
   isTraining?: boolean
   hasModel?: boolean
   trainingModelId?: string | null
+  fileId?: string
   trainingFailed?: boolean
+  modelName?: string
+  modelAccuracy?: number
+  sourceCsvName?: string
 }
 
 type AddQueryInput = {
@@ -25,6 +29,9 @@ type AddQueryInput = {
   trainingModelId?: string | null
   trainingFailed?: boolean
   skipBackend?: boolean
+  modelName?: string
+  modelAccuracy?: number
+  sourceCsvName?: string
 }
 
 type QueryStoreContextType = {
@@ -59,6 +66,7 @@ export function QueryStoreProvider({ children }: { children: ReactNode }) {
         if (res.ok) {
           const data = await res.json()
           console.log("[QueryStore] Loaded:", data)
+    console.log("[QueryStore] First query fileId:", data.queries[0]?.fileId)
           if (data.queries && Array.isArray(data.queries)) {
             const loaded = data.queries.map((q: any) => ({
               id: q.id,
@@ -94,7 +102,10 @@ export function QueryStoreProvider({ children }: { children: ReactNode }) {
       createdAt: new Date(),
       isTraining: input.isTraining || false,
       trainingModelId: input.trainingModelId || null,
-      hasModel: input.hasModel || false
+      hasModel: input.hasModel || false,
+      modelName: input.modelName || '',
+      modelAccuracy: input.modelAccuracy || 0,
+      sourceCsvName: input.sourceCsvName || '',
     }
     
     // Add to state immediately for UI
@@ -117,10 +128,13 @@ export function QueryStoreProvider({ children }: { children: ReactNode }) {
           name: newQuery.name,
           model: newQuery.model,
           dataSources: newQuery.dataSources,
-          file_id: input.fileId || "",
+          fileId: input.fileId || "",
           isTraining: newQuery.isTraining,
           hasModel: newQuery.hasModel,
-          trainingModelId: newQuery.trainingModelId
+          trainingModelId: newQuery.trainingModelId,
+          modelName: newQuery.modelName,
+          modelAccuracy: newQuery.modelAccuracy,
+          sourceCsvName: newQuery.sourceCsvName,
         }),
       })
       

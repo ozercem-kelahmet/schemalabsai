@@ -1207,12 +1207,22 @@ def list_models():
     checkpoint_dir = Path('../checkpoints')
     for f in sorted(checkpoint_dir.glob('*.pt'), reverse=True):
         filename = f.name
+        
+        # Load checkpoint to get source_file_id
+        source_file = None
+        try:
+            ckpt = torch.load(f, map_location='cpu', weights_only=False)
+            source_file = ckpt.get('source_file_id')
+        except:
+            pass
+        
         models.append({
             "name": filename.replace('.pt', ''),
             "filename": filename,
             "path": str(f),
             "type": "finetuned" if "finetuned" in filename else "base",
-            "is_current": filename == "schemalabsai_v1.pt"
+            "is_current": filename == "schemalabsai_v1.pt",
+            "source_file_id": source_file
         })
     return jsonify({"models": models, "current": current_model_name})
 

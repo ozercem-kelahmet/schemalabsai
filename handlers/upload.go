@@ -340,3 +340,37 @@ func DeleteFileHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
 }
+
+// Replace GetFileByIDHandler with correct version
+
+func GetFileByIDHandler(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.TrimSuffix(r.URL.Path, "/"), "/")
+	fileID := parts[len(parts)-1]
+	
+	if fileID == "" {
+		http.Error(w, "File ID required", http.StatusBadRequest)
+		return
+	}
+	
+	// userID already set by AuthMiddleware
+	userID := r.Context().Value("user_id").(string)
+	
+	var upload UploadedFile
+	result := DB.Where("id = ? AND user_id = ?", fileID, userID).First(&upload)
+	
+	if result.Error != nil {
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
+	
+	fileInfo := map[string]interface{}{
+		"file_id":     upload.ID,
+		"file_name":   upload.Filename,
+		"file_path":   upload.Path,
+		"file_size":   upload.Size,
+		"uploaded_at": upload.CreatedAt,
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(fileInfo)
+}

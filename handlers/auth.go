@@ -322,7 +322,11 @@ type Query struct {
 TrainingFailed  bool      `gorm:"column:training_failed" json:"trainingFailed"`
 	TrainingModelID *string   `json:"training_model_id"`
 	CreatedAt       time.Time `json:"created_at"`
+	FileID          string    `json:"file_id"`
 	UpdatedAt       time.Time `json:"updated_at"`
+	ModelName       string    `gorm:"column:model_name" json:"model_name"`
+	ModelAccuracy   float64   `gorm:"column:model_accuracy" json:"model_accuracy"`
+	SourceCsvName   string    `gorm:"column:source_csv_name" json:"source_csv_name"`
 }
 
 func (Query) TableName() string { return "queries" }

@@ -520,6 +520,20 @@ function SidebarInner() {
     const selectedModelData = fineTunedModels.find(m => m.id === selectedExistingModel)
     const sourceFileIds = selectedModelData?.source_file_id?.split(',').map(id => id.trim()).filter(Boolean) || []
     const fileId = sourceFileIds[0] || ""
+    
+    // AUTO-LOAD the training file when model is selected
+    if (fileId) {
+      try {
+        const response = await fetch(`/api/upload/file/${fileId}`)
+        if (response.ok) {
+          const fileData = await response.json()
+          console.log("Auto-loaded model's training file:", fileData)
+        }
+      } catch (error) {
+        console.error("Failed to auto-load training file:", error)
+      }
+    }
+    
     console.log("DEBUG sidebar fileIds:", sourceFileIds, "primary:", fileId)
     
     const newQuery = await addQuery({
@@ -528,7 +542,10 @@ function SidebarInner() {
       dataSources: sourceFileIds.length > 0 ? sourceFileIds : [],
       trainingModelId: selectedExistingModel,
       fileId: fileId,
-      hasModel: true
+      hasModel: true,
+      modelName: selectedModelData?.name || '',
+      modelAccuracy: selectedModelData?.accuracy || 0,
+      sourceCsvName: selectedModelData?.source_name || '',
     })
 
     pendingNavigationRef.current = newQuery.id
@@ -539,7 +556,7 @@ function SidebarInner() {
       setProcessingProjectName("")
       setProcessingDataSources([])
       if (pendingNavigationRef.current) {
-        router.push("/playground/" + pendingNavigationRef.current)
+        router.push("/playground/" + pendingNavigationRef.current + (fileId ? "?fileId=" + fileId : ""))
         pendingNavigationRef.current = null
       }
     }, 3000)
