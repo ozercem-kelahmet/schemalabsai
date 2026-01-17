@@ -126,6 +126,13 @@ from pathlib import Path
 from torch.optim import AdamW
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.utils.class_weight import compute_class_weight
+try:
+    from statsmodels.tsa.seasonal import seasonal_decompose
+    HAS_STATSMODELS = True
+except:
+    HAS_STATSMODELS = False
+from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import IsolationForest
 from sklearn.cluster import KMeans
 def send_training_email(user_email, status, model_name, accuracy=None, error=None, user_name=None):
     import smtplib
@@ -1364,6 +1371,33 @@ def get_cached_dataframe(file_path):
 
 aggregate_cache = {}
 
+
+# Query result cache - LLM responses
+query_cache = {}
+QUERY_CACHE_MAX_SIZE = 100
+
+def get_cached_query_result(file_id, query):
+    """Get cached LLM result for (file_id, query) pair"""
+    cache_key = f"{file_id}_{query.lower().strip()[:100]}"  # First 100 chars of query
+    if cache_key in query_cache:
+        print(f"Query cache HIT: {query[:50]}...")
+        return query_cache[cache_key]
+    return None
+
+def set_cached_query_result(file_id, query, result):
+    """Cache LLM result"""
+    global query_cache
+    cache_key = f"{file_id}_{query.lower().strip()[:100]}"
+    
+    if len(query_cache) >= QUERY_CACHE_MAX_SIZE:
+        # Remove oldest
+        oldest_key = list(query_cache.keys())[0]
+        del query_cache[oldest_key]
+    
+    query_cache[cache_key] = result
+    print(f"Query cached: {query[:50]}...")
+
+
 # Pre-computed statistics cache
 stats_cache = {}
 
@@ -1431,7 +1465,31 @@ def generate_multidim_insights(df, num_cols, stats):
         except:
             pass
     
-    # 2. OUTLIERS DETECTION
+    # 2. ML-BASED ANOMALY DETECTION (IsolationForest)
+    ml_anomalies = []
+    try:
+        # Use top numeric columns for anomaly detection
+        anomaly_cols = [c for c in num_cols[:20] if df[c].notna().sum() > 10]
+        if len(anomaly_cols) >= 2 and len(df) >= 10:
+            X = df[anomaly_cols].dropna()
+            if len(X) >= 10:
+                iso_forest = IsolationForest(contamination=0.1, random_state=42, n_estimators=100)
+                predictions = iso_forest.fit_predict(X)
+                anomaly_indices = X.index[predictions == -1]
+                
+                if len(anomaly_indices) > 0:
+                    insights += f"\n=== ML ANOMALY DETECTION ({len(anomaly_indices)} anomalies found) ===\n"
+                    insights += f"Using columns: {', '.join(anomaly_cols[:5])}\n"
+                    
+                    # Show which columns have highest anomaly scores
+                    for col in anomaly_cols[:5]:
+                        anomaly_vals = df.loc[anomaly_indices, col].dropna()
+                        if len(anomaly_vals) > 0:
+                            insights += f"{col}: {len(anomaly_vals)} anomalous values\n"
+    except Exception as e:
+        print(f"ML Anomaly detection error: {e}")
+    
+    # 2b. STATISTICAL OUTLIERS (IQR - backup method)
     outlier_cols = []
     for col in num_cols[:30]:
         try:
@@ -1445,7 +1503,7 @@ def generate_multidim_insights(df, num_cols, stats):
             pass
     
     if outlier_cols:
-        insights += "\n=== OUTLIERS DETECTED ===\n"
+        insights += "\n=== STATISTICAL OUTLIERS (IQR) ===\n"
         outlier_cols = sorted(outlier_cols, key=lambda x: -x[1])[:10]
         for col, count, total in outlier_cols:
             pct = (count/total)*100
@@ -1467,6 +1525,91 @@ def generate_multidim_insights(df, num_cols, stats):
         variance_data = sorted(variance_data, key=lambda x: -x[1])[:10]
         for col, cv in variance_data:
             insights += f"{col}: CV={cv:.2f}\n"
+    
+    # 4. PREDICTIVE INSIGHTS (Regression-based)
+    try:
+        if len(num_cols) >= 2 and len(df) >= 20:
+            # Find top correlated pairs for prediction
+            corr_matrix = df[num_cols[:30]].corr()
+            predictions = []
+            
+            for i in range(min(5, len(corr_matrix.columns))):
+                for j in range(i+1, len(corr_matrix.columns)):
+                    corr_val = abs(corr_matrix.iloc[i, j])
+                    if corr_val > 0.6:  # Strong correlation
+                        col_x = corr_matrix.columns[i]
+                        col_y = corr_matrix.columns[j]
+                        
+                        # Fit simple linear regression
+                        X = df[[col_x]].dropna()
+                        y = df.loc[X.index, col_y]
+                        valid = ~y.isna()
+                        X = X[valid]
+                        y = y[valid]
+                        
+                        if len(X) >= 10:
+                            model = LinearRegression()
+                            model.fit(X, y)
+                            slope = model.coef_[0]
+                            
+                            # Generate prediction insight
+                            if slope > 0:
+                                predictions.append((col_x, col_y, slope, "increases"))
+                            else:
+                                predictions.append((col_x, col_y, abs(slope), "decreases"))
+            
+            if predictions:
+                insights += "\n=== PREDICTIVE INSIGHTS ===\n"
+                predictions = sorted(predictions, key=lambda x: -abs(x[2]))[:5]
+                for x_col, y_col, slope, direction in predictions:
+                    insights += f"When {x_col} increases by 1, {y_col} {direction} by {slope:.2f}\n"
+    except Exception as e:
+        print(f"Predictive insights error: {e}")
+    
+    # 5. TIME SERIES TREND ANALYSIS
+    try:
+        if HAS_STATSMODELS:
+            # Detect time columns
+            time_cols = [col for col in df.columns if any(t in col.lower() for t in ['date', 'time', 'timestamp'])]
+            
+            if time_cols and len(num_cols) > 0:
+                time_col = time_cols[0]
+                
+                # Try to parse as datetime
+                try:
+                    df_time = df[[time_col] + num_cols[:5]].copy()
+                    df_time[time_col] = pd.to_datetime(df_time[time_col])
+                    df_time = df_time.sort_values(time_col)
+                    df_time = df_time.set_index(time_col)
+                    
+                    # Analyze top numeric column
+                    for val_col in num_cols[:3]:
+                        ts_data = df_time[val_col].dropna()
+                        
+                        if len(ts_data) >= 14:  # Need at least 2 periods
+                            # Detect trend
+                            decomposition = seasonal_decompose(ts_data, model='additive', period=min(7, len(ts_data)//2), extrapolate_trend='freq')
+                            
+                            trend = decomposition.trend.dropna()
+                            if len(trend) >= 2:
+                                trend_direction = "increasing" if trend.iloc[-1] > trend.iloc[0] else "decreasing"
+                                trend_change = abs(trend.iloc[-1] - trend.iloc[0])
+                                
+                                if not insights.endswith("\n"):
+                                    insights += "\n"
+                                insights += "\n=== TIME SERIES TRENDS ===\n"
+                                insights += f"{val_col}: {trend_direction} trend (change: {trend_change:.2f})\n"
+                                
+                                # Check seasonality strength
+                                seasonal_strength = decomposition.seasonal.std() / ts_data.std() if ts_data.std() > 0 else 0
+                                if seasonal_strength > 0.3:
+                                    insights += f"  → Strong seasonal pattern detected (strength: {seasonal_strength:.2f})\n"
+                                
+                                break  # Only show first column with trend
+                except Exception as e:
+                    print(f"Time series decomposition error: {e}")
+    except Exception as e:
+        print(f"Time series analysis error: {e}")
     
     return insights
 
@@ -1849,6 +1992,9 @@ def analyze():
         # Truncate if still too long
         if len(analysis) > 8000:
             analysis = analysis[:8000] + "\n...(truncated)"
+        
+        # Cache this result
+        set_cached_query_result(file_id, query, analysis)
         
         return jsonify({'analysis': analysis, 'status': 'success'})
     except Exception as e:
