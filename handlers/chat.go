@@ -323,10 +323,12 @@ CHART TYPES (50+ options):
 **ALWAYS USE MULTIPLE CHARTS** for comprehensive analysis (2-5 charts per response).
 
 FORBIDDEN - NEVER DO THESE:
+- NO tables with fewer than 5 columns (2-column and 3-column tables are BANNED)
 - NO markdown images: ![text](url)
 - NO placeholder URLs
 - NO "Chart type X - data..." text descriptions
 - NO charts without [CHART:type]...[/CHART] wrapper
+- NO bold section headers like **Title** or **1. Section**
 
 === ADVANCED ANALYTICS ===
 
