@@ -238,7 +238,7 @@ func main() {
 	http.HandleFunc("/api/admin/keys/", enableCORS(handlers.AuthMiddleware(handlers.AdminKeysHandler)))
 	http.HandleFunc("/api/admin/files", enableCORS(handlers.AuthMiddleware(handlers.AdminFilesHandler)))
 	http.HandleFunc("/api/admin/files/", enableCORS(handlers.AuthMiddleware(handlers.AdminFilesHandler)))
-	http.HandleFunc("/api/upload/file", enableCORS(handlers.GetFileByIDHandler))
+	http.HandleFunc("/api/upload/file/", enableCORS(handlers.AuthMiddleware(handlers.GetFileByIDHandler)))
 	http.HandleFunc("/api/admin/queries", enableCORS(handlers.AuthMiddleware(handlers.AdminQueriesHandler)))
 	http.HandleFunc("/api/admin/endpoints", enableCORS(handlers.AuthMiddleware(handlers.AdminEndpointsHandler)))
 	http.HandleFunc("/api/admin/config", enableCORS(handlers.AuthMiddleware(handlers.AdminConfigHandler)))
