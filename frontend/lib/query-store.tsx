@@ -77,7 +77,11 @@ export function QueryStoreProvider({ children }: { children: ReactNode }) {
               isTraining: q.isTraining || false,
               trainingModelId: q.trainingModelId || null,
               hasModel: q.hasModel || false,
-              trainingFailed: q.trainingFailed || false
+              trainingFailed: q.trainingFailed || false,
+              modelName: q.modelName || "",
+              modelAccuracy: q.modelAccuracy || 0,
+              sourceCsvName: q.sourceCsvName || "",
+              fileId: q.fileId || ""
             }))
             setQueries(loaded)
           }
