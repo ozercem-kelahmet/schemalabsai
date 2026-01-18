@@ -21,9 +21,6 @@ TrainingFailed  bool     `json:"trainingFailed"`
 	ModelName       string   `json:"modelName"`
 	ModelAccuracy   float64  `json:"modelAccuracy"`
 	SourceCsvName   string   `json:"sourceCsvName"`
-	ModelName       string   `json:"modelName"`
-	ModelAccuracy   float64  `json:"modelAccuracy"`
-	SourceCsvName   string   `json:"sourceCsvName"`
 }
 
 type QueryResponse struct {
