@@ -618,14 +618,14 @@ func ChatHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Printf("DEBUG: FineTunedModel = '%s'\n", req.FineTunedModel)
 	if req.FineTunedModel != "" && req.FineTunedModel != "none" {
 actualFileID := req.FileID
-var modelInfo struct { SourceFileID string }
-err := DB.Table("fine_tuned_models").Where("id = ? OR name = ?", req.FineTunedModel, req.FineTunedModel).Select("source_file_id").First(&modelInfo).Error
+var modelInfo struct { SourceFileID string; ModelPath string }
+err := DB.Table("fine_tuned_models").Where("id = ? OR name = ?", req.FineTunedModel, req.FineTunedModel).Select("source_file_id, model_path").First(&modelInfo).Error
 fmt.Printf("DEBUG Model lookup: ID=%s, err=%v, SourceFileID=%s\n", req.FineTunedModel, err, modelInfo.SourceFileID)
 if err == nil && modelInfo.SourceFileID != "" {
 	actualFileID = modelInfo.SourceFileID
 	fmt.Printf("DEBUG: Using model SourceFileID: %s\n", actualFileID)
 }
-result, err := callFineTunedModel(req.FineTunedModel, actualFileID, req.Message)
+result, err := callFineTunedModel(req.FineTunedModel, actualFileID, req.Message, modelInfo.ModelPath)
 		if err != nil {
 			fmt.Printf("Fine-tuned model error: %v\\n", err)
 		} else {
@@ -876,13 +876,14 @@ func ClearChatHistoryHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // callFineTunedModel calls the Flask server for fine-tuned model analysis
-func callFineTunedModel(modelID string, fileID string, message string) (string, error) {
+func callFineTunedModel(modelID string, fileID string, message string, modelPath string) (string, error) {
 	flaskURL := GetFlaskURL()
 
 	payload := map[string]interface{}{
 		"model_id": modelID,
 "file_id":  fileID,
 		"message":  message,
+"model_path": modelPath,
 	}
 
 	jsonData, _ := json.Marshal(payload)

@@ -1649,7 +1649,21 @@ def analyze():
         # If model_id exists, try to get source_file_id (merged file) from checkpoint
         if model_id and model_id != "none":
             try:
-                ft_path = f'../checkpoints/{model_id}.pt'
+                # Try model_path first (from database), then fallback to model_id.pt
+                model_path = data.get('model_path', '')
+                if model_path and os.path.exists(model_path):
+                    ft_path = model_path
+                elif model_path:
+                    # Try relative path
+                    ft_path = model_path if model_path.startswith('../') else f'../checkpoints/{model_path}'
+                else:
+                    ft_path = f'../checkpoints/{model_id}.pt'
+                
+                # Also try model_id.pt as fallback
+                if not os.path.exists(ft_path):
+                    ft_path = f'../checkpoints/{model_id}.pt'
+                
+                print(f"DEBUG: Loading checkpoint from: {ft_path}")
                 if os.path.exists(ft_path):
                     ft_ckpt = torch.load(ft_path, map_location='cpu', weights_only=False)
                     source_file_id = ft_ckpt.get('source_file_id', '')
@@ -1709,7 +1723,21 @@ def analyze():
         ft_prediction_text = ""
         if model_id and model_id != "none":
             try:
-                ft_path = f'../checkpoints/{model_id}.pt'
+                # Try model_path first (from database), then fallback to model_id.pt
+                model_path = data.get('model_path', '')
+                if model_path and os.path.exists(model_path):
+                    ft_path = model_path
+                elif model_path:
+                    # Try relative path
+                    ft_path = model_path if model_path.startswith('../') else f'../checkpoints/{model_path}'
+                else:
+                    ft_path = f'../checkpoints/{model_id}.pt'
+                
+                # Also try model_id.pt as fallback
+                if not os.path.exists(ft_path):
+                    ft_path = f'../checkpoints/{model_id}.pt'
+                
+                print(f"DEBUG: Loading checkpoint from: {ft_path}")
                 if os.path.exists(ft_path):
                     ft_ckpt = torch.load(ft_path, map_location='cpu', weights_only=False)
                     
@@ -2475,7 +2503,7 @@ def finetune():
             "target_column": target_col,
             "miras_enabled": use_miras if 'use_miras' in dir() else False,
             "n_features": input_dim,
-            "merged_file_id": merged_file_id if "merged_file_id" in dir() else None
+            "merged_file_id": merged_file_id if 'merged_file_id' in locals() and merged_file_id else None
         })
     except Exception as e:
         import traceback
