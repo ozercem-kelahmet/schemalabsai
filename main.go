@@ -63,7 +63,7 @@ func startNextJsServer() {
 		cmd = exec.Command("npm", "run", "dev")
 	}
 	cmd.Dir = "./frontend"
-	cmd.Env = append(os.Environ(), "BROWSER=none", "NODE_OPTIONS=--max-http-header-size=1048576")
+	cmd.Env = append(os.Environ(), "BROWSER=none", "NODE_OPTIONS=--max-http-header-size=16777216")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	log.Println("Starting Next.js...")
