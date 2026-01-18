@@ -832,13 +832,19 @@ function generateWelcomeMessage(files: UploadedFile[], queryName: string, query?
     msg += "   • Accuracy: " + (query.modelAccuracy || 0).toFixed(1) + "%\n\n"
   }
   
-  msg += "I've loaded " + files.length + " data source" + (files.length > 1 ? "s" : "") + " for analysis:\n\n"
-
-  files.forEach((file) => {
-    msg += "📄 **" + file.filename + "**\n"
-    msg += "   • Size: " + formatFileSize(file.size) + "\n"
+  // If fine-tuned model with sourceCsvName, show that instead of files list
+  if (query?.sourceCsvName && query?.modelName) {
+    msg += "I've loaded the training data for analysis:\n\n"
+    msg += "📄 **" + query.sourceCsvName + "**\n"
     msg += "   • Ready for analysis\n\n"
-  })
+  } else {
+    msg += "I've loaded " + files.length + " data source" + (files.length > 1 ? "s" : "") + " for analysis:\n\n"
+    files.forEach((file) => {
+      msg += "📄 **" + file.filename + "**\n"
+      msg += "   • Size: " + formatFileSize(file.size) + "\n"
+      msg += "   • Ready for analysis\n\n"
+    })
+  }
 
   msg += "**What I can help you with:**\n"
   msg += "• Data exploration and statistical analysis\n"
