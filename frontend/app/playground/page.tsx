@@ -248,7 +248,7 @@ export default function PlaygroundPage() {
     if (!projectName.trim() || !selectedExistingModel) return
     
     try {
-      console.log("DEBUG fineTunedModels:", JSON.stringify(fineTunedModels)); console.log("DEBUG selectedExistingModel:", selectedExistingModel); const selectedModel = fineTunedModels.find(m => m.id === selectedExistingModel); console.log("DEBUG selectedModel:", selectedModel); const fileId = selectedModel?.source_file_id || ""; const response = await api.createQuery(projectName, selectedLLM, [selectedExistingModel], fileId, selectedModel?.name || "", selectedModel?.accuracy || 0, selectedModel?.source_csv_name || "", selectedExistingModel)
+      console.log("DEBUG fineTunedModels:", JSON.stringify(fineTunedModels)); console.log("DEBUG selectedExistingModel:", selectedExistingModel); const selectedModel = fineTunedModels.find(m => m.id === selectedExistingModel); console.log("DEBUG selectedModel:", selectedModel); const fileId = selectedModel?.source_file_id || ""; const response = await api.createQuery(projectName, selectedLLM, [selectedExistingModel], fileId, selectedModel?.name || "", selectedModel?.accuracy || 0, selectedModel?.source_name || "", selectedExistingModel)
       addQuery({
         id: response.id,
         name: projectName,
@@ -256,7 +256,7 @@ export default function PlaygroundPage() {
         model: selectedLLM,
         modelName: selectedModel?.name || "",
         modelAccuracy: selectedModel?.accuracy || 0,
-        sourceCsvName: selectedModel?.source_csv_name || "",
+        sourceCsvName: selectedModel?.source_name || "",
         fileId: fileId,
         hasModel: true,
         trainingModelId: selectedExistingModel,
