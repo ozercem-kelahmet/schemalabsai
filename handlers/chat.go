@@ -620,7 +620,7 @@ func ChatHandler(w http.ResponseWriter, r *http.Request) {
 actualFileID := req.FileID
 var modelInfo struct { SourceFileID string; ModelPath string }
 err := DB.Table("fine_tuned_models").Where("id = ? OR name = ?", req.FineTunedModel, req.FineTunedModel).Select("source_file_id, model_path").First(&modelInfo).Error
-fmt.Printf("DEBUG Model lookup: ID=%s, err=%v, SourceFileID=%s\n", req.FineTunedModel, err, modelInfo.SourceFileID)
+fmt.Printf("DEBUG Model lookup: ID=%s, err=%v, SourceFileID=%s, ModelPath=%s\n", req.FineTunedModel, err, modelInfo.SourceFileID, modelInfo.ModelPath)
 if err == nil && modelInfo.SourceFileID != "" {
 	actualFileID = modelInfo.SourceFileID
 	fmt.Printf("DEBUG: Using model SourceFileID: %s\n", actualFileID)
