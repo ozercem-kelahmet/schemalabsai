@@ -1782,7 +1782,7 @@ export default function PlaygroundQueryPage() {
                 <AiChat
                   selectedModel={selectedModel}
                   onSend={handleSingleSend}
-                  dataSourceName={currentQuery?.sourceCsvName || primaryFile?.filename}
+                  dataSourceName={currentQuery?.sourceCsvName || ""}
                   dataSources={fileNames}
                 />
               </div>
@@ -1847,7 +1847,7 @@ export default function PlaygroundQueryPage() {
               <div className="border-t border-border p-3 sm:p-4 bg-background shrink-0">
                 <AiChat
                   onSend={handleCompareSend}
-                  dataSourceName={currentQuery?.sourceCsvName || primaryFile?.filename}
+                  dataSourceName={currentQuery?.sourceCsvName || ""}
                   dataSources={fileNames}
                 />
               </div>
