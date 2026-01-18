@@ -1841,7 +1841,7 @@ def analyze():
         
         def run_analytics():
             detected_types = detect_analytics_type(query)
-            if detected_types and detected_types[0]['score'] >= 3:
+            if detected_types and detected_types[0]['score'] >= 8:
                 print(f"Analytics type detected: {detected_types[0]['type']} (score: {detected_types[0]['score']})")
                 advanced_analysis = generate_analytics(df, query, detected_types)
                 analytics_result['detected'] = detected_types
