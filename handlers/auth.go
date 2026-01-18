@@ -324,8 +324,8 @@ TrainingFailed  bool      `gorm:"column:training_failed" json:"trainingFailed"`
 	CreatedAt       time.Time `json:"created_at"`
 	FileID          string    `json:"file_id"`
 	UpdatedAt       time.Time `json:"updated_at"`
-	ModelName       string    `gorm:"column:model_name" json:"model_name"`
-	ModelAccuracy   float64   `gorm:"column:model_accuracy" json:"model_accuracy"`
+	ModelName       string    `gorm:"column:model_name" json:"modelName"`
+	ModelAccuracy   float64   `gorm:"column:model_accuracy" json:"modelAccuracy"`
 	SourceCsvName   string    `gorm:"column:source_csv_name" json:"sourceCsvName"`
 }
 
