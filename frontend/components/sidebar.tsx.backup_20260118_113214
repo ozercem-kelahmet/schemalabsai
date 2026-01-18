@@ -668,7 +668,7 @@ function SidebarInner() {
                         </TabsTrigger>
                         <TabsTrigger value="models">
                           <FileSpreadsheet className="h-4 w-4 mr-2" />
-                          Select Model
+                          Models
                         </TabsTrigger>
                       </TabsList>
                       
@@ -991,11 +991,7 @@ function SidebarInner() {
                                             selectedExistingModel === model.id ? "bg-primary/10 border border-primary/30" : "hover:bg-secondary/50 border border-transparent"
                                           )}
                                         >
-                                          <div className="w-20">
-                                            {selectedExistingModel === model.id && (
-                                              <Badge className="bg-green-500/10 text-green-600 border-green-500/30 text-xs shrink-0">Selected</Badge>
-                                            )}
-                                          </div>
+                                          <div className="w-4 h-4" />
                                           <Sparkles className="h-4 w-4 text-purple-500" />
                                           <div className="flex flex-col flex-1 min-w-0 overflow-hidden max-w-[250px]">
                                             {editingModelId === model.id ? (
