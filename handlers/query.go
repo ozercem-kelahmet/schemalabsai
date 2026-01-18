@@ -69,6 +69,9 @@ func CreateQueryHandler(w http.ResponseWriter, r *http.Request) {
 		HasModel:        req.HasModel,
 		TrainingModelID: req.TrainingModelID,
 		FileID:          req.FileID,
+		ModelName:       req.ModelName,
+		ModelAccuracy:   req.ModelAccuracy,
+		SourceCsvName:   req.SourceCsvName,
 		CreatedAt:       time.Now(),
 		UpdatedAt:       time.Now(),
 		ModelName:       req.ModelName,
@@ -104,6 +107,9 @@ func CreateQueryHandler(w http.ResponseWriter, r *http.Request) {
 		HasModel:        req.HasModel,
 		TrainingModelID: req.TrainingModelID,
 		FileID:          req.FileID,
+		ModelName:       req.ModelName,
+		ModelAccuracy:   req.ModelAccuracy,
+		SourceCsvName:   req.SourceCsvName,
 		CreatedAt:       query.CreatedAt.Format(time.RFC3339),
 	})
 }
