@@ -21,6 +21,9 @@ TrainingFailed  bool     `json:"trainingFailed"`
 	ModelName       string   `json:"modelName"`
 	ModelAccuracy   float64  `json:"modelAccuracy"`
 	SourceCsvName   string   `json:"sourceCsvName"`
+	ModelName       string   `json:"modelName"`
+	ModelAccuracy   float64  `json:"modelAccuracy"`
+	SourceCsvName   string   `json:"sourceCsvName"`
 }
 
 type QueryResponse struct {
@@ -33,6 +36,9 @@ type QueryResponse struct {
 	HasModel        bool     `json:"hasModel"`
 TrainingFailed  bool     `json:"trainingFailed"`
 	TrainingModelID *string  `json:"trainingModelId"`
+	ModelName       string   `json:"modelName"`
+	ModelAccuracy   float64  `json:"modelAccuracy"`
+	SourceCsvName   string   `json:"sourceCsvName"`
 	CreatedAt       string   `json:"createdAt"`
 }
 
@@ -140,6 +146,9 @@ func ListQueriesHandler(w http.ResponseWriter, r *http.Request) {
 			HasModel:        q.HasModel,
 TrainingFailed:  q.TrainingFailed,
 			TrainingModelID: q.TrainingModelID,
+		ModelName:       q.ModelName,
+		ModelAccuracy:   q.ModelAccuracy,
+		SourceCsvName:   q.SourceCsvName,
 			CreatedAt:       q.CreatedAt.Format(time.RFC3339),
 			FileID:          q.FileID,
 		})
