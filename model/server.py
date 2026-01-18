@@ -1651,6 +1651,7 @@ def analyze():
             try:
                 # Try model_path first (from database), then fallback to model_id.pt
                 model_path = data.get('model_path', '')
+                print(f"DEBUG: Received model_path: {model_path}")
                 if model_path and os.path.exists(model_path):
                     ft_path = model_path
                 elif model_path:
@@ -1725,6 +1726,7 @@ def analyze():
             try:
                 # Try model_path first (from database), then fallback to model_id.pt
                 model_path = data.get('model_path', '')
+                print(f"DEBUG: Received model_path: {model_path}")
                 if model_path and os.path.exists(model_path):
                     ft_path = model_path
                 elif model_path:
