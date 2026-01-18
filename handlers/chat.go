@@ -618,7 +618,7 @@ func ChatHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Printf("DEBUG: FineTunedModel = '%s'\n", req.FineTunedModel)
 	if req.FineTunedModel != "" && req.FineTunedModel != "none" {
 actualFileID := req.FileID
-var modelInfo struct { SourceFileID string; ModelPath string }
+var modelInfo struct { SourceFileID string `gorm:"column:source_file_id"`; ModelPath string `gorm:"column:model_path"` }
 err := DB.Table("fine_tuned_models").Where("id = ? OR name = ?", req.FineTunedModel, req.FineTunedModel).Select("source_file_id, model_path").First(&modelInfo).Error
 fmt.Printf("DEBUG Model lookup: ID=%s, err=%v, SourceFileID=%s, ModelPath=%s\n", req.FineTunedModel, err, modelInfo.SourceFileID, modelInfo.ModelPath)
 if err == nil && modelInfo.SourceFileID != "" {
