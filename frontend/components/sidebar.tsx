@@ -1052,7 +1052,7 @@ function SidebarInner() {
               </SidebarMenuItem>
             </SidebarMenu>
             {state === "expanded" ? (
-              <div className="flex-1 overflow-y-auto max-h-[calc(100vh-400px)] min-h-0 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent hover:scrollbar-thumb-muted-foreground/50">
+              <div className="flex-1 overflow-y-auto max-h-[300px] min-h-0 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent hover:scrollbar-thumb-muted-foreground/50">
                 <SidebarMenu>
                   {recentQueries.map((query) => (
                     <SidebarMenuItem key={query.id}>

@@ -830,7 +830,7 @@ function generateWelcomeMessage(files: UploadedFile[], queryName: string, query?
   
   // Show fine-tuned model info if available
   if (query?.modelName && query?.sourceCsvName) {
-    msg += "🤖 **Fine-Tuned Model Information**\n"
+    msg += "**Fine-Tuned Model Information**\n"
     msg += "   • Model: " + query.modelName + "\n"
     msg += "   • Trained on: " + query.sourceCsvName + "\n"
     msg += "   • Accuracy: " + (query.modelAccuracy || 0).toFixed(1) + "%\n\n"
@@ -1150,7 +1150,7 @@ function TrainingIndicator({ progress }: { progress: { epoch: number, epochs: nu
           <div className="space-y-2">
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">Progress</span>
-              <span className="font-medium">{progressPercent.toFixed(0)}%</span>
+              <span className="font-medium truncate max-w-[200px]">{progressPercent.toFixed(0)}%</span>
             </div>
             <div className="h-2 bg-secondary rounded-full overflow-hidden">
               <div 
@@ -1876,7 +1876,7 @@ export default function PlaygroundQueryPage() {
       
       {/* Compare Model Selection Modal */}
       <Dialog open={showCompareModal} onOpenChange={() => {}} modal={true}>
-        <DialogContent className="sm:max-w-lg z-50 bg-background" onPointerDownOutside={(e) => e.preventDefault()} onEscapeKeyDown={(e) => e.preventDefault()}>
+        <DialogContent className="sm:max-w-lg max-w-[90vw] z-50 bg-background overflow-hidden" onPointerDownOutside={(e) => e.preventDefault()} onEscapeKeyDown={(e) => e.preventDefault()}>
           <DialogHeader>
             <DialogTitle>Select a model to continue</DialogTitle>
             <DialogDescription>
@@ -1896,7 +1896,7 @@ export default function PlaygroundQueryPage() {
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
                       <div className="w-2 h-2 rounded-full bg-green-500"></div>
-                      <span className="font-medium">{result.modelName}</span>
+                      <span className="font-medium truncate max-w-[200px]">{result.modelName}</span>
                     </div>
                     <div className="flex items-center gap-3 text-xs text-muted-foreground">
                       <span className="flex items-center gap-1">
