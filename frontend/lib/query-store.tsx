@@ -16,6 +16,7 @@ export type QueryItem = {
   modelName?: string
   modelAccuracy?: number
   sourceCsvName?: string
+  sourceFiles?: string
 }
 
 type AddQueryInput = {
@@ -32,6 +33,7 @@ type AddQueryInput = {
   modelName?: string
   modelAccuracy?: number
   sourceCsvName?: string
+  sourceFiles?: string
 }
 
 type QueryStoreContextType = {
@@ -81,7 +83,8 @@ export function QueryStoreProvider({ children }: { children: ReactNode }) {
               modelName: q.modelName || "",
               modelAccuracy: q.modelAccuracy || 0,
               sourceCsvName: q.sourceCsvName || "",
-              fileId: q.fileId || ""
+              fileId: q.fileId || "",
+              sourceFiles: q.sourceFiles || ""
             }))
             setQueries(loaded)
           }
