@@ -113,6 +113,7 @@ export function QueryStoreProvider({ children }: { children: ReactNode }) {
       modelName: input.modelName || '',
       modelAccuracy: input.modelAccuracy || 0,
       sourceCsvName: input.sourceCsvName || '',
+      sourceFiles: input.sourceFiles || '',
     }
     
     // Add to state immediately for UI
