@@ -705,7 +705,7 @@ function SidebarInner() {
                                         <ChevronRight className={cn("h-4 w-4 text-muted-foreground transition-transform", expandedFolders.includes("files") && "rotate-90")} />
                                         <FileSpreadsheet className="h-4 w-4 text-muted-foreground" />
                                         <span className="text-sm font-medium flex-1">Uploaded Files</span>
-                                        <span className="text-xs text-muted-foreground">{uploadedFiles.filter(f => selectedFiles.includes(f.file_id)).length}/{uploadedFiles.length}</span>
+                                        <span className="text-xs text-muted-foreground">{uploadedFiles.filter(f => !f.folder_id && selectedFiles.includes(f.file_id)).length}/{uploadedFiles.filter(f => !f.folder_id).length}</span>
                                       </button>
                                     </CollapsibleTrigger>
                                   </div>

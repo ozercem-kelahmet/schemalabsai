@@ -117,6 +117,9 @@ func InitAuth() error {
 	rdb = redis.NewClient(&redis.Options{
 		Addr:     redisURL,
 		Password: os.Getenv("REDIS_PASSWORD"),
+		DialTimeout:  3 * time.Second,
+		ReadTimeout:  3 * time.Second,
+		WriteTimeout: 3 * time.Second,
 	})
 
 	return rdb.Ping(ctx).Err()
