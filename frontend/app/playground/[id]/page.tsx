@@ -890,7 +890,7 @@ function MessageBubble({ message, userName, compact = false }: { message: Messag
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const renderContent = () => {
+  const renderedContent = useMemo(() => {
     const { content: cleanContent, charts } = parseCharts(message.content)
     const lines = cleanContent.split("\n")
     const result: React.ReactNode[] = []
@@ -1045,8 +1045,7 @@ function MessageBubble({ message, userName, compact = false }: { message: Messag
     })
 
     return result
-  }
-
+  }, [message.content])
   return (
     <div className={"flex w-full " + (isUser ? "justify-end" : "justify-start")}>
       <div className={"flex gap-2 sm:gap-3 " + (compact ? "max-w-full" : "w-full") + " " + (isUser ? "flex-row-reverse" : "flex-row")}>
@@ -1067,7 +1066,7 @@ function MessageBubble({ message, userName, compact = false }: { message: Messag
             className={"rounded-2xl bg-card border border-border " + (compact ? "px-2 py-1.5" : "px-3 sm:px-4 py-2 sm:py-3")}
           >
             <div className="text-xs sm:text-sm">
-              {renderContent()}
+              {renderedContent}
             </div>
             {showFooter && (
               <div className={"flex flex-wrap items-center mt-2 pt-2 border-t border-border/50 text-muted-foreground " + 
