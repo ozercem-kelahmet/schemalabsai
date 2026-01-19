@@ -1876,7 +1876,7 @@ export default function PlaygroundQueryPage() {
       
       {/* Compare Model Selection Modal */}
       <Dialog open={showCompareModal} onOpenChange={() => {}} modal={true}>
-        <DialogContent className="sm:max-w-lg" onPointerDownOutside={(e) => e.preventDefault()} onEscapeKeyDown={(e) => e.preventDefault()}>
+        <DialogContent className="sm:max-w-lg z-50 bg-background" onPointerDownOutside={(e) => e.preventDefault()} onEscapeKeyDown={(e) => e.preventDefault()}>
           <DialogHeader>
             <DialogTitle>Select a model to continue</DialogTitle>
             <DialogDescription>
