@@ -356,7 +356,7 @@ func GetFileByIDHandler(w http.ResponseWriter, r *http.Request) {
 	userID := r.Header.Get("X-User-ID")
 	
 	var upload UploadedFile
-	result := DB.Where("id = ? AND user_id = ?", fileID, userID).First(&upload)
+	result := DB.Where("(id = ? OR filename = ? OR filename LIKE ?) AND user_id = ?", fileID, fileID, fileID+"%", userID).First(&upload)
 	
 	if result.Error != nil {
 		http.Error(w, "File not found", http.StatusNotFound)
