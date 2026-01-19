@@ -38,6 +38,7 @@ interface FineTunedModel {
   version: number
   source_file_id: string
   source_name: string
+  source_files?: string
   model_path: string
   accuracy: number
   epochs: number

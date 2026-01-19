@@ -1338,8 +1338,19 @@ export default function PlaygroundQueryPage() {
     if (currentQuery && uploadedFiles.length > 0 && !hasInitializedChat) { 
       let files: UploadedFile[] = []
       
-      // ÖNCE currentQuery.fileId'ye bak (model'in training file'ı)
-      if (currentQuery.fileId) {
+      // ÖNCE sourceFiles'a bak (orijinal dosyalar)
+      if ((currentQuery as any).sourceFiles) {
+        const sourceFileIds = (currentQuery as any).sourceFiles.split(",")
+        files = sourceFileIds
+          .map((id: string) => uploadedFiles.find(f => f.file_id === id || f.file_id === id + ".csv"))
+          .filter(Boolean) as UploadedFile[]
+        if (files.length > 0) {
+          console.log("Using sourceFiles:", sourceFileIds, files.map(f => f.filename))
+        }
+      }
+      
+      // sourceFiles yoksa fileId'ye bak
+      if (files.length === 0 && currentQuery.fileId) {
         const fileById = uploadedFiles.find(f => f.file_id === currentQuery.fileId)
         if (fileById) {
           files = [fileById]

@@ -21,6 +21,7 @@ TrainingFailed  bool     `json:"trainingFailed"`
 	ModelName       string   `json:"modelName"`
 	ModelAccuracy   float64  `json:"modelAccuracy"`
 	SourceCsvName   string   `json:"sourceCsvName"`
+	SourceFiles     string   `json:"sourceFiles"`
 }
 
 type QueryResponse struct {
@@ -36,6 +37,7 @@ TrainingFailed  bool     `json:"trainingFailed"`
 	ModelName       string   `json:"modelName"`
 	ModelAccuracy   float64  `json:"modelAccuracy"`
 	SourceCsvName   string   `json:"sourceCsvName"`
+	SourceFiles     string   `json:"sourceFiles"`
 	CreatedAt       string   `json:"createdAt"`
 }
 
@@ -137,6 +139,15 @@ func ListQueriesHandler(w http.ResponseWriter, r *http.Request) {
 			fileIDs[i] = qf.FileID
 		}
 
+		// Get source_files from fine_tuned_model
+		sourceFiles := ""
+		if q.TrainingModelID != nil && *q.TrainingModelID != "" {
+			var model FineTunedModel
+			if err := DB.Where("id = ?", *q.TrainingModelID).First(&model).Error; err == nil {
+				sourceFiles = model.SourceFiles
+			}
+		}
+
 		response = append(response, QueryResponse{
 			ID:              q.ID,
 			Name:            q.Name,
@@ -151,6 +162,7 @@ TrainingFailed:  q.TrainingFailed,
 		SourceCsvName:   q.SourceCsvName,
 			CreatedAt:       q.CreatedAt.Format(time.RFC3339),
 			FileID:          q.FileID,
+			SourceFiles:     sourceFiles,
 		})
 	}
 
