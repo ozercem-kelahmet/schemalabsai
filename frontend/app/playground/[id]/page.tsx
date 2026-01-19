@@ -102,7 +102,11 @@ function parseCharts(text: string): { content: string; charts: ChartData[] } {
   }
   
   const cleanContent = text.replace(chartRegex, '').trim()
-  return { content: cleanContent, charts }
+  
+  // Also hide incomplete chart tags (streaming)
+  const finalContent = cleanContent.replace(/\[CHART:\w+\][\s\S]*$/, '').trim()
+  
+  return { content: finalContent, charts }
 }
 
 // Tooltip component
