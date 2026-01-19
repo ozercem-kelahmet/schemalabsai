@@ -25,33 +25,46 @@ scp -r frontend/hooks $SERVER:$REMOTE_DIR/frontend/
 scp -r frontend/app $SERVER:$REMOTE_DIR/frontend/
 scp frontend/package.json frontend/tsconfig.json frontend/next.config.mjs $SERVER:$REMOTE_DIR/frontend/
 
-# 3. Stop services
-echo "🛑 Stopping services..."
-ssh $SERVER "sudo pkill -9 -f '/opt/schemalabsai/schemalabsai' || true; sudo pkill -9 -f 'next-server' || true; sudo pkill -9 -f 'server.py' || true; sleep 2"
+# 3. Remote script oluştur ve çalıştır
+echo "🔧 Building and restarting..."
+ssh $SERVER 'bash -s' << 'REMOTE'
+cd /opt/schemalabsai
 
-# 4. Build Go
-echo "🔨 Building Go..."
-ssh $SERVER "cd $REMOTE_DIR && /usr/local/go/bin/go build -o schemalabsai ."
+# Stop
+sudo pkill -9 -f '/opt/schemalabsai/schemalabsai' 2>/dev/null || true
+sudo pkill -9 -f 'next-server' 2>/dev/null || true
+sudo pkill -9 -f 'server.py' 2>/dev/null || true
+sleep 2
 
-# 5. Build Frontend
-echo "🔨 Building Frontend..."
-ssh $SERVER "cd $REMOTE_DIR/frontend && npm run build"
+# Build Go
+echo "Building Go..."
+/usr/local/go/bin/go build -o schemalabsai .
 
-# 6. Start Flask
-echo "🚀 Starting Flask..."
-ssh $SERVER "cd $REMOTE_DIR/model && nohup /opt/schemalabsai/venv/bin/python -u server.py > /tmp/flask.log 2>&1 & sleep 3"
+# Build Frontend
+echo "Building Frontend..."
+cd frontend && npm run build && cd ..
 
-# 7. Start Next.js
-echo "🚀 Starting Next.js..."
-ssh $SERVER "cd $REMOTE_DIR/frontend && nohup npm start > /tmp/next.log 2>&1 & sleep 3"
+# Start Flask
+echo "Starting Flask..."
+cd model && nohup /opt/schemalabsai/venv/bin/python -u server.py > /tmp/flask.log 2>&1 &
+cd ..
+sleep 3
 
-# 8. Start Go
-echo "🚀 Starting Go server..."
-ssh $SERVER "cd $REMOTE_DIR && nohup ./schemalabsai > /tmp/app.log 2>&1 & sleep 5"
+# Start Next.js  
+echo "Starting Next.js..."
+cd frontend && NODE_OPTIONS=--max-http-header-size=16777216 nohup npm start > /tmp/next.log 2>&1 &
+cd ..
+sleep 3
 
-# 9. Verify
-echo "✅ Verifying..."
-ssh $SERVER "ss -tlnp | grep -E '8080|3000|6000'"
+# Start Go
+echo "Starting Go..."
+nohup ./schemalabsai > /tmp/app.log 2>&1 &
+sleep 5
+
+# Verify
+echo "--- Service Status ---"
+ss -tlnp | grep -E '8080|3000|6000' || echo "Some services not running!"
+REMOTE
 
 echo ""
 echo "✅ Deploy complete!"
