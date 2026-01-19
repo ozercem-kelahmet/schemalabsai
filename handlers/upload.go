@@ -353,7 +353,7 @@ func GetFileByIDHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	// userID already set by AuthMiddleware
-	userID := r.Context().Value("user_id").(string)
+	userID := r.Header.Get("X-User-ID")
 	
 	var upload UploadedFile
 	result := DB.Where("id = ? AND user_id = ?", fileID, userID).First(&upload)
