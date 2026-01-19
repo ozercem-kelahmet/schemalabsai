@@ -21,12 +21,12 @@ type ChatMessage struct {
 }
 
 type ChatRequest struct {
-	Message        string `json:"message"`
-	FileID         string `json:"file_id"`
-	QueryID        string `json:"query_id"`
-	Filename       string `json:"filename"`
-	Model          string `json:"model"`
-	DataContext    string `json:"data_context"`
+	Message     string `json:"message"`
+	FileID      string `json:"file_id"`
+	QueryID     string `json:"query_id"`
+	Filename    string `json:"filename"`
+	Model       string `json:"model"`
+	DataContext string `json:"data_context"`
 	Stream         bool   `json:"stream"`
 	FineTunedModel string `json:"finetuned_model"`
 }
@@ -480,7 +480,7 @@ func callClaudeAPI(messages []ChatMessage, systemPrompt, model string, stream bo
 		MaxTokens: 4096,
 		System:    systemPrompt,
 		Messages:  claudeMessages,
-		Stream:    false,
+		Stream:    stream,
 	}
 
 	reqBody, _ := json.Marshal(claudeReq)
@@ -492,11 +492,7 @@ func callClaudeAPI(messages []ChatMessage, systemPrompt, model string, stream bo
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 
 	resp, err := client.Do(httpReq)
-	if resp.StatusCode != 200 {
-		errBody, _ := io.ReadAll(resp.Body)
-		fmt.Printf("DEBUG OpenAI Error: %s\n", string(errBody))
-		return "", 0, fmt.Errorf("OpenAI error: %d", resp.StatusCode)
-	}
+		; if resp.StatusCode != 200 { errBody, _ := io.ReadAll(resp.Body); fmt.Printf("DEBUG OpenAI Error: %s\n", string(errBody)); return "", 0, fmt.Errorf("OpenAI error: %d", resp.StatusCode) }
 	if err != nil {
 		return "", 0, err
 	}
@@ -558,11 +554,11 @@ func chunkAnalysis(analysis string, maxChars int) []string {
 	if len(analysis) <= maxChars {
 		return []string{analysis}
 	}
-
+	
 	var chunks []string
 	lines := strings.Split(analysis, "\n")
 	var current strings.Builder
-
+	
 	for _, line := range lines {
 		if current.Len()+len(line)+1 > maxChars && current.Len() > 0 {
 			chunks = append(chunks, current.String())
@@ -573,11 +569,11 @@ func chunkAnalysis(analysis string, maxChars int) []string {
 		}
 		current.WriteString(line)
 	}
-
+	
 	if current.Len() > 0 {
 		chunks = append(chunks, current.String())
 	}
-
+	
 	return chunks
 }
 
@@ -588,10 +584,8 @@ func ChatHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req ChatRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		fmt.Printf("DECODE ERROR: %v\n", err)
-		fmt.Printf("DECODE ERROR: %v\n", err)
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil { fmt.Printf("DECODE ERROR: %v\n", err)
+		fmt.Printf("DECODE ERROR: %v\n", err); http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
@@ -625,23 +619,19 @@ func ChatHandler(w http.ResponseWriter, r *http.Request) {
 	var fineTunedResult string
 	fmt.Printf("DEBUG: FineTunedModel = '%s'\n", req.FineTunedModel)
 	if req.FineTunedModel != "" && req.FineTunedModel != "none" {
-		actualFileID := req.FileID
-		var modelInfo struct {
-			SourceFileID string `gorm:"column:source_file_id"`
-			ModelPath    string `gorm:"column:model_path"`
-		}
-		err := DB.Table("fine_tuned_models").Where("id = ? OR name = ?", req.FineTunedModel, req.FineTunedModel).Select("source_file_id, model_path").First(&modelInfo).Error
-		fmt.Printf("DEBUG Model lookup: ID=%s, err=%v, SourceFileID=%s, ModelPath=%s\n", req.FineTunedModel, err, modelInfo.SourceFileID, modelInfo.ModelPath)
-		if err == nil && modelInfo.SourceFileID != "" {
-			actualFileID = modelInfo.SourceFileID
-			fmt.Printf("DEBUG: Using model SourceFileID: %s\n", actualFileID)
-		}
-		result, err := callFineTunedModel(req.FineTunedModel, actualFileID, req.Message, modelInfo.ModelPath)
+actualFileID := req.FileID
+var modelInfo struct { SourceFileID string `gorm:"column:source_file_id"`; ModelPath string `gorm:"column:model_path"` }
+err := DB.Table("fine_tuned_models").Where("id = ? OR name = ?", req.FineTunedModel, req.FineTunedModel).Select("source_file_id, model_path").First(&modelInfo).Error
+fmt.Printf("DEBUG Model lookup: ID=%s, err=%v, SourceFileID=%s, ModelPath=%s\n", req.FineTunedModel, err, modelInfo.SourceFileID, modelInfo.ModelPath)
+if err == nil && modelInfo.SourceFileID != "" {
+	actualFileID = modelInfo.SourceFileID
+	fmt.Printf("DEBUG: Using model SourceFileID: %s\n", actualFileID)
+}
+result, err := callFineTunedModel(req.FineTunedModel, actualFileID, req.Message, modelInfo.ModelPath)
 		if err != nil {
 			fmt.Printf("Fine-tuned model error: %v\\n", err)
 		} else {
-			fineTunedResult = result
-			fmt.Printf("DEBUG fineTunedResult length: %d\n", len(fineTunedResult))
+			fineTunedResult = result; fmt.Printf("DEBUG fineTunedResult length: %d\n", len(fineTunedResult))
 		}
 	}
 
@@ -649,9 +639,7 @@ func ChatHandler(w http.ResponseWriter, r *http.Request) {
 	basePrompt := getSystemPrompt(req.Filename, req.DataContext, "")
 	var systemPrompt string
 	if fineTunedResult != "" {
-		chunks := chunkAnalysis(fineTunedResult, 80000)
-		fmt.Printf("DEBUG chunks[0] length: %d\n", len(chunks[0]))
-		systemPrompt = basePrompt + "\n\n### Analysis (Part 1/" + fmt.Sprintf("%d", len(chunks)) + "):\n" + chunks[0]
+	; chunks := chunkAnalysis(fineTunedResult, 80000); fmt.Printf("DEBUG chunks[0] length: %d\n", len(chunks[0])); systemPrompt = basePrompt + "\n\n### Analysis (Part 1/" + fmt.Sprintf("%d", len(chunks)) + "):\n" + chunks[0]; 
 	} else {
 		systemPrompt = basePrompt
 	}
@@ -670,7 +658,7 @@ func ChatHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Check if Claude model - use non-streaming
 	if isClaudeModel(req.Model) {
-		req.Stream = false // Enable streaming for Claude
+		req.Stream = true  // Enable streaming for Claude
 		if req.Stream {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set("Cache-Control", "no-cache")
@@ -684,10 +672,7 @@ func ChatHandler(w http.ResponseWriter, r *http.Request) {
 			}
 
 			historyMutex.Lock()
-			fmt.Printf("DEBUG LLM Response: %s\n", response)
-			if len(response) > 10 {
-				conversationHistory[sessionID] = append(conversationHistory[sessionID], ChatMessage{Role: "assistant", Content: response})
-			}
+			fmt.Printf("DEBUG LLM Response: %s\n", response); if len(response) > 10 { conversationHistory[sessionID] = append(conversationHistory[sessionID], ChatMessage{Role: "assistant", Content: response}) }
 			historyMutex.Unlock()
 
 			// Save to DB
@@ -708,10 +693,7 @@ func ChatHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		historyMutex.Lock()
-		fmt.Printf("DEBUG LLM Response: %s\n", response)
-		if len(response) > 10 {
-			conversationHistory[sessionID] = append(conversationHistory[sessionID], ChatMessage{Role: "assistant", Content: response})
-		}
+		fmt.Printf("DEBUG LLM Response: %s\n", response); if len(response) > 10 { conversationHistory[sessionID] = append(conversationHistory[sessionID], ChatMessage{Role: "assistant", Content: response}) }
 		historyMutex.Unlock()
 
 		// Save to DB
@@ -749,6 +731,7 @@ func ChatHandler(w http.ResponseWriter, r *http.Request) {
 	messages := []ChatMessage{{Role: "system", Content: systemPrompt}}
 	messages = append(messages, history...)
 
+	
 	// STREAMING
 	if req.Stream {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -777,11 +760,7 @@ func ChatHandler(w http.ResponseWriter, r *http.Request) {
 		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 
 		resp, err := client.Do(httpReq)
-		if resp.StatusCode != 200 {
-			errBody, _ := io.ReadAll(resp.Body)
-			fmt.Printf("DEBUG OpenAI Error: %s\n", string(errBody))
-			return
-		}
+		; if resp.StatusCode != 200 { errBody, _ := io.ReadAll(resp.Body); fmt.Printf("DEBUG OpenAI Error: %s\n", string(errBody)); return }
 		if err != nil {
 			fmt.Fprintf(w, "data: {\"error\":\"API failed\"}\n\n")
 			flusher.Flush()
@@ -806,7 +785,7 @@ func ChatHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			if strings.HasPrefix(line, "data: ") {
 				jsonData := strings.TrimPrefix(line, "data: ")
-				var streamResp OpenAIResponse
+				; var streamResp OpenAIResponse
 				if json.Unmarshal([]byte(jsonData), &streamResp) == nil && len(streamResp.Choices) > 0 {
 					content := streamResp.Choices[0].Delta.Content
 					if content != "" {
@@ -820,9 +799,7 @@ func ChatHandler(w http.ResponseWriter, r *http.Request) {
 
 		// Save history
 		historyMutex.Lock()
-		if fullResponse.Len() > 10 {
-			conversationHistory[sessionID] = append(conversationHistory[sessionID], ChatMessage{Role: "assistant", Content: fullResponse.String()})
-		}
+		if fullResponse.Len() > 10 { conversationHistory[sessionID] = append(conversationHistory[sessionID], ChatMessage{Role: "assistant", Content: fullResponse.String()}) }
 		historyMutex.Unlock()
 
 		// Save to DB
@@ -849,11 +826,7 @@ func ChatHandler(w http.ResponseWriter, r *http.Request) {
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 
 	resp, err := client.Do(httpReq)
-	if resp.StatusCode != 200 {
-		errBody, _ := io.ReadAll(resp.Body)
-		fmt.Printf("DEBUG OpenAI Error: %s\n", string(errBody))
-		return
-	}
+		; if resp.StatusCode != 200 { errBody, _ := io.ReadAll(resp.Body); fmt.Printf("DEBUG OpenAI Error: %s\n", string(errBody)); return }
 	if err != nil {
 		http.Error(w, "Failed to call OpenAI", http.StatusInternalServerError)
 		return
@@ -873,9 +846,7 @@ func ChatHandler(w http.ResponseWriter, r *http.Request) {
 	assistantMsg := openAIResp.Choices[0].Message.Content
 
 	historyMutex.Lock()
-	if len(assistantMsg) > 10 {
-		conversationHistory[sessionID] = append(conversationHistory[sessionID], ChatMessage{Role: "assistant", Content: assistantMsg})
-	}
+	if len(assistantMsg) > 10 { conversationHistory[sessionID] = append(conversationHistory[sessionID], ChatMessage{Role: "assistant", Content: assistantMsg}) }
 	historyMutex.Unlock()
 
 	// Save to DB
@@ -911,10 +882,10 @@ func callFineTunedModel(modelID string, fileID string, message string, modelPath
 	flaskURL := GetFlaskURL()
 
 	payload := map[string]interface{}{
-		"model_id":   modelID,
-		"file_id":    fileID,
-		"message":    message,
-		"model_path": modelPath,
+		"model_id": modelID,
+"file_id":  fileID,
+		"message":  message,
+"model_path": modelPath,
 	}
 
 	jsonData, _ := json.Marshal(payload)

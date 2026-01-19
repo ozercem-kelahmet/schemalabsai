@@ -105,6 +105,8 @@ interface FineTunedModel {
   epochs?: number
   batch_size?: number
   loss?: number
+  source_name?: string
+  source_files?: string
 }
 
 interface TrainingState {
@@ -546,6 +548,7 @@ function SidebarInner() {
       modelName: selectedModelData?.name || '',
       modelAccuracy: selectedModelData?.accuracy || 0,
       sourceCsvName: selectedModelData?.source_name || '',
+      sourceFiles: selectedModelData?.source_files || '',
     })
 
     pendingNavigationRef.current = newQuery.id
@@ -1049,7 +1052,7 @@ function SidebarInner() {
               </SidebarMenuItem>
             </SidebarMenu>
             {state === "expanded" ? (
-              <div className="flex-1 overflow-y-auto max-h-[360px] min-h-0 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent hover:scrollbar-thumb-muted-foreground/50">
+              <div className="flex-1 overflow-y-auto max-h-[calc(100vh-400px)] min-h-0 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent hover:scrollbar-thumb-muted-foreground/50">
                 <SidebarMenu>
                   {recentQueries.map((query) => (
                     <SidebarMenuItem key={query.id}>

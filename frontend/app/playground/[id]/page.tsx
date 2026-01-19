@@ -1191,8 +1191,8 @@ export default function PlaygroundQueryPage() {
   const { user } = useAuth()
   const queryId = params.id as string
 
-  const { getQuery, isLoaded, updateQuery } = useQueryStore()
-  const currentQuery = useMemo(() => getQuery(queryId), [queryId, getQuery])
+  const { queries, getQuery, isLoaded, updateQuery } = useQueryStore()
+  const currentQuery = useMemo(() => getQuery(queryId), [queryId, getQuery, queries])
 
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
   const [selectedFiles, setSelectedFiles] = useState<UploadedFile[]>([])

@@ -11,10 +11,10 @@ import (
 )
 
 type SearchRequest struct {
-	Query  string `json:"query"`
-	Index  string `json:"index"`
-	Size   int    `json:"size"`
-	From   int    `json:"from"`
+	Query string `json:"query"`
+	Index string `json:"index"`
+	Size  int    `json:"size"`
+	From  int    `json:"from"`
 }
 
 type SearchResult struct {
@@ -27,9 +27,9 @@ type SearchResult struct {
 }
 
 type SearchResponse struct {
-	Results    []SearchResult `json:"results"`
-	Total      int            `json:"total"`
-	Took       int            `json:"took"`
+	Results []SearchResult `json:"results"`
+	Total   int            `json:"total"`
+	Took    int            `json:"took"`
 }
 
 func getElasticURL() string {
@@ -172,7 +172,7 @@ func SearchHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // fallbackSearch - Elasticsearch yoksa PostgreSQL'den arama
-func fallbackSearch(w http.ResponseWriter, r *http.Request, query string, userID string) {
+func fallbackSearch(w http.ResponseWriter, _ *http.Request, query string, userID string) {
 	db := DB
 	if db == nil {
 		http.Error(w, "Database connection error", http.StatusInternalServerError)
