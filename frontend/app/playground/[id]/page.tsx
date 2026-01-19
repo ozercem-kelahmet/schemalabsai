@@ -104,7 +104,7 @@ function parseCharts(text: string): { content: string; charts: ChartData[] } {
   const cleanContent = text.replace(chartRegex, '').trim()
   
   // Also hide incomplete chart tags (streaming)
-  const finalContent = cleanContent.replace(/\[CHART:\w+\][\s\S]*$/, '').trim()
+  const finalContent = cleanContent.replace(/\[CH[A-Z]*:[^\]]*\][\s\S]*$|\[CH[A-Z]*:[^\]]*$|\[CH[A-Z]*$|\[C$|\[$/, '').trim()
   
   return { content: finalContent, charts }
 }

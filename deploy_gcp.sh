@@ -2,6 +2,9 @@
 set -e
 echo "🚀 Deploying to GCP..."
 
+SERVER="ozercemkelahmet@34.9.180.204"
+REMOTE_DIR="/opt/schemalabsai"
+
 cd ~/Desktop/schemalabsai
 
 # 1. Git sync
@@ -13,21 +16,19 @@ git push origin main || true
 
 # 2. Dosyaları yolla
 echo "📁 Syncing files..."
-gcloud compute scp main.go go.mod go.sum schemalabsai-prod-gpu001:/opt/schemalabsai/ --zone=us-central1-b
-gcloud compute scp model/server.py schemalabsai-prod-gpu001:/opt/schemalabsai/model/ --zone=us-central1-b
-gcloud compute scp handlers/*.go schemalabsai-prod-gpu001:/opt/schemalabsai/handlers/ --zone=us-central1-b
-
-# Frontend - recursive
-gcloud compute scp --recurse frontend/components schemalabsai-prod-gpu001:/opt/schemalabsai/frontend/ --zone=us-central1-b
-gcloud compute scp --recurse frontend/lib schemalabsai-prod-gpu001:/opt/schemalabsai/frontend/ --zone=us-central1-b
-gcloud compute scp --recurse frontend/hooks schemalabsai-prod-gpu001:/opt/schemalabsai/frontend/ --zone=us-central1-b
-gcloud compute scp --recurse frontend/app schemalabsai-prod-gpu001:/opt/schemalabsai/frontend/ --zone=us-central1-b
-gcloud compute scp frontend/package.json frontend/tsconfig.json frontend/next.config.mjs schemalabsai-prod-gpu001:/opt/schemalabsai/frontend/ --zone=us-central1-b
+scp main.go go.mod go.sum $SERVER:$REMOTE_DIR/
+scp model/server.py $SERVER:$REMOTE_DIR/model/
+scp handlers/*.go $SERVER:$REMOTE_DIR/handlers/
+scp -r frontend/components $SERVER:$REMOTE_DIR/frontend/
+scp -r frontend/lib $SERVER:$REMOTE_DIR/frontend/
+scp -r frontend/hooks $SERVER:$REMOTE_DIR/frontend/
+scp -r frontend/app $SERVER:$REMOTE_DIR/frontend/
+scp frontend/package.json frontend/tsconfig.json frontend/next.config.mjs $SERVER:$REMOTE_DIR/frontend/
 
 # 3. Remote build ve restart
 echo "🔧 Building and restarting..."
-gcloud compute ssh schemalabsai-prod-gpu001 --zone=us-central1-b --command="
-cd /opt/schemalabsai
+ssh $SERVER "
+cd $REMOTE_DIR
 
 # Stop services
 sudo pkill -9 -f '/opt/schemalabsai/schemalabsai' || true
