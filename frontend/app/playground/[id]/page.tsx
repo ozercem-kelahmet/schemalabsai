@@ -1883,7 +1883,7 @@ export default function PlaygroundQueryPage() {
               Choose which response you want to keep and continue the conversation with that model.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-3 mt-4">
+          <div className="space-y-3 mt-4 overflow-hidden w-full">
             {compareResults.map((result, i) => {
               const firstLine = result.content.split('\n').find(line => line.trim().length > 0) || result.content.substring(0, 100)
               const cleanFirstLine = firstLine.replace(/\*\*/g, '').replace(/^#+\s*/, '').trim()
@@ -1891,7 +1891,7 @@ export default function PlaygroundQueryPage() {
                 <div
                   key={i}
                   onClick={() => handleSelectCompareModel(result, panes[0]?.messages.filter(m => m.role === 'user').pop()?.content || '')}
-                  className="p-4 border border-border rounded-lg cursor-pointer hover:bg-muted/50 hover:border-primary/50 transition-all"
+                  className="p-4 border border-border rounded-lg cursor-pointer hover:bg-muted/50 hover:border-primary/50 transition-all overflow-hidden"
                 >
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
@@ -1909,7 +1909,7 @@ export default function PlaygroundQueryPage() {
                       </span>
                     </div>
                   </div>
-                  <p className="text-sm text-muted-foreground truncate">
+                  <p className="text-sm text-muted-foreground truncate max-w-full">
                     {cleanFirstLine.length > 80 ? cleanFirstLine.substring(0, 80) + '...' : cleanFirstLine}
                   </p>
                 </div>
