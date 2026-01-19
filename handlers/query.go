@@ -74,9 +74,6 @@ func CreateQueryHandler(w http.ResponseWriter, r *http.Request) {
 		SourceCsvName:   req.SourceCsvName,
 		CreatedAt:       time.Now(),
 		UpdatedAt:       time.Now(),
-		ModelName:       req.ModelName,
-		ModelAccuracy:   req.ModelAccuracy,
-		SourceCsvName:   req.SourceCsvName,
 	}
 
 	if err := DB.Create(&query).Error; err != nil {

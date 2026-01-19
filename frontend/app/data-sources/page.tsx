@@ -132,7 +132,7 @@ export default function DataSourcesPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [connectedSources, setConnectedSources] = useState<DataSource[]>([])
   const [currentPage, setCurrentPage] = useState(1)
-  const itemsPerPage = 10
+  const itemsPerPage = 3
   const [searchResults, setSearchResults] = useState<DataSource[]>([])
   const [isSearching, setIsSearching] = useState(false)
   const [folders, setFolders] = useState<FolderType[]>([])

@@ -4,6 +4,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"fmt"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -260,6 +261,7 @@ func main() {
 	// Serve uploaded files
 	// Frontend routes with auth check
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Println("DEBUG CATCH-ALL: ", r.URL.Path)
 		path := r.URL.Path
 
 		// Public routes - no auth needed
