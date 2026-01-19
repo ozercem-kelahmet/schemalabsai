@@ -360,6 +360,7 @@ type FineTunedModel struct {
 	Version      int       `json:"version"`
 	SourceFileID string    `json:"source_file_id"`
 	SourceName   string    `json:"source_name"`
+	SourceFiles  string    `json:"source_files"`
 	ModelPath    string    `json:"model_path"`
 	Accuracy     float64   `json:"accuracy"`
 	Epochs       int       `json:"epochs"`

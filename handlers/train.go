@@ -394,6 +394,7 @@ fmt.Printf("DEBUG: Got merged_file_id from Flask: %s\n", mergedFileID)
 			Version:      1,
 SourceFileID: func() string { if mergedFileID != "" { return mergedFileID }; return strings.Join(req.FileIDs, ",") }(),
 			SourceName:   fmt.Sprintf("%d files merged", len(req.FileIDs)),
+			SourceFiles:  strings.Join(req.FileIDs, ","),
 			ModelPath:    modelPath,
 			Accuracy:     accuracy,
 			Epochs:       req.Epochs,
