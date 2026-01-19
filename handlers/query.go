@@ -74,6 +74,7 @@ func CreateQueryHandler(w http.ResponseWriter, r *http.Request) {
 		ModelName:       req.ModelName,
 		ModelAccuracy:   req.ModelAccuracy,
 		SourceCsvName:   req.SourceCsvName,
+		SourceFiles:     sourceFiles,
 		CreatedAt:       time.Now(),
 		UpdatedAt:       time.Now(),
 	}
@@ -95,6 +96,14 @@ func CreateQueryHandler(w http.ResponseWriter, r *http.Request) {
 			DB.Create(&QueryFile{QueryID: queryID, FileID: fileID})
 		}
 	}
+	// Get source_files from fine_tuned_model
+	sourceFiles := ""
+	if req.TrainingModelID != nil && *req.TrainingModelID != "" {
+		var model FineTunedModel
+		if err := DB.Where("id = ?", *req.TrainingModelID).First(&model).Error; err == nil {
+			sourceFiles = model.SourceFiles
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(QueryResponse{
@@ -109,6 +118,7 @@ func CreateQueryHandler(w http.ResponseWriter, r *http.Request) {
 		ModelName:       req.ModelName,
 		ModelAccuracy:   req.ModelAccuracy,
 		SourceCsvName:   req.SourceCsvName,
+		SourceFiles:     sourceFiles,
 		CreatedAt:       query.CreatedAt.Format(time.RFC3339),
 	})
 }

@@ -31,11 +31,20 @@ ssh $SERVER 'bash -s' << 'REMOTE'
 set -e
 cd /opt/schemalabsai
 
-# Stop
+# Stop ALL processes
 echo "Stopping services..."
 sudo pkill -9 -f '/opt/schemalabsai/schemalabsai' 2>/dev/null || true
 sudo pkill -9 -f 'next-server' 2>/dev/null || true
+sudo pkill -9 -f 'node.*next' 2>/dev/null || true
 sudo pkill -9 -f 'server.py' 2>/dev/null || true
+sudo pkill -9 -f 'python.*server' 2>/dev/null || true
+sleep 3
+
+# Verify ports are free
+echo "Checking ports..."
+sudo fuser -k 6000/tcp 2>/dev/null || true
+sudo fuser -k 3000/tcp 2>/dev/null || true
+sudo fuser -k 8080/tcp 2>/dev/null || true
 sleep 2
 
 # Build Go
@@ -47,24 +56,28 @@ cd /opt/schemalabsai
 echo "Building Frontend..."
 cd /opt/schemalabsai/frontend
 npm run build
+echo "Frontend build complete"
 
 # Start Flask
 echo "Starting Flask..."
 cd /opt/schemalabsai/model
 nohup /opt/schemalabsai/venv/bin/python -u server.py > /tmp/flask.log 2>&1 &
-sleep 3
+sleep 5
+echo "Flask started"
 
 # Start Next.js  
 echo "Starting Next.js..."
 cd /opt/schemalabsai/frontend
 NODE_OPTIONS=--max-http-header-size=16777216 nohup npm start > /tmp/next.log 2>&1 &
-sleep 3
+sleep 5
+echo "Next.js started"
 
 # Start Go
 echo "Starting Go..."
 cd /opt/schemalabsai
 nohup ./schemalabsai > /tmp/app.log 2>&1 &
 sleep 5
+echo "Go started"
 
 # Verify
 echo "--- Service Status ---"
