@@ -167,6 +167,23 @@ if mfid, ok := flaskResp["merged_file_id"].(string); ok && mfid != "" {
 mergedFileID = mfid
 }
 
+
+	// Save merged file to uploaded_files table
+	if mergedFileID != "" && userID != "" {
+		mergedFilePath := "uploads/" + mergedFileID + ".csv"
+		fileInfo, _ := os.Stat(mergedFilePath)
+		fileSize := int64(0)
+		if fileInfo != nil { fileSize = fileInfo.Size() }
+		uploadedFile := UploadedFile{
+			ID:        mergedFileID + ".csv",
+			UserID:    userID,
+			Filename:  mergedFileID + ".csv",
+			Path:      mergedFilePath,
+			Size:      fileSize,
+			CreatedAt: time.Now(),
+		}
+		DB.Create(&uploadedFile)
+	}
 	if DB != nil && userID != "" {
 		ftModel := FineTunedModel{
 			ID:           uuid.New().String(),
@@ -352,6 +369,23 @@ if mfid, ok := flaskResp["merged_file_id"].(string); ok && mfid != "" {
 mergedFileID = mfid
 fmt.Printf("DEBUG: Got merged_file_id from Flask: %s\n", mergedFileID)
 }
+
+	// Save merged file to uploaded_files table
+	if mergedFileID != "" && userID != "" {
+		mergedFilePath := "uploads/" + mergedFileID + ".csv"
+		fileInfo, _ := os.Stat(mergedFilePath)
+		fileSize := int64(0)
+		if fileInfo != nil { fileSize = fileInfo.Size() }
+		uploadedFile := UploadedFile{
+			ID:        mergedFileID + ".csv",
+			UserID:    userID,
+			Filename:  mergedFileID + ".csv",
+			Path:      mergedFilePath,
+			Size:      fileSize,
+			CreatedAt: time.Now(),
+		}
+		DB.Create(&uploadedFile)
+	}
 	// Save to database
 	if DB != nil && userID != "" {
 		ftModel := FineTunedModel{
