@@ -419,6 +419,7 @@ TYPE 14 - EFFICIENCY/OPTIMIZATION ("optimize/improve/efficiency/maximize")
 }
 
 func isClaudeModel(model string) bool {
+	fmt.Printf("DEBUG: isClaudeModel check for: %s, result: %v\n", model, strings.HasPrefix(model, "claude"))
 	return strings.HasPrefix(model, "claude")
 }
 
@@ -450,6 +451,7 @@ func saveMessagesToDB(userID, queryID, userMessage, assistantMessage, model stri
 }
 
 func callClaudeAPI(messages []ChatMessage, systemPrompt, model string, stream bool, w http.ResponseWriter) (string, int, error) {
+	fmt.Printf("DEBUG: callClaudeAPI called with model: %s, stream: %v\n", model, stream)
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 	if apiKey == "" {
 		return "", 0, fmt.Errorf("ANTHROPIC_API_KEY not set")

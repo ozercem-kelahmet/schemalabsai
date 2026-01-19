@@ -1340,6 +1340,7 @@ export default function PlaygroundQueryPage() {
       
       // ÖNCE sourceFiles'a bak (orijinal dosyalar)
       console.log("DEBUG sourceFiles:", (currentQuery as any).sourceFiles)
+      console.log("DEBUG uploadedFiles:", uploadedFiles.map(f => f.file_id))
       if ((currentQuery as any).sourceFiles) {
         const sourceFileIds = (currentQuery as any).sourceFiles.split(",")
         files = sourceFileIds
