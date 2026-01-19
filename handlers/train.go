@@ -191,6 +191,7 @@ mergedFileID = mfid
 			Version:      version,
 			SourceFileID: func() string { if mergedFileID != "" { return mergedFileID }; return req.FileID }(),
 			SourceName:   baseName,
+			SourceFiles:  req.FileID,
 			ModelPath:    modelPath,
 			Accuracy:     accuracy,
 			Epochs:       req.Epochs,
