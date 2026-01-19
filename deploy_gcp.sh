@@ -28,9 +28,11 @@ scp frontend/package.json frontend/tsconfig.json frontend/next.config.mjs $SERVE
 # 3. Remote script oluştur ve çalıştır
 echo "🔧 Building and restarting..."
 ssh $SERVER 'bash -s' << 'REMOTE'
+set -e
 cd /opt/schemalabsai
 
 # Stop
+echo "Stopping services..."
 sudo pkill -9 -f '/opt/schemalabsai/schemalabsai' 2>/dev/null || true
 sudo pkill -9 -f 'next-server' 2>/dev/null || true
 sudo pkill -9 -f 'server.py' 2>/dev/null || true
@@ -38,26 +40,29 @@ sleep 2
 
 # Build Go
 echo "Building Go..."
+cd /opt/schemalabsai
 /usr/local/go/bin/go build -o schemalabsai .
 
 # Build Frontend
 echo "Building Frontend..."
-cd frontend && npm run build && cd ..
+cd /opt/schemalabsai/frontend
+npm run build
 
 # Start Flask
 echo "Starting Flask..."
-cd model && nohup /opt/schemalabsai/venv/bin/python -u server.py > /tmp/flask.log 2>&1 &
-cd ..
+cd /opt/schemalabsai/model
+nohup /opt/schemalabsai/venv/bin/python -u server.py > /tmp/flask.log 2>&1 &
 sleep 3
 
 # Start Next.js  
 echo "Starting Next.js..."
-cd frontend && NODE_OPTIONS=--max-http-header-size=16777216 nohup npm start > /tmp/next.log 2>&1 &
-cd ..
+cd /opt/schemalabsai/frontend
+NODE_OPTIONS=--max-http-header-size=16777216 nohup npm start > /tmp/next.log 2>&1 &
 sleep 3
 
 # Start Go
 echo "Starting Go..."
+cd /opt/schemalabsai
 nohup ./schemalabsai > /tmp/app.log 2>&1 &
 sleep 5
 
