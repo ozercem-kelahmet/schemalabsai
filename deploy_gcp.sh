@@ -25,41 +25,33 @@ scp -r frontend/hooks $SERVER:$REMOTE_DIR/frontend/
 scp -r frontend/app $SERVER:$REMOTE_DIR/frontend/
 scp frontend/package.json frontend/tsconfig.json frontend/next.config.mjs $SERVER:$REMOTE_DIR/frontend/
 
-# 3. Remote build ve restart
-echo "🔧 Building and restarting..."
-ssh $SERVER "
-cd $REMOTE_DIR
+# 3. Stop services
+echo "🛑 Stopping services..."
+ssh $SERVER "sudo pkill -9 -f '/opt/schemalabsai/schemalabsai' || true; sudo pkill -9 -f 'next-server' || true; sudo pkill -9 -f 'server.py' || true; sleep 2"
 
-# Stop services
-sudo pkill -9 -f '/opt/schemalabsai/schemalabsai' || true
-sudo pkill -9 -f 'next-server' || true
-sudo pkill -9 -f 'server.py' || true
-sleep 2
+# 4. Build Go
+echo "🔨 Building Go..."
+ssh $SERVER "cd $REMOTE_DIR && /usr/local/go/bin/go build -o schemalabsai ."
 
-# Build Go
-/usr/local/go/bin/go build -o schemalabsai .
+# 5. Build Frontend
+echo "🔨 Building Frontend..."
+ssh $SERVER "cd $REMOTE_DIR/frontend && npm run build"
 
-# Build Frontend
-cd frontend && npm run build && cd ..
+# 6. Start Flask
+echo "🚀 Starting Flask..."
+ssh $SERVER "cd $REMOTE_DIR/model && nohup /opt/schemalabsai/venv/bin/python -u server.py > /tmp/flask.log 2>&1 & sleep 3"
 
-# Start Flask
-cd model && nohup /opt/schemalabsai/venv/bin/python -u server.py > /tmp/flask.log 2>&1 &
-cd ..
-sleep 3
+# 7. Start Next.js
+echo "🚀 Starting Next.js..."
+ssh $SERVER "cd $REMOTE_DIR/frontend && nohup npm start > /tmp/next.log 2>&1 & sleep 3"
 
-# Start Next.js
-cd frontend && nohup npm start > /tmp/next.log 2>&1 &
-cd ..
-sleep 3
+# 8. Start Go
+echo "🚀 Starting Go server..."
+ssh $SERVER "cd $REMOTE_DIR && nohup ./schemalabsai > /tmp/app.log 2>&1 & sleep 5"
 
-# Start Go
-nohup ./schemalabsai > /tmp/app.log 2>&1 &
-sleep 5
-
-# Verify
-echo '--- Service Status ---'
-ss -tlnp | grep -E '8080|3000|6000'
-"
+# 9. Verify
+echo "✅ Verifying..."
+ssh $SERVER "ss -tlnp | grep -E '8080|3000|6000'"
 
 echo ""
 echo "✅ Deploy complete!"
