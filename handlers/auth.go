@@ -296,7 +296,9 @@ func MeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	fmt.Println("DEBUG: AuthMiddleware called")
 	return func(w http.ResponseWriter, r *http.Request) {
+		fmt.Println("DEBUG: AuthMiddleware handler called for:", r.URL.Path)
 		cookie, err := r.Cookie("session")
 		if err != nil {
 			http.Error(w, "Not authenticated", http.StatusUnauthorized)
@@ -1528,6 +1530,7 @@ func DeleteAPIKeyHandler(w http.ResponseWriter, r *http.Request) {
 func APIKeyAuthMiddleware(requiredPermission string) func(http.HandlerFunc) http.HandlerFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
+		fmt.Println("DEBUG: AuthMiddleware handler called for:", r.URL.Path)
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
 				http.Error(w, "Missing or invalid Authorization header", http.StatusUnauthorized)
