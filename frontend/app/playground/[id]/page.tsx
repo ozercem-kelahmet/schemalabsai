@@ -1861,7 +1861,7 @@ export default function PlaygroundQueryPage() {
               </div>
 
               <div className="border-t border-border p-3 sm:p-4 bg-background shrink-0">
-                <AiChat
+                <AiChat selectedModel={panes[0]?.model || selectedModel}
                   onSend={handleCompareSend}
                   dataSourceName={currentQuery?.sourceCsvName || ""}
                   dataSources={fileNames}
