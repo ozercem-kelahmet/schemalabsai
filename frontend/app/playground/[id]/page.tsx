@@ -1585,6 +1585,8 @@ export default function PlaygroundQueryPage() {
               return newMessages
             })
             setIsLoading(false)
+            // Silent refresh
+            setTimeout(() => setHasInitializedChat(false), 100)
           }
         )
     } catch (error) {
