@@ -66,7 +66,7 @@ interface ChartData {
 
 function parseCharts(text: string): { content: string; charts: ChartData[] } {
   const charts: ChartData[] = []
-  const chartRegex = /\[?CHART:(\w+)\]([\s\S]*?)\[?\/CHART\]/g
+  const chartRegex = /\[?CH(?:ART)?:(\w+)\]([\s\S]*?)\[?\/CH(?:ART)?\]/g
   
   let match
   while ((match = chartRegex.exec(text)) !== null) {
@@ -112,7 +112,7 @@ function parseCharts(text: string): { content: string; charts: ChartData[] } {
     .replace(/\[\/?[A-Z]{0,5}$/gi, '')
     .replace(/\[$/g, '')
     .replace(/\[CHART:[^\]]+\][^\n]*\n?\[\/CHART\]/gi, '')
-    .replace(/^CHART:\w+\].*$/gm, '')
+    .replace(/^CH(?:ART)?:\w+\].*$/gm, '')
     .replace(/^\[\/CHART\]$/gm, '')
     .replace(/^(labels|values|values2|values3|title|xlabel|ylabel|series):[^\n]*$/gm, '')
     .replace(/(labels|values|values2|values3|title|xlabel|ylabel|series):[^\n]*$/g, '')
