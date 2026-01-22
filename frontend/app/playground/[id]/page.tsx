@@ -1412,7 +1412,7 @@ export default function PlaygroundQueryPage() {
           .then(data => {
             if (data.messages && data.messages.length > 0) {
               const loadedMessages = data.messages.map((m: any) => {
-                console.log("Loading message:", m.id, "role:", m.role)
+                console.log("Loading message:", m.id, "role:", m.role, "content length:", m.content?.length, "last 100 chars:", m.content?.slice(-100))
                 return {
                   id: m.id,
                   role: m.role,
