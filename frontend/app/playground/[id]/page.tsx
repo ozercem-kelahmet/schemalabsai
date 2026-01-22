@@ -927,9 +927,8 @@ function MessageBubble({ message, userName, compact = false }: { message: Messag
   }
 
   const renderedContent = useMemo(() => {
-    // Streaming sırasında parse etme, sadece raw text göster
     if (message.isLoading) {
-      return <p className="whitespace-pre-wrap">{message.content}</p>
+      return <div className="flex items-center gap-2 text-muted-foreground"><span className="animate-pulse">●●●</span></div>
     }
     const { content: cleanContent, charts } = parseCharts(message.content)
     const lines = cleanContent.split("\n")
