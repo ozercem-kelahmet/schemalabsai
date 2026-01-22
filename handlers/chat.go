@@ -164,7 +164,7 @@ FILE: ` + filename + `
 4. Use **bold** for key values and entity names
 5. No emojis
 6. For general queries like "show analysis" or "analyze the data": provide COMPREHENSIVE analysis with multiple insights, patterns, and key findings from the data
-7. **CHARTS ARE MANDATORY** - Use [CHART:type]...[/CHART] syntax (bar, hbar, scatter, line, pie). NO text descriptions like "Bar Chart:". ONLY use the exact bracket syntax.
+7. **CHARTS ARE MANDATORY** - Use [CHART:type]...[/CHART] syntax (bar, grouped, stacked, waterfall, bullet, lollipop, diverging, marimekko, parallel, pie, donut, treemap, sunburst, funnel, pyramid, waffle, pictogram, scatter, bubble, heatmap, density, hexbin, contour, network, chord, sankey, alluvial, line, area, stream, ridge, sparkline, candlestick, step, slope, horizon, calendar, gantt, timeline, radar, polar, radial, boxplot, violin, beeswarm, strip, raincloud, ridgeline, parallel_coordinates, andrews, radviz). NO text descriptions like "Bar Chart:". ONLY use the exact bracket syntax.
 8. **TABLES MUST BE RICH** - NEVER use 2-column tables. MINIMUM 5 columns, MAXIMUM 10 columns. Always add: Rank, derived metrics (ratios, %), comparisons (vs avg), and context.
 9. **CLEAN COLUMN NAMES** - Remove dataset prefixes and technical codes from column names in tables. Transform "e37c459c_frame_start_sum" → "Frame Start Sum", "player_id_xyz" → "Player ID". Make column names human-readable.
 10. **NO BOLD FORMATTING** - Never use **Bold Text** for section titles or numbered headers like "**1. Maximum Speed**" or "**Sprint Performance by Position**". These waste space. Go directly to tables, insights, and charts without any bold headers or titles.
@@ -211,7 +211,7 @@ TYPE 1 - RANKING ("who/which has most/least/highest/lowest")
 → CONCISE format (3-5 sentences total):
   - Lead sentence with direct answer: "X leads with [value]"
   - One ranking table (5-7 columns)
-  - One hbar chart
+  - One bar chart
   - Brief insight (1 sentence)
 NO multi-section analysis! Just answer the question.
 
@@ -223,7 +223,7 @@ TYPE 2 - RELATIONSHIP ("relationship between X and Y" or "compare X and Y")
 TYPE 3 - RATIO/EFFICIENCY ("efficient/per/ratio/per minute/per game")
 → Calculate: Metric1 / Metric2
 → Ranking by calculated score
-→ hbar chart of scores
+→ bar chart of scores
 
 TYPE 4 - DISTRIBUTION ("percentage/breakdown/distribution")
 → Percentage table
@@ -245,8 +245,8 @@ Use markdown tables:
 
 You MUST use this EXACT syntax for charts. NO exceptions.
 
-For single metric (hbar, bar, pie, line):
-[CHART:hbar]
+For single metric (bar, pie, line):
+[CHART:bar]
 labels: EntityA, EntityB, EntityC, EntityD, EntityE
 values: 100, 85, 70, 55, 40
 title: Descriptive Title Here
@@ -263,7 +263,7 @@ title: MetricX vs MetricY
 CHART TYPES (50+ options):
 
 **COMPARISONS & RANKINGS (10 types)**
-- hbar: Horizontal bar - rankings, comparisons (most common)
+
 - bar: Vertical bar - categories
 - grouped: Side-by-side comparison bars (MUST have values2)
 - stacked: Stacked bars showing composition
@@ -326,9 +326,9 @@ CHART TYPES (50+ options):
 
 **CHART SELECTION GUIDE BY QUERY:**
 
-1. **Rankings/Top/Best** → hbar, lollipop, bullet
+1. **Rankings/Top/Best** → bar, lollipop, bullet
 2. **Compare 2-3 entities** → grouped, diverging, radar
-3. **Compare many entities** → hbar, bar, treemap
+3. **Compare many entities** → bar, treemap
 4. **Correlation/Relationship** → scatter, bubble, heatmap
 5. **Proportions/Percentages** → pie, donut, treemap, waffle
 6. **Trends over time** → line, area, stream, sparkline
@@ -366,7 +366,7 @@ TYPE 6 - SWOT ANALYSIS ("swot/strengths/weaknesses")
 TYPE 7 - RISK ANALYSIS ("risk/danger/concern/warning")
 → Risk matrix table:
 | Risk Factor | Likelihood | Impact | Score | Mitigation |
-→ hbar chart of risk scores
+→ bar chart of risk scores
 → Priority actions
 
 TYPE 8 - TREND ANALYSIS ("trend/over time/progression/change")

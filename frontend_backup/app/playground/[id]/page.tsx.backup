@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Columns, Plus, Copy, Clock, Zap, X, Check, Loader2, ArrowDown } from "lucide-react"
+import { Columns, Plus, Copy, Clock, Zap, X, Check, Loader2 } from "lucide-react"
 import AiChat from "@/components/ai-chat"
 import { useAuth } from "@/lib/auth"
 import { useQueryStore } from "@/lib/query-store"
@@ -102,70 +102,7 @@ function parseCharts(text: string): { content: string; charts: ChartData[] } {
   }
   
   const cleanContent = text.replace(chartRegex, '').trim()
-  
-  let result = cleanContent
-    .replace(/\[CHART:[a-z_]*\][\s\S]*$/gi, '')
-    .replace(/\[CHART:[a-z_]*$/gi, '')
-    .replace(/\[CHAR[T]?:?[a-z_]*$/gi, '')
-    .replace(/\[CHA?R?T?:?$/gi, '')
-    .replace(/\[C?H?A?R?$/gi, '')
-    .replace(/\[\/?[A-Z]{0,5}$/gi, '')
-    .replace(/\[$/g, '')
-    .replace(/^(labels|values|values2|values3|title|xlabel|ylabel|series):[^\n]*$/gm, '')
-    .replace(/(labels|values|values2|values3|title|xlabel|ylabel|series):[^\n]*$/g, '')
-  
-  const lines = result.split('\n')
-  const cleanLines: string[] = []
-  let tableBuffer: string[] = []
-  
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-    const trimmed = line.trim()
-    const isCompleteTableRow = trimmed.startsWith('|') && trimmed.endsWith('|') && trimmed.length > 2
-    const isCompleteSeparator = /^\|[\-:\|\s]+\|$/.test(trimmed)
-    const isPartialRow = trimmed.startsWith('|') && !trimmed.endsWith('|')
-    const isPartialSeparator = /^\|[\-:\s]*$/.test(trimmed) || /^[\-:\|\s]+$/.test(trimmed)
-    
-    if (isCompleteTableRow || isCompleteSeparator) {
-      tableBuffer.push(line)
-    } else if (isPartialRow || (isPartialSeparator && !isCompleteSeparator)) {
-      if (tableBuffer.length >= 2) {
-        const hasHeader = tableBuffer[0].trim().startsWith('|') && tableBuffer[0].trim().endsWith('|')
-        const hasSeparator = tableBuffer.some(r => /^\|[\-:\|\s]+\|$/.test(r.trim()))
-        if (hasHeader && hasSeparator) {
-          cleanLines.push(...tableBuffer)
-        }
-      }
-      tableBuffer = []
-      continue
-    } else {
-      if (tableBuffer.length >= 2) {
-        const hasHeader = tableBuffer[0].trim().startsWith('|') && tableBuffer[0].trim().endsWith('|')
-        const hasSeparator = tableBuffer.some(r => /^\|[\-:\|\s]+\|$/.test(r.trim()))
-        if (hasHeader && hasSeparator) {
-          cleanLines.push(...tableBuffer)
-        }
-      }
-      tableBuffer = []
-      if (trimmed !== '') {
-        cleanLines.push(line)
-      }
-    }
-  }
-  
-  if (tableBuffer.length >= 2) {
-    const lastRow = tableBuffer[tableBuffer.length - 1].trim()
-    const hasHeader = tableBuffer[0].trim().startsWith('|') && tableBuffer[0].trim().endsWith('|')
-    const hasSeparator = tableBuffer.some(r => /^\|[\-:\|\s]+\|$/.test(r.trim()))
-    const lastComplete = lastRow.startsWith('|') && lastRow.endsWith('|')
-    if (hasHeader && hasSeparator && lastComplete) {
-      cleanLines.push(...tableBuffer)
-    }
-  }
-  
-  const finalContent = cleanLines.join('\n').replace(/\n{3,}/g, '\n\n').trim()
-  
-  return { content: finalContent, charts }
+  return { content: cleanContent, charts }
 }
 
 // Tooltip component
@@ -219,6 +156,33 @@ function AdvancedChart({ type, labels, values, values2, values3, title, xlabel, 
       </div>
     )
   }
+
+  // 2. HORIZONTAL BAR CHART
+  if (type === 'hbar') {
+    return (
+      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl shadow-sm relative">
+        {title && <p className="text-sm font-semibold mb-3 text-gray-700">{title}</p>}
+        <div className="space-y-2">
+          {labels.map((label, i) => (
+            <div key={i} className="flex items-center gap-2 group cursor-pointer"
+              onMouseMove={(e) => showTooltip(e, `${label}: ${(values[i] ?? 0).toLocaleString()}`)}
+              onMouseLeave={hideTooltip}>
+              <span className="text-xs w-24 truncate text-gray-600 text-right">{label}</span>
+              <div className="flex-1 bg-gray-200 rounded-full h-6 overflow-hidden">
+                <div className="h-full rounded-full transition-all duration-500 flex items-center justify-end pr-2 group-hover:opacity-80"
+                  style={{ width: `${(values[i] / maxValue) * 100}%`, backgroundColor: colors[i % colors.length] }}>
+                  <span className="text-[10px] text-white font-medium opacity-0 group-hover:opacity-100">{(values[i] ?? 0).toLocaleString()}</span>
+                </div>
+              </div>
+              <span className="text-xs w-16 font-medium text-right">{(values[i] ?? 0).toLocaleString()}</span>
+            </div>
+          ))}
+        </div>
+        <Tooltip {...tooltip} />
+      </div>
+    )
+  }
+
   // 3. GROUPED BAR CHART
   if (type === 'grouped' && values2) {
     const groupMax = Math.max(...values, ...values2)
@@ -853,34 +817,19 @@ function formatFileSize(bytes: number): string {
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
 }
 
-function generateWelcomeMessage(files: UploadedFile[], queryName: string, query?: any): string {
+function generateWelcomeMessage(files: UploadedFile[], queryName: string): string {
   if (files.length === 0) {
     return "Welcome to \"" + queryName + "\"! Please select data sources to begin analysis."
   }
 
   let msg = "**Welcome to \"" + queryName + "\"**\n\n"
-  
-  // Show fine-tuned model info if available
-  if (query?.modelName && query?.sourceCsvName) {
-    msg += "**Fine-Tuned Model Information**\n"
-    msg += "   • Model: " + query.modelName + "\n"
-    msg += "   • Trained on: " + query.sourceCsvName + "\n"
-    msg += "   • Accuracy: " + (query.modelAccuracy || 0).toFixed(1) + "%\n\n"
-  }
-  
-  // If fine-tuned model with sourceCsvName, show that instead of files list
-  if (query?.sourceCsvName && query?.modelName) {
-    msg += "I've loaded the training data for analysis:\n\n"
-    msg += "📄 **" + query.sourceCsvName + "**\n"
+  msg += "I've loaded " + files.length + " data source" + (files.length > 1 ? "s" : "") + " for analysis:\n\n"
+
+  files.forEach((file) => {
+    msg += "📄 **" + file.filename + "**\n"
+    msg += "   • Size: " + formatFileSize(file.size) + "\n"
     msg += "   • Ready for analysis\n\n"
-  } else {
-    msg += "I've loaded " + files.length + " data source" + (files.length > 1 ? "s" : "") + " for analysis:\n\n"
-    files.forEach((file) => {
-      msg += "📄 **" + file.filename + "**\n"
-      msg += "   • Size: " + formatFileSize(file.size) + "\n"
-      msg += "   • Ready for analysis\n\n"
-    })
-  }
+  })
 
   msg += "**What I can help you with:**\n"
   msg += "• Data exploration and statistical analysis\n"
@@ -926,7 +875,7 @@ function MessageBubble({ message, userName, compact = false }: { message: Messag
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const renderedContent = useMemo(() => {
+  const renderContent = () => {
     const { content: cleanContent, charts } = parseCharts(message.content)
     const lines = cleanContent.split("\n")
     const result: React.ReactNode[] = []
@@ -1081,7 +1030,8 @@ function MessageBubble({ message, userName, compact = false }: { message: Messag
     })
 
     return result
-  }, [message.content])
+  }
+
   return (
     <div className={"flex w-full " + (isUser ? "justify-end" : "justify-start")}>
       <div className={"flex gap-2 sm:gap-3 " + (compact ? "max-w-full" : "w-full") + " " + (isUser ? "flex-row-reverse" : "flex-row")}>
@@ -1102,7 +1052,7 @@ function MessageBubble({ message, userName, compact = false }: { message: Messag
             className={"rounded-2xl bg-card border border-border " + (compact ? "px-2 py-1.5" : "px-3 sm:px-4 py-2 sm:py-3")}
           >
             <div className="text-xs sm:text-sm">
-              {renderedContent}
+              {renderContent()}
             </div>
             {showFooter && (
               <div className={"flex flex-wrap items-center mt-2 pt-2 border-t border-border/50 text-muted-foreground " + 
@@ -1182,7 +1132,7 @@ function TrainingIndicator({ progress }: { progress: { epoch: number, epochs: nu
           <div className="space-y-2">
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">Progress</span>
-              <span className="font-medium truncate max-w-[200px]">{progressPercent.toFixed(0)}%</span>
+              <span className="font-medium">{progressPercent.toFixed(0)}%</span>
             </div>
             <div className="h-2 bg-secondary rounded-full overflow-hidden">
               <div 
@@ -1223,8 +1173,8 @@ export default function PlaygroundQueryPage() {
   const { user } = useAuth()
   const queryId = params.id as string
 
-  const { queries, getQuery, isLoaded, updateQuery } = useQueryStore()
-  const currentQuery = useMemo(() => getQuery(queryId), [queryId, getQuery, queries])
+  const { getQuery, isLoaded, updateQuery } = useQueryStore()
+  const currentQuery = getQuery(queryId)
 
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([])
   const [selectedFiles, setSelectedFiles] = useState<UploadedFile[]>([])
@@ -1246,7 +1196,6 @@ export default function PlaygroundQueryPage() {
   const [trainingProgress, setTrainingProgress] = useState({ epoch: 0, epochs: 10, batch: 0, batches: 100, accuracy: 0, loss: 0, eta: "", status: "" })
   const pollRef = useRef<NodeJS.Timeout | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const [showScrollButton, setShowScrollButton] = useState(false)
   
   const [panes, setPanes] = useState<ComparePane[]>([
     { id: "1", model: "gpt-4o", messages: [], isLoading: false },
@@ -1368,45 +1317,17 @@ export default function PlaygroundQueryPage() {
 
   useEffect(() => {
     if (currentQuery && uploadedFiles.length > 0 && !hasInitializedChat) { 
-      let files: UploadedFile[] = []
+      let files = currentQuery.dataSources
+        .map(id => uploadedFiles.find(f => f.file_id === id))
+        .filter(Boolean) as UploadedFile[]
       
-      // ÖNCE sourceFiles'a bak (orijinal dosyalar)
-      console.log("DEBUG sourceFiles:", (currentQuery as any).sourceFiles)
-      console.log("DEBUG uploadedFiles:", uploadedFiles.map(f => f.file_id))
-      if ((currentQuery as any).sourceFiles) {
-        const sourceFileIds = (currentQuery as any).sourceFiles.split(",")
-        files = sourceFileIds
-          .map((id: string) => uploadedFiles.find(f => f.file_id === id || f.file_id === id + ".csv"))
-          .filter(Boolean) as UploadedFile[]
-        if (files.length > 0) {
-          console.log("Using sourceFiles:", sourceFileIds, files.map(f => f.filename))
-        }
-      }
-      
-      // sourceFiles yoksa fileId'ye bak
-      if (files.length === 0 && currentQuery.fileId) {
-        const fileById = uploadedFiles.find(f => f.file_id === currentQuery.fileId)
-        if (fileById) {
-          files = [fileById]
-          console.log("Using fileId from query:", currentQuery.fileId, fileById.filename)
-        }
-      }
-      
-      // fileId yoksa dataSources'a bak
-      if (files.length === 0) {
-        files = currentQuery.dataSources
-          .map(id => uploadedFiles.find(f => f.file_id === id))
-          .filter(Boolean) as UploadedFile[]
-      }
-      
-      // Fallback: use most recent
+      // Fallback: if no matching files, use most recent uploaded file
       if (files.length === 0 && uploadedFiles.length > 0) {
         files = [uploadedFiles[uploadedFiles.length - 1]]
         console.log("Using fallback file:", files[0].filename)
       }
       
       setSelectedFiles(files)
-
       
       // Try to load messages from DB first
       if (files.length > 0) {
@@ -1427,18 +1348,18 @@ export default function PlaygroundQueryPage() {
               })
               setMessages(loadedMessages)
             } else {
-              const welcomeMsg = generateWelcomeMessage(files, currentQuery.name, currentQuery)
+              const welcomeMsg = generateWelcomeMessage(files, currentQuery.name)
               setMessages([{ id: "welcome", role: "assistant", content: welcomeMsg, isLoading: false }])
             }
             setHasInitializedChat(true)
           })
           .catch(() => {
-            const welcomeMsg = generateWelcomeMessage(files, currentQuery.name, currentQuery)
+            const welcomeMsg = generateWelcomeMessage(files, currentQuery.name)
             setMessages([{ id: "welcome", role: "assistant", content: welcomeMsg, isLoading: false }])
             setHasInitializedChat(true)
           })
       } else {
-        const welcomeMsg = generateWelcomeMessage(files, currentQuery.name, currentQuery)
+        const welcomeMsg = generateWelcomeMessage(files, currentQuery.name)
         setMessages([{ id: "welcome", role: "assistant", content: welcomeMsg, isLoading: false }])
         setHasInitializedChat(true)
       }
@@ -1456,19 +1377,6 @@ export default function PlaygroundQueryPage() {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
   }, [messages, isLoading])
-
-  // Scroll button visibility
-  useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-    const checkScroll = () => {
-      const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100
-      setShowScrollButton(!isNearBottom)
-    }
-    el.addEventListener("scroll", checkScroll)
-    checkScroll()
-    return () => el.removeEventListener("scroll", checkScroll)
-  }, [messages])
 
   const primaryFile = selectedFiles[0]
   const fileNames = selectedFiles.map(f => f.filename)
@@ -1799,8 +1707,8 @@ export default function PlaygroundQueryPage() {
           </div>
 
           {!compareMode ? (
-            <div className="flex-1 flex flex-col relative min-h-0">
-              <div className="flex-1 min-h-0 p-3 sm:p-6 overflow-y-auto" ref={scrollRef}>
+            <div className="flex-1 flex flex-col">
+              <ScrollArea className="flex-1 p-3 sm:p-6" ref={scrollRef}>
                 <div className="max-w-3xl mx-auto space-y-4 sm:space-y-6 pt-12 sm:pt-14 pb-4">
                   {(trainingProgress.status !== "failed" && !currentQuery?.trainingFailed) && messages.map((message, i) => (
                     <MessageBubble userName={user?.name} key={i} message={message} />
@@ -1813,24 +1721,13 @@ export default function PlaygroundQueryPage() {
                     <TypingIndicator />
                   ) : null}
                 </div>
-
-              </div>
-
-              {/* Scroll to bottom button */}
-              {showScrollButton && (
-                <button
-                  onClick={() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })}
-                  className="absolute bottom-52 left-1/2 -translate-x-1/2 p-2 bg-background border border-border rounded-full shadow-lg hover:bg-accent transition-all z-10"
-                >
-                  <ArrowDown className="h-4 w-4" />
-                </button>
-              )}
+              </ScrollArea>
 
               <div className="p-3 sm:p-6 pb-4 sm:pb-8">
                 <AiChat
                   selectedModel={selectedModel}
                   onSend={handleSingleSend}
-                  dataSourceName={currentQuery?.sourceCsvName || ""}
+                  dataSourceName={primaryFile?.filename}
                   dataSources={fileNames}
                 />
               </div>
@@ -1893,9 +1790,9 @@ export default function PlaygroundQueryPage() {
               </div>
 
               <div className="border-t border-border p-3 sm:p-4 bg-background shrink-0">
-                <AiChat selectedModel={panes[0]?.model || selectedModel}
+                <AiChat
                   onSend={handleCompareSend}
-                  dataSourceName={currentQuery?.sourceCsvName || ""}
+                  dataSourceName={primaryFile?.filename}
                   dataSources={fileNames}
                 />
               </div>
@@ -1908,14 +1805,14 @@ export default function PlaygroundQueryPage() {
       
       {/* Compare Model Selection Modal */}
       <Dialog open={showCompareModal} onOpenChange={() => {}} modal={true}>
-        <DialogContent className="sm:max-w-lg max-w-[90vw] z-50 bg-background overflow-hidden" onPointerDownOutside={(e) => e.preventDefault()} onEscapeKeyDown={(e) => e.preventDefault()}>
+        <DialogContent className="sm:max-w-lg" onPointerDownOutside={(e) => e.preventDefault()} onEscapeKeyDown={(e) => e.preventDefault()}>
           <DialogHeader>
             <DialogTitle>Select a model to continue</DialogTitle>
             <DialogDescription>
               Choose which response you want to keep and continue the conversation with that model.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-3 mt-4 overflow-hidden w-full">
+          <div className="space-y-3 mt-4">
             {compareResults.map((result, i) => {
               const firstLine = result.content.split('\n').find(line => line.trim().length > 0) || result.content.substring(0, 100)
               const cleanFirstLine = firstLine.replace(/\*\*/g, '').replace(/^#+\s*/, '').trim()
@@ -1923,12 +1820,12 @@ export default function PlaygroundQueryPage() {
                 <div
                   key={i}
                   onClick={() => handleSelectCompareModel(result, panes[0]?.messages.filter(m => m.role === 'user').pop()?.content || '')}
-                  className="p-4 border border-border rounded-lg cursor-pointer hover:bg-muted/50 hover:border-primary/50 transition-all overflow-hidden"
+                  className="p-4 border border-border rounded-lg cursor-pointer hover:bg-muted/50 hover:border-primary/50 transition-all"
                 >
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
                       <div className="w-2 h-2 rounded-full bg-green-500"></div>
-                      <span className="font-medium truncate max-w-[200px]">{result.modelName}</span>
+                      <span className="font-medium">{result.modelName}</span>
                     </div>
                     <div className="flex items-center gap-3 text-xs text-muted-foreground">
                       <span className="flex items-center gap-1">
@@ -1941,7 +1838,7 @@ export default function PlaygroundQueryPage() {
                       </span>
                     </div>
                   </div>
-                  <p className="text-sm text-muted-foreground truncate max-w-full">
+                  <p className="text-sm text-muted-foreground truncate">
                     {cleanFirstLine.length > 80 ? cleanFirstLine.substring(0, 80) + '...' : cleanFirstLine}
                   </p>
                 </div>

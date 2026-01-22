@@ -103,67 +103,8 @@ function parseCharts(text: string): { content: string; charts: ChartData[] } {
   
   const cleanContent = text.replace(chartRegex, '').trim()
   
-  let result = cleanContent
-    .replace(/\[CHART:[a-z_]*\][\s\S]*$/gi, '')
-    .replace(/\[CHART:[a-z_]*$/gi, '')
-    .replace(/\[CHAR[T]?:?[a-z_]*$/gi, '')
-    .replace(/\[CHA?R?T?:?$/gi, '')
-    .replace(/\[C?H?A?R?$/gi, '')
-    .replace(/\[\/?[A-Z]{0,5}$/gi, '')
-    .replace(/\[$/g, '')
-    .replace(/^(labels|values|values2|values3|title|xlabel|ylabel|series):[^\n]*$/gm, '')
-    .replace(/(labels|values|values2|values3|title|xlabel|ylabel|series):[^\n]*$/g, '')
-  
-  const lines = result.split('\n')
-  const cleanLines: string[] = []
-  let tableBuffer: string[] = []
-  
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-    const trimmed = line.trim()
-    const isCompleteTableRow = trimmed.startsWith('|') && trimmed.endsWith('|') && trimmed.length > 2
-    const isCompleteSeparator = /^\|[\-:\|\s]+\|$/.test(trimmed)
-    const isPartialRow = trimmed.startsWith('|') && !trimmed.endsWith('|')
-    const isPartialSeparator = /^\|[\-:\s]*$/.test(trimmed) || /^[\-:\|\s]+$/.test(trimmed)
-    
-    if (isCompleteTableRow || isCompleteSeparator) {
-      tableBuffer.push(line)
-    } else if (isPartialRow || (isPartialSeparator && !isCompleteSeparator)) {
-      if (tableBuffer.length >= 2) {
-        const hasHeader = tableBuffer[0].trim().startsWith('|') && tableBuffer[0].trim().endsWith('|')
-        const hasSeparator = tableBuffer.some(r => /^\|[\-:\|\s]+\|$/.test(r.trim()))
-        if (hasHeader && hasSeparator) {
-          cleanLines.push(...tableBuffer)
-        }
-      }
-      tableBuffer = []
-      continue
-    } else {
-      if (tableBuffer.length >= 2) {
-        const hasHeader = tableBuffer[0].trim().startsWith('|') && tableBuffer[0].trim().endsWith('|')
-        const hasSeparator = tableBuffer.some(r => /^\|[\-:\|\s]+\|$/.test(r.trim()))
-        if (hasHeader && hasSeparator) {
-          cleanLines.push(...tableBuffer)
-        }
-      }
-      tableBuffer = []
-      if (trimmed !== '') {
-        cleanLines.push(line)
-      }
-    }
-  }
-  
-  if (tableBuffer.length >= 2) {
-    const lastRow = tableBuffer[tableBuffer.length - 1].trim()
-    const hasHeader = tableBuffer[0].trim().startsWith('|') && tableBuffer[0].trim().endsWith('|')
-    const hasSeparator = tableBuffer.some(r => /^\|[\-:\|\s]+\|$/.test(r.trim()))
-    const lastComplete = lastRow.startsWith('|') && lastRow.endsWith('|')
-    if (hasHeader && hasSeparator && lastComplete) {
-      cleanLines.push(...tableBuffer)
-    }
-  }
-  
-  const finalContent = cleanLines.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+  // Also hide incomplete chart tags (streaming)
+  const finalContent = cleanContent.replace(/\[CH[A-Z]*:[^\]]*\][\s\S]*$|\[CH[A-Z]*:[^\]]*$|\[CH[A-Z]*$|\[C$|\[$/, '').trim()
   
   return { content: finalContent, charts }
 }
@@ -219,6 +160,33 @@ function AdvancedChart({ type, labels, values, values2, values3, title, xlabel, 
       </div>
     )
   }
+
+  // 2. HORIZONTAL BAR CHART
+  if (type === 'hbar') {
+    return (
+      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl shadow-sm relative">
+        {title && <p className="text-sm font-semibold mb-3 text-gray-700">{title}</p>}
+        <div className="space-y-2">
+          {labels.map((label, i) => (
+            <div key={i} className="flex items-center gap-2 group cursor-pointer"
+              onMouseMove={(e) => showTooltip(e, `${label}: ${(values[i] ?? 0).toLocaleString()}`)}
+              onMouseLeave={hideTooltip}>
+              <span className="text-xs w-24 truncate text-gray-600 text-right">{label}</span>
+              <div className="flex-1 bg-gray-200 rounded-full h-6 overflow-hidden">
+                <div className="h-full rounded-full transition-all duration-500 flex items-center justify-end pr-2 group-hover:opacity-80"
+                  style={{ width: `${(values[i] / maxValue) * 100}%`, backgroundColor: colors[i % colors.length] }}>
+                  <span className="text-[10px] text-white font-medium opacity-0 group-hover:opacity-100">{(values[i] ?? 0).toLocaleString()}</span>
+                </div>
+              </div>
+              <span className="text-xs w-16 font-medium text-right">{(values[i] ?? 0).toLocaleString()}</span>
+            </div>
+          ))}
+        </div>
+        <Tooltip {...tooltip} />
+      </div>
+    )
+  }
+
   // 3. GROUPED BAR CHART
   if (type === 'grouped' && values2) {
     const groupMax = Math.max(...values, ...values2)
