@@ -1426,12 +1426,7 @@ export default function PlaygroundQueryPage() {
                   tokens: m.tokens
                 }
               })
-              setMessages([])
-              requestAnimationFrame(() => {
-                requestAnimationFrame(() => {
-                  setMessages(loadedMessages)
-                })
-              })
+              setMessages(loadedMessages)
             } else {
               const welcomeMsg = generateWelcomeMessage(files, currentQuery.name, currentQuery)
               setMessages([{ id: "welcome", role: "assistant", content: welcomeMsg, isLoading: false }])
