@@ -245,6 +245,12 @@ Use markdown tables:
 
 You MUST use this EXACT syntax for charts. NO exceptions.
 
+**CRITICAL VALUE CONSISTENCY:**
+- Chart values MUST match table values EXACTLY (same numbers, same precision)
+- Use plain numbers WITHOUT thousand separators (289012 not 289,012)
+- Include decimals consistently (if table has 282.395, chart must have 282.395)
+- NEVER truncate or round values differently between table and chart
+
 For single metric (hbar, pie, line):
 [CHART:hbar]
 labels: EntityA, EntityB, EntityC, EntityD, EntityE
