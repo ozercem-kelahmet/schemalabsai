@@ -927,6 +927,10 @@ function MessageBubble({ message, userName, compact = false }: { message: Messag
   }
 
   const renderedContent = useMemo(() => {
+    // Streaming sırasında parse etme, sadece raw text göster
+    if (message.isLoading) {
+      return <p className="whitespace-pre-wrap">{message.content}</p>
+    }
     const { content: cleanContent, charts } = parseCharts(message.content)
     const lines = cleanContent.split("\n")
     const result: React.ReactNode[] = []
@@ -1512,6 +1516,7 @@ export default function PlaygroundQueryPage() {
       role: "assistant",
       content: "",
       model: availableModels.find(m => m.id === selectedModel)?.name || selectedModel,
+      isLoading: true,
     }
     setMessages(prev => [...prev, assistantMessage])
 
@@ -1578,6 +1583,7 @@ export default function PlaygroundQueryPage() {
                 ...newMessages[newMessages.length - 1],
                 time: timeTaken + "s",
                 tokens: Math.round(streamContent.length / 4),
+                isLoading: false,
               }
               return newMessages
             })
