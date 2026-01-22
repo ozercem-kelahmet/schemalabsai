@@ -66,7 +66,7 @@ interface ChartData {
 
 function parseCharts(text: string): { content: string; charts: ChartData[] } {
   const charts: ChartData[] = []
-  const chartRegex = /\[CHART:(\w+)\]([\s\S]*?)\[\/CHART\]/g
+  const chartRegex = /\[?CHART:(\w+)\]([\s\S]*?)\[?\/CHART\]/g
   
   let match
   while ((match = chartRegex.exec(text)) !== null) {
@@ -112,6 +112,8 @@ function parseCharts(text: string): { content: string; charts: ChartData[] } {
     .replace(/\[\/?[A-Z]{0,5}$/gi, '')
     .replace(/\[$/g, '')
     .replace(/\[CHART:[^\]]+\][^\n]*\n?\[\/CHART\]/gi, '')
+    .replace(/^CHART:\w+\].*$/gm, '')
+    .replace(/^\[\/CHART\]$/gm, '')
     .replace(/^(labels|values|values2|values3|title|xlabel|ylabel|series):[^\n]*$/gm, '')
     .replace(/(labels|values|values2|values3|title|xlabel|ylabel|series):[^\n]*$/g, '')
   
@@ -1806,7 +1808,7 @@ export default function PlaygroundQueryPage() {
               <div className="flex-1 min-h-0 p-3 sm:p-6 overflow-y-auto" ref={scrollRef}>
                 <div className="max-w-3xl mx-auto space-y-4 sm:space-y-6 pt-12 sm:pt-14 pb-4">
                   {(trainingProgress.status !== "failed" && !currentQuery?.trainingFailed) && messages.map((message, i) => (
-                    <MessageBubble userName={user?.name} key={message.id + "-" + (message.content?.length || 0)} message={message} />
+                    <MessageBubble userName={user?.name} key={message.id + "-" + (message.content?.length || 0) + "-" + (message.content?.slice(-50) || "")} message={message} />
                   ))}
                   {(trainingProgress.status === "failed" || currentQuery?.trainingFailed) ? (
                     <div className="flex flex-col items-center justify-center py-20"><div className="text-red-500 text-4xl mb-4">⚠</div><h3 className="text-lg font-semibold text-red-600 mb-2">Training Failed</h3><p className="text-sm text-muted-foreground">Please try again.</p></div>
@@ -1886,7 +1888,7 @@ export default function PlaygroundQueryPage() {
                           </div>
                         )}
                         {pane.messages.map((message, i) => (
-                          <MessageBubble userName={user?.name} key={message.id + "-" + (message.content?.length || 0)} message={message} compact />
+                          <MessageBubble userName={user?.name} key={message.id + "-" + (message.content?.length || 0) + "-" + (message.content?.slice(-50) || "")} message={message} compact />
                         ))}
                         {pane.isLoading && <TypingIndicator />}
                       </div>

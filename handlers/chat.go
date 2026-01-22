@@ -236,6 +236,12 @@ TYPE 5 - AGGREGATE ("total/sum/average")
 
 === TABLE FORMAT ===
 
+**CRITICAL TABLE RULES:**
+- Each row MUST have EXACTLY the same number of | pipes as header
+- Count your pipes before sending! Header has N columns = N+1 pipes per row
+- NEVER skip or merge cells
+- ALWAYS align data with correct column headers
+
 Use markdown tables:
 | Column1 | Column2 | Column3 |
 |---------|---------|---------|
