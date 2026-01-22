@@ -927,9 +927,7 @@ function MessageBubble({ message, userName, compact = false }: { message: Messag
   }
 
   const renderedContent = useMemo(() => {
-    if (message.isLoading) {
-      return <div className="flex items-center gap-2 text-muted-foreground"><span className="animate-pulse">●●●</span></div>
-    }
+
     const { content: cleanContent, charts } = parseCharts(message.content)
     const lines = cleanContent.split("\n")
     const result: React.ReactNode[] = []
