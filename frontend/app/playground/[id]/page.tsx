@@ -111,6 +111,7 @@ function parseCharts(text: string): { content: string; charts: ChartData[] } {
     .replace(/\[C?H?A?R?$/gi, '')
     .replace(/\[\/?[A-Z]{0,5}$/gi, '')
     .replace(/\[$/g, '')
+    .replace(/\[CHART:[^\]]+\][^\n]*\n?\[\/CHART\]/gi, '')
     .replace(/^(labels|values|values2|values3|title|xlabel|ylabel|series):[^\n]*$/gm, '')
     .replace(/(labels|values|values2|values3|title|xlabel|ylabel|series):[^\n]*$/g, '')
   
