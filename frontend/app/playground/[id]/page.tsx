@@ -154,11 +154,9 @@ function parseCharts(text: string): { content: string; charts: ChartData[] } {
   }
   
   if (tableBuffer.length >= 2) {
-    const lastRow = tableBuffer[tableBuffer.length - 1].trim()
     const hasHeader = tableBuffer[0].trim().startsWith('|') && tableBuffer[0].trim().endsWith('|')
     const hasSeparator = tableBuffer.some(r => /^\|[\-:\|\s]+\|$/.test(r.trim()))
-    const lastComplete = lastRow.startsWith('|') && lastRow.endsWith('|')
-    if (hasHeader && hasSeparator && lastComplete) {
+    if (hasHeader && hasSeparator) {
       cleanLines.push(...tableBuffer)
     }
   }
@@ -1080,7 +1078,7 @@ function MessageBubble({ message, userName, compact = false }: { message: Messag
     })
 
     return result
-  }, [message.content])
+  }, [message.content, message.id])
   return (
     <div className={"flex w-full " + (isUser ? "justify-end" : "justify-start")}>
       <div className={"flex gap-2 sm:gap-3 " + (compact ? "max-w-full" : "w-full") + " " + (isUser ? "flex-row-reverse" : "flex-row")}>

@@ -344,6 +344,8 @@ CHART TYPES (50+ options):
 
 **ALWAYS USE MULTIPLE CHARTS** for comprehensive analysis (2-5 charts per response).
 
+**CRITICAL: VARY CHART TYPES!** NEVER use the same chart type twice in one response. If you used hbar, next must be different (scatter, line, pie, radar, treemap, etc). Repetitive chart types make responses boring - USE DIVERSITY!
+
 FORBIDDEN - NEVER DO THESE:
 - NO tables with fewer than 5 columns (2-column and 3-column tables are BANNED)
 - NO markdown images: ![text](url)
