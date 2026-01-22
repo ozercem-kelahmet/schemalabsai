@@ -108,7 +108,7 @@ type FlaskAnalyzeResponse struct {
 var (
 	conversationHistory = make(map[string][]ChatMessage)
 	historyMutex        = sync.RWMutex{}
-	maxHistoryTurns     = 100
+	maxHistoryTurns     = 1000
 )
 
 func getModelAnalysis(fileID, query string) string {

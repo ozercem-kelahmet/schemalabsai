@@ -86,7 +86,7 @@ function parseCharts(text: string): { content: string; charts: ChartData[] } {
       charts.push({
         type,
         labels: labelsMatch[1].split(',').map(s => s.trim()),
-        values: valuesMatch[1].split(/,(?=\s)/).map(s => {
+        values: valuesMatch[1].split(',').map(s => {
           const cleaned = s.trim().replace(/[^0-9.-]/g, '')
           const num = parseFloat(cleaned)
           return isNaN(num) ? 0 : num
@@ -1424,7 +1424,11 @@ export default function PlaygroundQueryPage() {
                 }
               })
               setMessages([])
-              setTimeout(() => setMessages(loadedMessages), 50)
+              requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                  setMessages(loadedMessages)
+                })
+              })
             } else {
               const welcomeMsg = generateWelcomeMessage(files, currentQuery.name, currentQuery)
               setMessages([{ id: "welcome", role: "assistant", content: welcomeMsg, isLoading: false }])
