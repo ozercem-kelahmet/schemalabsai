@@ -86,7 +86,7 @@ function parseCharts(text: string): { content: string; charts: ChartData[] } {
       charts.push({
         type,
         labels: labelsMatch[1].split(',').map(s => s.trim()),
-        values: valuesMatch[1].split(/, /).map(s => {
+        values: valuesMatch[1].split(/,\s*/).map(s => {
           const cleaned = s.trim().replace(/[^0-9.-]/g, '')
           const num = parseFloat(cleaned)
           return isNaN(num) ? 0 : num
@@ -1574,16 +1574,31 @@ export default function PlaygroundQueryPage() {
           () => {
             const endTime = Date.now()
             const timeTaken = ((endTime - startTime) / 1000).toFixed(1)
-            setMessages(prev => {
-              const newMessages = [...prev]
-              newMessages[newMessages.length - 1] = {
-                ...newMessages[newMessages.length - 1],
-                time: timeTaken + "s",
-                tokens: Math.round(streamContent.length / 4),
-                isLoading: false,
-              }
-              return newMessages
+            fetch("/api/queries/messages?query_id=" + queryId, { 
+              headers: { "x-user-id": localStorage.getItem("userId") || "" } 
             })
+              .then(r => r.json())
+              .then(data => {
+                if (data.messages && data.messages.length > 0) {
+                  setMessages(data.messages.map((m: any) => ({
+                    id: m.id, role: m.role, content: m.content, 
+                    isLoading: false, model: m.model, tokens: m.tokens,
+                    time: m.id === data.messages[data.messages.length - 1].id ? timeTaken + "s" : undefined
+                  })))
+                }
+              })
+              .catch(() => {
+                setMessages(prev => {
+                  const newMessages = [...prev]
+                  newMessages[newMessages.length - 1] = {
+                    ...newMessages[newMessages.length - 1],
+                    time: timeTaken + "s",
+                    tokens: Math.round(streamContent.length / 4),
+                    isLoading: false,
+                  }
+                  return newMessages
+                })
+              })
             setIsLoading(false)
           }
         )
