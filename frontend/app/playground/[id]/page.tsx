@@ -193,28 +193,27 @@ function AdvancedChart({ type, labels, values, values2, values3, title, xlabel, 
   }
   const hideTooltip = () => setTooltip(prev => ({ ...prev, visible: false }))
 
-  // 1. VERTICAL BAR CHART
-  if (type === 'bar') {
+  // 1. HORIZONTAL BAR CHART
+  if (type === 'hbar' || type === 'bar') {
     return (
       <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl shadow-sm relative">
         {title && <p className="text-sm font-semibold mb-3 text-gray-700">{title}</p>}
-        <div className="flex items-end gap-2 h-40 px-2">
-          {values.map((value, i) => (
-            <div key={i} className="flex-1 flex flex-col items-center gap-1 group cursor-pointer"
-              onMouseMove={(e) => showTooltip(e, `${labels[i]}: ${value.toLocaleString()}`)}
+        <div className="space-y-2">
+          {labels.map((label, i) => (
+            <div key={i} className="flex items-center gap-2 group cursor-pointer"
+              onMouseMove={(e) => showTooltip(e, `${label}: ${(values[i] ?? 0).toLocaleString()}`)}
               onMouseLeave={hideTooltip}>
-              <span className="text-[10px] font-medium text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity">
-                {value.toLocaleString()}
-              </span>
-              <div className="w-full rounded-t transition-all duration-300 group-hover:opacity-80 group-hover:scale-105"
-                style={{ height: `${(value / maxValue) * 100}%`, backgroundColor: colors[i % colors.length], minHeight: '4px' }}
-              />
-              <span className="text-[10px] text-gray-500 truncate max-w-full">{labels[i]}</span>
+              <span className="text-xs w-24 truncate text-gray-600 text-right">{label}</span>
+              <div className="flex-1 bg-gray-200 rounded-full h-6 overflow-hidden">
+                <div className="h-full rounded-full transition-all duration-500 flex items-center justify-end pr-2 group-hover:opacity-80"
+                  style={{ width: `${(values[i] / maxValue) * 100}%`, backgroundColor: colors[i % colors.length] }}>
+                  <span className="text-[10px] text-white font-medium opacity-0 group-hover:opacity-100">{(values[i] ?? 0).toLocaleString()}</span>
+                </div>
+              </div>
+              <span className="text-xs w-16 font-medium text-right">{(values[i] ?? 0).toLocaleString()}</span>
             </div>
           ))}
         </div>
-        {ylabel && <div className="absolute left-0 top-1/2 -translate-y-1/2 -rotate-90 text-[10px] text-gray-500">{ylabel}</div>}
-        {xlabel && <div className="text-center text-[10px] text-gray-500 mt-2">{xlabel}</div>}
         <Tooltip {...tooltip} />
       </div>
     )
