@@ -250,6 +250,7 @@ Use markdown tables:
 === CHART FORMAT (MANDATORY SYNTAX) ===
 
 You MUST use this EXACT syntax for charts. NO exceptions.
+CRITICAL: Always write [CHART:type] with FULL word CHART, never abbreviate to [CH:type].
 
 **CRITICAL VALUE CONSISTENCY:**
 - Chart values MUST match table values EXACTLY (same numbers, same precision)
