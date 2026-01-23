@@ -256,8 +256,7 @@ function AdvancedChart({ type, labels, values, values2, values3, title, xlabel, 
   // 4. STACKED BAR CHART
   if (type === 'stacked') {
     const seriesNames = series || ['Series 1', 'Series 2']
-    const hasValues2 = values2 && values2.length > 0
-    if (!hasValues2) {
+    if (!values2 || values2.length === 0) {
       // Fallback to simple bar if no values2
       return (
         <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl shadow-sm relative">
