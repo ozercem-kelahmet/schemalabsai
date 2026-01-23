@@ -1427,8 +1427,6 @@ export default function PlaygroundQueryPage() {
                 }
               })
               setMessages(loadedMessages)
-              // Show content after data is loaded
-              requestAnimationFrame(() => setIsContentReady(true))
             } else {
               const welcomeMsg = generateWelcomeMessage(files, currentQuery.name, currentQuery)
               setMessages([{ id: "welcome", role: "assistant", content: welcomeMsg, isLoading: false }])
@@ -1582,11 +1580,8 @@ export default function PlaygroundQueryPage() {
               return newMessages
             })
             setIsLoading(false)
-            // Silent refresh - hide content during refresh
-            setIsContentReady(false)
-            setTimeout(() => {
-              setHasInitializedChat(false)
-            }, 50)
+            // Silent refresh
+            setTimeout(() => setHasInitializedChat(false), 100)
           }
         )
     } catch (error) {
