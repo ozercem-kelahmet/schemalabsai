@@ -1233,6 +1233,7 @@ export default function PlaygroundQueryPage() {
   const [showCompareModal, setShowCompareModal] = useState(false)
   const [compareResults, setCompareResults] = useState<{model: string, modelName: string, content: string, tokens: number, time: string}[]>([])
   const [messages, setMessages] = useState<Message[]>([])
+  const [isContentReady, setIsContentReady] = useState(true)
   const [hasInitializedChat, setHasInitializedChat] = useState(false)
 
   // Reset chat initialization when query changes
@@ -1427,6 +1428,8 @@ export default function PlaygroundQueryPage() {
                 }
               })
               setMessages(loadedMessages)
+              // Show content after data is loaded
+              requestAnimationFrame(() => setIsContentReady(true))
             } else {
               const welcomeMsg = generateWelcomeMessage(files, currentQuery.name, currentQuery)
               setMessages([{ id: "welcome", role: "assistant", content: welcomeMsg, isLoading: false }])
@@ -1580,8 +1583,11 @@ export default function PlaygroundQueryPage() {
               return newMessages
             })
             setIsLoading(false)
-            // Silent refresh
-            setTimeout(() => setHasInitializedChat(false), 100)
+            // Silent refresh - hide content during refresh
+            setIsContentReady(false)
+            setTimeout(() => {
+              setHasInitializedChat(false)
+            }, 50)
           }
         )
     } catch (error) {
@@ -1806,7 +1812,7 @@ export default function PlaygroundQueryPage() {
           {!compareMode ? (
             <div className="flex-1 flex flex-col relative min-h-0">
               <div className="flex-1 min-h-0 p-3 sm:p-6 overflow-y-auto" ref={scrollRef}>
-                <div className="max-w-3xl mx-auto space-y-4 sm:space-y-6 pt-12 sm:pt-14 pb-4">
+                <div className="max-w-3xl mx-auto space-y-4 sm:space-y-6 pt-12 sm:pt-14 pb-4" style={{ opacity: isContentReady ? 1 : 0 }}>
                   {(trainingProgress.status !== "failed" && !currentQuery?.trainingFailed) && messages.map((message, i) => (
                     <MessageBubble userName={user?.name} key={message.id + "-" + (message.content?.length || 0) + "-" + (message.content?.slice(-50) || "")} message={message} />
                   ))}
