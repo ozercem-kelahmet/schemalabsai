@@ -220,9 +220,10 @@ function AdvancedChart({ type, labels, values, values2, values3, title, xlabel, 
     )
   }
   // 3. GROUPED BAR CHART
-  if (type === 'grouped' && values2) {
-    const groupMax = Math.max(...values, ...values2)
+  if (type === 'grouped') {
+    const groupMax = Math.max(...values, ...(values2 || []))
     const seriesNames = series || ['Series 1', 'Series 2']
+    const hasValues2 = values2 && values2.length > 0
     return (
       <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl shadow-sm relative">
         {title && <p className="text-sm font-semibold mb-3 text-gray-700">{title}</p>}
@@ -234,10 +235,10 @@ function AdvancedChart({ type, labels, values, values2, values3, title, xlabel, 
                   style={{ height: `${(values[i] / groupMax) * 100}%` }}
                   onMouseMove={(e) => showTooltip(e, `${seriesNames[0]}: ${(values[i] ?? 0).toLocaleString()}`)}
                   onMouseLeave={hideTooltip} />
-                <div className="w-5 bg-emerald-500 rounded-t transition-all cursor-pointer hover:opacity-80"
-                  style={{ height: `${(values2[i] / groupMax) * 100}%` }}
-                  onMouseMove={(e) => showTooltip(e, `${seriesNames[1]}: ${values2[i].toLocaleString()}`)}
-                  onMouseLeave={hideTooltip} />
+                {hasValues2 && <div className="w-5 bg-emerald-500 rounded-t transition-all cursor-pointer hover:opacity-80"
+                  style={{ height: `${((values2?.[i] || 0) / groupMax) * 100}%` }}
+                  onMouseMove={(e) => showTooltip(e, `${seriesNames[1]}: ${(values2?.[i] || 0).toLocaleString()}`)}
+                  onMouseLeave={hideTooltip} />}
               </div>
               <span className="text-[10px] text-gray-500 truncate max-w-full text-center">{label}</span>
             </div>
@@ -245,7 +246,7 @@ function AdvancedChart({ type, labels, values, values2, values3, title, xlabel, 
         </div>
         <div className="flex justify-center gap-4 mt-3 text-xs">
           <div className="flex items-center gap-1"><div className="w-3 h-3 bg-blue-500 rounded" />{seriesNames[0]}</div>
-          <div className="flex items-center gap-1"><div className="w-3 h-3 bg-emerald-500 rounded" />{seriesNames[1]}</div>
+          {hasValues2 && <div className="flex items-center gap-1"><div className="w-3 h-3 bg-emerald-500 rounded" />{seriesNames[1]}</div>}
         </div>
         <Tooltip {...tooltip} />
       </div>
@@ -253,8 +254,50 @@ function AdvancedChart({ type, labels, values, values2, values3, title, xlabel, 
   }
 
   // 4. STACKED BAR CHART
-  if (type === 'stacked' && values2) {
+  if (type === 'stacked') {
     const seriesNames = series || ['Series 1', 'Series 2']
+    const hasValues2 = values2 && values2.length > 0
+    if (!hasValues2) {
+      // Fallback to simple bar if no values2
+      return (
+        <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl shadow-sm relative">
+          {title && <p className="text-sm font-semibold mb-3 text-gray-700">{title}</p>}
+          <div className="space-y-2">
+            {labels.map((label, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <span className="text-xs w-24 truncate text-gray-600 text-right">{label}</span>
+                <div className="flex-1 bg-gray-200 rounded-full h-6 overflow-hidden">
+                  <div className="h-full rounded-full bg-blue-500" style={{ width: `${(values[i] / maxValue) * 100}%` }} />
+                </div>
+                <span className="text-xs w-16 font-medium text-right">{(values[i] ?? 0).toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+          <Tooltip {...tooltip} />
+        </div>
+      )
+    }
+    const hasValues2 = values2 && values2.length > 0
+    if (!hasValues2) {
+      // Fallback to simple bar if no values2
+      return (
+        <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl shadow-sm relative">
+          {title && <p className="text-sm font-semibold mb-3 text-gray-700">{title}</p>}
+          <div className="space-y-2">
+            {labels.map((label, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <span className="text-xs w-24 truncate text-gray-600 text-right">{label}</span>
+                <div className="flex-1 bg-gray-200 rounded-full h-6 overflow-hidden">
+                  <div className="h-full rounded-full bg-blue-500" style={{ width: `${(values[i] / maxValue) * 100}%` }} />
+                </div>
+                <span className="text-xs w-16 font-medium text-right">{(values[i] ?? 0).toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+          <Tooltip {...tooltip} />
+        </div>
+      )
+    }
     return (
       <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl shadow-sm relative">
         {title && <p className="text-sm font-semibold mb-3 text-gray-700">{title}</p>}
@@ -281,7 +324,7 @@ function AdvancedChart({ type, labels, values, values2, values3, title, xlabel, 
         </div>
         <div className="flex justify-center gap-4 mt-3 text-xs">
           <div className="flex items-center gap-1"><div className="w-3 h-3 bg-blue-500 rounded" />{seriesNames[0]}</div>
-          <div className="flex items-center gap-1"><div className="w-3 h-3 bg-emerald-500 rounded" />{seriesNames[1]}</div>
+          {hasValues2 && <div className="flex items-center gap-1"><div className="w-3 h-3 bg-emerald-500 rounded" />{seriesNames[1]}</div>}
         </div>
         <Tooltip {...tooltip} />
       </div>
@@ -339,7 +382,45 @@ function AdvancedChart({ type, labels, values, values2, values3, title, xlabel, 
   }
 
   // 6. MULTI-LINE CHART
-  if (type === 'multiline' && values2) {
+  if (type === 'multiline') {
+    if (!values2 || values2.length === 0) {
+      // Fallback to single line chart
+      const lineMax = Math.max(...values)
+      const points = values.map((v, i) => ({ x: (i / (values.length - 1)) * 280 + 20, y: 120 - (v / lineMax) * 100 }))
+      return (
+        <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl shadow-sm relative">
+          {title && <p className="text-sm font-semibold mb-3 text-gray-700">{title}</p>}
+          <svg width="320" height="140" className="w-full">
+            <polyline fill="none" stroke="#3b82f6" strokeWidth="2" points={points.map(p => `${p.x},${p.y}`).join(' ')} />
+            {points.map((p, i) => (
+              <circle key={i} cx={p.x} cy={p.y} r="4" fill="#3b82f6" className="cursor-pointer"
+                onMouseMove={(e) => showTooltip(e, `${labels[i]}: ${(values[i] ?? 0).toLocaleString()}`)}
+                onMouseLeave={hideTooltip} />
+            ))}
+          </svg>
+          <Tooltip {...tooltip} />
+        </div>
+      )
+    }
+    if (!values2 || values2.length === 0) {
+      // Fallback to single line chart
+      const lineMax = Math.max(...values)
+      const points = values.map((v, i) => ({ x: (i / (values.length - 1)) * 280 + 20, y: 120 - (v / lineMax) * 100 }))
+      return (
+        <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl shadow-sm relative">
+          {title && <p className="text-sm font-semibold mb-3 text-gray-700">{title}</p>}
+          <svg width="320" height="140" className="w-full">
+            <polyline fill="none" stroke="#3b82f6" strokeWidth="2" points={points.map(p => `${p.x},${p.y}`).join(' ')} />
+            {points.map((p, i) => (
+              <circle key={i} cx={p.x} cy={p.y} r="4" fill="#3b82f6" className="cursor-pointer"
+                onMouseMove={(e) => showTooltip(e, `${labels[i]}: ${(values[i] ?? 0).toLocaleString()}`)}
+                onMouseLeave={hideTooltip} />
+            ))}
+          </svg>
+          <Tooltip {...tooltip} />
+        </div>
+      )
+    }
     const width = 450, height = 180, padding = 45
     const chartWidth = width - padding * 2, chartHeight = height - padding * 2
     const allMax = Math.max(...values, ...values2)
@@ -517,7 +598,47 @@ function AdvancedChart({ type, labels, values, values2, values3, title, xlabel, 
   }
 
   // 11. SCATTER PLOT
-  if (type === 'scatter' && values2) {
+  if (type === 'scatter') {
+    if (!values2 || values2.length === 0) {
+      // Fallback to bar chart if no values2
+      return (
+        <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl shadow-sm relative">
+          {title && <p className="text-sm font-semibold mb-3 text-gray-700">{title}</p>}
+          <div className="space-y-2">
+            {labels.map((label, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <span className="text-xs w-24 truncate text-gray-600 text-right">{label}</span>
+                <div className="flex-1 bg-gray-200 rounded-full h-6 overflow-hidden">
+                  <div className="h-full rounded-full bg-blue-500" style={{ width: `${(values[i] / maxValue) * 100}%` }} />
+                </div>
+                <span className="text-xs w-16 font-medium text-right">{(values[i] ?? 0).toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+          <Tooltip {...tooltip} />
+        </div>
+      )
+    }
+    if (!values2 || values2.length === 0) {
+      // Fallback to bar chart if no values2
+      return (
+        <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl shadow-sm relative">
+          {title && <p className="text-sm font-semibold mb-3 text-gray-700">{title}</p>}
+          <div className="space-y-2">
+            {labels.map((label, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <span className="text-xs w-24 truncate text-gray-600 text-right">{label}</span>
+                <div className="flex-1 bg-gray-200 rounded-full h-6 overflow-hidden">
+                  <div className="h-full rounded-full bg-blue-500" style={{ width: `${(values[i] / maxValue) * 100}%` }} />
+                </div>
+                <span className="text-xs w-16 font-medium text-right">{(values[i] ?? 0).toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+          <Tooltip {...tooltip} />
+        </div>
+      )
+    }
     const width = 420, height = 200, padding = 40
     const xMax = Math.max(...values), xMin = Math.min(...values)
     const yMax = Math.max(...values2), yMin = Math.min(...values2)
@@ -603,7 +724,7 @@ function AdvancedChart({ type, labels, values, values2, values3, title, xlabel, 
   }
 
   // 13. HEATMAP
-  if (type === 'heatmap' && values2) {
+  if (type === 'heatmap') {
     const rows = labels.length
     const cols = values.length / rows
     const cellW = 40, cellH = 30
@@ -776,7 +897,47 @@ function AdvancedChart({ type, labels, values, values2, values3, title, xlabel, 
   }
 
   // 19. BULLET CHART
-  if (type === 'bullet' && values2) {
+  if (type === 'bullet') {
+    if (!values2 || values2.length === 0) {
+      // Fallback to bar chart if no target values
+      return (
+        <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl shadow-sm relative">
+          {title && <p className="text-sm font-semibold mb-3 text-gray-700">{title}</p>}
+          <div className="space-y-2">
+            {labels.map((label, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <span className="text-xs w-24 truncate text-gray-600 text-right">{label}</span>
+                <div className="flex-1 bg-gray-200 rounded-full h-6 overflow-hidden">
+                  <div className="h-full rounded-full bg-blue-500" style={{ width: `${(values[i] / maxValue) * 100}%` }} />
+                </div>
+                <span className="text-xs w-16 font-medium text-right">{(values[i] ?? 0).toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+          <Tooltip {...tooltip} />
+        </div>
+      )
+    }
+    if (!values2 || values2.length === 0) {
+      // Fallback to bar chart if no target values
+      return (
+        <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl shadow-sm relative">
+          {title && <p className="text-sm font-semibold mb-3 text-gray-700">{title}</p>}
+          <div className="space-y-2">
+            {labels.map((label, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <span className="text-xs w-24 truncate text-gray-600 text-right">{label}</span>
+                <div className="flex-1 bg-gray-200 rounded-full h-6 overflow-hidden">
+                  <div className="h-full rounded-full bg-blue-500" style={{ width: `${(values[i] / maxValue) * 100}%` }} />
+                </div>
+                <span className="text-xs w-16 font-medium text-right">{(values[i] ?? 0).toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+          <Tooltip {...tooltip} />
+        </div>
+      )
+    }
     const target = values2[0]
     const actual = values[0]
     const max = Math.max(target, actual) * 1.2
@@ -832,11 +993,26 @@ function AdvancedChart({ type, labels, values, values2, values3, title, xlabel, 
     )
   }
 
-  // Default fallback - simple bar
+  // Default fallback - render as horizontal bar chart
   return (
-    <div className="my-4 p-4 bg-gray-100 rounded-lg">
-      {title && <p className="text-sm font-semibold mb-2">{title}</p>}
-      <div className="text-xs text-gray-500">Chart type "{type}" - {labels.join(', ')}: {values.join(', ')}</div>
+    <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl shadow-sm relative">
+      {title && <p className="text-sm font-semibold mb-3 text-gray-700">{title}</p>}
+      <div className="space-y-2">
+        {labels.map((label, i) => (
+          <div key={i} className="flex items-center gap-2 group cursor-pointer"
+            onMouseMove={(e) => showTooltip(e, `${label}: ${(values[i] ?? 0).toLocaleString()}`)}
+            onMouseLeave={hideTooltip}>
+            <span className="text-xs w-24 truncate text-gray-600 text-right">{label}</span>
+            <div className="flex-1 bg-gray-200 rounded-full h-6 overflow-hidden">
+              <div className="h-full rounded-full transition-all duration-500 flex items-center justify-end pr-2 group-hover:opacity-80"
+                style={{ width: `${(values[i] / maxValue) * 100}%`, backgroundColor: colors[i % colors.length] }}>
+              </div>
+            </div>
+            <span className="text-xs w-16 font-medium text-right">{(values[i] ?? 0).toLocaleString()}</span>
+          </div>
+        ))}
+      </div>
+      <Tooltip {...tooltip} />
     </div>
   )
 }
