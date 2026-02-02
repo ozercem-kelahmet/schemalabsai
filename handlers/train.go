@@ -137,7 +137,7 @@ if req.Epochs == 0 {
 	baseName = strings.TrimSuffix(baseName, filepath.Ext(baseName))
 	
 	var versionCount int64
-	if DB != nil && userID != "" {
+if DB != nil && userID != "" {
 		DB.Model(&FineTunedModel{}).Where("source_file_id = ? AND user_id = ?", req.FileID, userID).Count(&versionCount)
 	}
 	version := int(versionCount) + 1
@@ -156,10 +156,6 @@ if req.Epochs == 0 {
 	if l, ok := flaskResp["loss"].(float64); ok {
 		loss = l
 	}
-modelID := ""
-if mid, ok := flaskResp["model_id"].(string); ok {
-modelID = mid
-}
 
 // Check for merged file ID from Flask
 mergedFileID := ""
@@ -177,16 +173,19 @@ mergedFileID = mfid
 		uploadedFile := UploadedFile{
 			ID:        mergedFileID + ".csv",
 			UserID:    userID,
-			Filename:  mergedFileID + ".csv",
+			Filename:  mergedFileID + "_merged_all.csv",
 			Path:      mergedFilePath,
 			Size:      fileSize,
 			CreatedAt: time.Now(),
+IsMerged:  true,
 		}
 		DB.Create(&uploadedFile)
 	}
-	if DB != nil && userID != "" {
-		ftModel := FineTunedModel{
-			ID:           uuid.New().String(),
+	var dbModelID string
+if DB != nil && userID != "" {
+		dbModelID = uuid.New().String()
+ftModel := FineTunedModel{
+			ID:           dbModelID,
 			Name:         modelName,
 			Version:      version,
 			SourceFileID: func() string { if mergedFileID != "" { return mergedFileID }; return req.FileID }(),
@@ -203,6 +202,13 @@ mergedFileID = mfid
 		DB.Create(&ftModel)
 	}
 
+	// Send training complete email
+	var user User
+	if DB.Where("id = ?", userID).First(&user).Error == nil {
+		emailService := NewEmailService()
+		emailService.SendTrainingComplete(user.Email, modelName, accuracy)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(TrainResponse{
 		JobID:     uuid.New().String(),
@@ -210,7 +216,7 @@ mergedFileID = mfid
 		Message:   "Model trained successfully",
 		ModelName: modelName,
 		ModelPath: modelPath,
-ModelID:   modelID,
+ModelID:   dbModelID,
 		Accuracy:  accuracy,
 	})
 }
@@ -230,10 +236,69 @@ func ListFineTunedModelsHandler(w http.ResponseWriter, r *http.Request) {
 	var models []FineTunedModel
 	DB.Where("user_id = ?", userID).Order("created_at desc").Find(&models)
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"models": models})
-}
+	// Collect all unique file IDs
+	fileIDSet := make(map[string]bool)
+	for _, m := range models {
+		if m.SourceFiles != "" {
+			for _, fid := range strings.Split(m.SourceFiles, ",") {
+				fid = strings.TrimSpace(fid)
+				if fid != "" {
+					fileIDSet[fid] = true
+				}
+			}
+		}
+	}
 
+	// Fetch all files in one query
+	var fileIDs []string
+	for fid := range fileIDSet {
+		fileIDs = append(fileIDs, fid)
+	}
+	
+	fileNameMap := make(map[string]string)
+	if len(fileIDs) > 0 {
+		var files []UploadedFile
+		DB.Where("id IN ?", fileIDs).Find(&files)
+		for _, f := range files {
+			fileNameMap[f.ID] = f.Filename
+		}
+	}
+
+	// Build response
+	var response []map[string]interface{}
+	for _, m := range models {
+		mr := map[string]interface{}{
+			"id":             m.ID,
+			"name":           m.Name,
+			"version":        m.Version,
+			"source_file_id": m.SourceFileID,
+			"source_name":    m.SourceName,
+			"source_files":   m.SourceFiles,
+			"model_path":     m.ModelPath,
+			"accuracy":       m.Accuracy,
+			"epochs":         m.Epochs,
+			"batch_size":     m.BatchSize,
+			"loss":           m.Loss,
+			"user_id":        m.UserID,
+			"created_at":     m.CreatedAt,
+		}
+
+		if m.SourceFiles != "" {
+			var fileNames []string
+			for _, fid := range strings.Split(m.SourceFiles, ",") {
+				fid = strings.TrimSpace(fid)
+				if name, ok := fileNameMap[fid]; ok {
+					fileNames = append(fileNames, name)
+				}
+			}
+			mr["source_file_names"] = strings.Join(fileNames, ",")
+		}
+		response = append(response, mr)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"models": response})
+}
 type MultiTrainRequest struct {
 	FileIDs      []string `json:"file_ids"`
 	ModelName    string   `json:"model_name"`
@@ -380,21 +445,36 @@ fmt.Printf("DEBUG: Got merged_file_id from Flask: %s\n", mergedFileID)
 		uploadedFile := UploadedFile{
 			ID:        mergedFileID + ".csv",
 			UserID:    userID,
-			Filename:  mergedFileID + ".csv",
+			Filename:  mergedFileID + "_merged_all.csv",
 			Path:      mergedFilePath,
 			Size:      fileSize,
 			CreatedAt: time.Now(),
+IsMerged:  true,
 		}
 		DB.Create(&uploadedFile)
 	}
 	// Save to database
-	if DB != nil && userID != "" {
-		ftModel := FineTunedModel{
-			ID:           uuid.New().String(),
+	var dbModelID string
+if DB != nil && userID != "" {
+		dbModelID = uuid.New().String()
+ftModel := FineTunedModel{
+			ID:           dbModelID,
 			Name:         modelName,
 			Version:      1,
 SourceFileID: func() string { if mergedFileID != "" { return mergedFileID }; return strings.Join(req.FileIDs, ",") }(),
-			SourceName:   fmt.Sprintf("%d files merged", len(req.FileIDs)),
+			SourceName:   func() string {
+			var names []string
+			for _, fid := range req.FileIDs {
+				var file UploadedFile
+				if DB.Where("id = ?", fid).First(&file).Error == nil {
+					names = append(names, file.Filename)
+				}
+			}
+			if len(names) > 0 {
+				return strings.Join(names, ",")
+			}
+			return fmt.Sprintf("%d files merged", len(req.FileIDs))
+		}(),
 			SourceFiles:  strings.Join(req.FileIDs, ","),
 			ModelPath:    modelPath,
 			Accuracy:     accuracy,
@@ -407,6 +487,13 @@ SourceFileID: func() string { if mergedFileID != "" { return mergedFileID }; ret
 		DB.Create(&ftModel)
 	}
 
+
+	// Send training complete email
+	var user User
+	if DB.Where("id = ?", userID).First(&user).Error == nil {
+		emailService := NewEmailService()
+		emailService.SendTrainingComplete(user.Email, modelName, accuracy)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	rows := 0
 	if r, ok := flaskResp["rows"].(float64); ok {
@@ -417,10 +504,6 @@ SourceFileID: func() string { if mergedFileID != "" { return mergedFileID }; ret
 		epochs = int(e)
 	}
 	
-modelID := ""
-if mid, ok := flaskResp["model_id"].(string); ok {
-modelID = mid
-}
 
 	json.NewEncoder(w).Encode(TrainResponse{
 		JobID:     uuid.New().String(),
@@ -428,7 +511,7 @@ modelID = mid
 		Message:   fmt.Sprintf("Model trained with %d merged files", len(filePaths)),
 		ModelName: modelName,
 		ModelPath: modelPath,
-ModelID:   modelID,
+ModelID:   dbModelID,
 		Accuracy:  accuracy,
 		Rows:      rows,
 		Epochs:    epochs,
@@ -645,4 +728,64 @@ func TrainingStatusHandler(w http.ResponseWriter, r *http.Request) {
 func mustMarshal(v interface{}) []byte {
 	b, _ := json.Marshal(v)
 	return b
+}
+
+// DownloadModelHandler allows downloading the model checkpoint file
+func DownloadModelHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	userID := r.Header.Get("X-User-ID")
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	modelID := r.URL.Query().Get("id")
+	if modelID == "" {
+		http.Error(w, "Model ID required", http.StatusBadRequest)
+		return
+	}
+
+	var model FineTunedModel
+	if err := DB.Where("id = ? AND user_id = ?", modelID, userID).First(&model).Error; err != nil {
+		http.Error(w, "Model not found", http.StatusNotFound)
+		return
+	}
+
+	if model.ModelPath == "" {
+		http.Error(w, "Model file not available", http.StatusNotFound)
+		return
+	}
+
+	// Try multiple paths for the checkpoint file
+	possiblePaths := []string{
+		model.ModelPath,
+		"./checkpoints/" + model.ModelPath,
+		"./checkpoints/" + model.ModelPath + ".pt",
+		"./model/checkpoints/" + model.ModelPath,
+		"./model/checkpoints/" + model.ModelPath + ".pt",
+	}
+
+	var filePath string
+	for _, p := range possiblePaths {
+		if _, err := os.Stat(p); err == nil {
+			filePath = p
+			break
+		}
+	}
+
+	if filePath == "" {
+		http.Error(w, "Model file not found on disk", http.StatusNotFound)
+		return
+	}
+
+	// Set headers for file download
+	fileName := model.Name + ".pt"
+	w.Header().Set("Content-Disposition", "attachment; filename="+fileName)
+	w.Header().Set("Content-Type", "application/octet-stream")
+
+	http.ServeFile(w, r, filePath)
 }

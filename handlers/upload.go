@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/csv"
 	"encoding/json"
+	"github.com/xuri/excelize/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -49,6 +50,9 @@ type UploadedFile struct {
 	Columns      string    `json:"columns"`
 	RowCount     int       `json:"row_count"`
 	UniqueValues string    `json:"unique_values"`
+	Vertical     string    `json:"vertical"`
+	Source       string    `json:"source"`
+	IsMerged     bool      `json:"is_merged"`
 }
 
 type UploadResponse struct {
@@ -209,6 +213,40 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 				csvFile.Close()
 			}
 		}
+
+		// Parse Excel files
+		if strings.HasSuffix(strings.ToLower(finalFilename), ".xlsx") || strings.HasSuffix(strings.ToLower(finalFilename), ".xls") {
+			if xlFile, err := excelize.OpenFile(destPath); err == nil {
+				sheets := xlFile.GetSheetList()
+				if len(sheets) > 0 {
+					rows, err := xlFile.GetRows(sheets[0])
+					if err == nil && len(rows) > 0 {
+						columns = strings.Join(rows[0], ",")
+						rowCount = len(rows) - 1
+						targetIdx := len(rows[0]) - 1
+						for i, h := range rows[0] {
+							hl := strings.ToLower(h)
+							if hl == "sector" || hl == "subsector" || hl == "category" || hl == "class" || hl == "target" || hl == "label" {
+								targetIdx = i
+								break
+							}
+						}
+						uniqueMap := make(map[string]bool)
+						for i := 1; i < len(rows); i++ {
+							if targetIdx < len(rows[i]) {
+								uniqueMap[rows[i][targetIdx]] = true
+							}
+						}
+						uniqueList := make([]string, 0, len(uniqueMap))
+						for k := range uniqueMap {
+							uniqueList = append(uniqueList, k)
+						}
+						uniqueValues = strings.Join(uniqueList, ",")
+					}
+				}
+				xlFile.Close()
+			}
+		}
 		
 		uploadedFile := UploadedFile{
 			ID:           fileID,
@@ -269,6 +307,10 @@ func GetUploadedFilesHandler(w http.ResponseWriter, r *http.Request) {
 				"folder_id":   f.FolderID,
 				"folder_name": folderName,
 				"created_at":  f.CreatedAt,
+			"columns":     f.Columns,
+			"row_count":   f.RowCount,
+			"vertical":    f.Vertical,
+			"source":      f.Source,
 			}
 		}
 
@@ -339,6 +381,36 @@ func DeleteFileHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
+}
+
+func UpdateFileHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	userID := r.Header.Get("X-User-ID")
+	fileID := r.URL.Query().Get("id")
+
+	if userID == "" || fileID == "" {
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Filename string `json:"filename"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if DB != nil {
+		DB.Model(&UploadedFile{}).Where("id = ? AND user_id = ?", fileID, userID).Update("filename", req.Filename)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "updated", "filename": req.Filename})
 }
 
 // Replace GetFileByIDHandler with correct version

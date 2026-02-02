@@ -63,12 +63,9 @@ export function QueryStoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const loadQueries = async () => {
       try {
-        console.log("[QueryStore] Loading queries...")
         const res = await fetch("/api/queries", { credentials: "include" })
         if (res.ok) {
           const data = await res.json()
-          console.log("[QueryStore] Loaded:", data)
-    console.log("[QueryStore] First query fileId:", data.queries[0]?.fileId)
           if (data.queries && Array.isArray(data.queries)) {
             const loaded = data.queries.map((q: any) => ({
               id: q.id,
@@ -90,7 +87,7 @@ export function QueryStoreProvider({ children }: { children: ReactNode }) {
           }
         }
       } catch (e) {
-        console.error("[QueryStore] Failed to load queries:", e)
+        console.error("Failed to load queries:", e)
       }
       setIsLoaded(true)
     }
@@ -98,8 +95,6 @@ export function QueryStoreProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const addQuery = useCallback(async (input: AddQueryInput): Promise<QueryItem> => {
-    console.log("[QueryStore] addQuery called with:", input)
-    
     const tempId = "temp-" + Date.now()
     const newQuery: QueryItem = {
       id: input.id || tempId,
@@ -116,18 +111,13 @@ export function QueryStoreProvider({ children }: { children: ReactNode }) {
       sourceFiles: input.sourceFiles || '',
     }
     
-    // Add to state immediately for UI
     setQueries(prev => [newQuery, ...prev])
 
-    // If ID is provided or skipBackend, don't call backend
     if (input.id || input.skipBackend) {
-      console.log("[QueryStore] Skipping backend")
       return newQuery
     }
 
-    // Create on backend and wait for real ID
     try {
-      console.log("[QueryStore] Sending to backend...")
       const res = await fetch("/api/queries/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -147,10 +137,8 @@ export function QueryStoreProvider({ children }: { children: ReactNode }) {
       })
       
       const data = await res.json()
-      console.log("[QueryStore] Response:", data)
       
       if (data.id) {
-        // Update temp ID with real ID and sync isTraining from backend
         newQuery.id = data.id
         newQuery.isTraining = data.isTraining ?? newQuery.isTraining
         setQueries(prev => prev.map(q => 
@@ -158,14 +146,13 @@ export function QueryStoreProvider({ children }: { children: ReactNode }) {
         ))
       }
     } catch (e) {
-      console.error("[QueryStore] Failed to save query:", e)
+      console.error("Failed to save query:", e)
     }
 
     return newQuery
   }, [])
 
   const updateQuery = useCallback((id: string, updates: Partial<QueryItem>) => {
-    console.log("[QueryStore] updateQuery:", id, updates)
     setQueries(prev => prev.map(q => q.id === id ? { ...q, ...updates } : q))
 
     fetch("/api/queries/update", {
@@ -173,17 +160,16 @@ export function QueryStoreProvider({ children }: { children: ReactNode }) {
       headers: { "Content-Type": "application/json" },
       credentials: "include",
       body: JSON.stringify({ id, ...updates }),
-    }).catch(e => console.error("[QueryStore] Failed to update query:", e))
+    }).catch(e => console.error("Failed to update query:", e))
   }, [])
 
   const deleteQuery = useCallback((id: string) => {
-    console.log("[QueryStore] deleteQuery:", id)
     setQueries(prev => prev.filter(q => q.id !== id))
 
     fetch(`/api/queries/delete?id=${id}`, {
       method: "DELETE",
       credentials: "include",
-    }).catch(e => console.error("[QueryStore] Failed to delete query:", e))
+    }).catch(e => console.error("Failed to delete query:", e))
   }, [])
 
   const duplicateQuery = useCallback(async (id: string): Promise<QueryItem | null> => {

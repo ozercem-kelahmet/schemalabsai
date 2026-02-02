@@ -161,14 +161,14 @@ FILE: ` + filename + `
 1. Use ONLY exact numbers from the data above - NEVER invent or estimate
 2. For ratio/efficiency questions, CALCULATE the ratio from available metrics (e.g., sprints÷distance). Only say "not available" if the base metrics themselves are missing
 3. Show ALL entities if total count is reasonable (<20). For larger datasets, show top 10-15 unless user specifies otherwise
-4. Use **bold** for key values and entity names
+4. NO ASTERISKS OR BOLD - NEVER use ** or * for any formatting. Write plain text only. Names like "Sergio Canales" not "**Sergio Canales**"
 5. No emojis
 6. For general queries like "show analysis" or "analyze the data": provide COMPREHENSIVE analysis with multiple insights, patterns, and key findings from the data
-7. **CHARTS ARE MANDATORY** - Use [CHART:type]...[/CHART] syntax (hbar, grouped, stacked, waterfall, bullet, lollipop, diverging, marimekko, parallel, pie, donut, treemap, sunburst, funnel, pyramid, waffle, pictogram, scatter, bubble, heatmap, density, hexbin, contour, network, chord, sankey, alluvial, line, area, stream, ridge, sparkline, candlestick, step, slope, horizon, calendar, gantt, timeline, radar, polar, radial, boxplot, violin, beeswarm, strip, raincloud, ridgeline, parallel_coordinates, andrews, radviz). NO text descriptions like "Bar Chart:". ONLY use the exact bracket syntax.
-8. **TABLES MUST BE RICH** - NEVER use 2-column tables. MINIMUM 5 columns, MAXIMUM 10 columns. Always add: Rank, derived metrics (ratios, %), comparisons (vs avg), and context.
-9. **CLEAN COLUMN NAMES** - Remove dataset prefixes and technical codes from column names in tables. Transform "e37c459c_frame_start_sum" → "Frame Start Sum", "player_id_xyz" → "Player ID". Make column names human-readable.
-10. **NO BOLD FORMATTING** - Never use **Bold Text** for section titles or numbered headers like "**1. Maximum Speed**" or "**Sprint Performance by Position**". These waste space. Go directly to tables, insights, and charts without any bold headers or titles.
-10. Match response format to query type (see below)
+7. CHARTS ARE MANDATORY - Use [CHART:type]...[/CHART] syntax (hbar, grouped, stacked, waterfall, bullet, lollipop, diverging, marimekko, parallel, pie, donut, treemap, sunburst, funnel, pyramid, waffle, pictogram, scatter, bubble, heatmap, density, hexbin, contour, network, chord, sankey, alluvial, line, area, stream, ridge, sparkline, candlestick, step, slope, horizon, calendar, gantt, timeline, radar, polar, radial, boxplot, violin, beeswarm, strip, raincloud, ridgeline, parallel_coordinates, andrews, radviz). NO text descriptions like "Bar Chart:". ONLY use the exact bracket syntax.
+8. TABLES MUST BE RICH - NEVER use 2-column tables. MINIMUM 5 columns, MAXIMUM 10 columns. Always add: Rank, derived metrics (ratios, %), comparisons (vs avg), and context.
+9. CLEAN COLUMN NAMES - Remove dataset prefixes and technical codes from column names in tables. Transform "e37c459c_frame_start_sum" → "Frame Start Sum", "player_id_xyz" → "Player ID". Make column names human-readable.
+10. NO MARKDOWN FORMATTING - Never use headers (#), bold (**), italic (*), or any markdown. Plain text only.
+11. Match response format to query type (see below)
 
 === QUERY TYPE DETECTION ===
 

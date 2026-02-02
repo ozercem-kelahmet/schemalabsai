@@ -3,22 +3,22 @@ import { API_BASE } from './config'
 export const api = {
 
   health: async () => {
-    const res = await fetch(API_BASE + '/health')
+    const res = await fetch(API_BASE + '/api/health')
     return res.json()
   },
 
   modelInfo: async () => {
-    const res = await fetch(API_BASE + '/model/info')
+    const res = await fetch(API_BASE + '/api/model/info')
     return res.json()
   },
 
   modelsList: async () => {
-    const res = await fetch(API_BASE + '/models/list')
+    const res = await fetch(API_BASE + '/api/models/list')
     return res.json()
   },
 
   modelsSwitch: async (modelPath: string) => {
-    const res = await fetch(API_BASE + '/models/switch', {
+    const res = await fetch(API_BASE + '/api/models/switch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model_path: modelPath })
@@ -27,12 +27,12 @@ export const api = {
   },
 
   sectors: async () => {
-    const res = await fetch(API_BASE + '/sectors')
+    const res = await fetch(API_BASE + '/api/sectors')
     return res.json()
   },
 
   predict: async (values: number[][]) => {
-    const res = await fetch(API_BASE + '/predict', {
+    const res = await fetch(API_BASE + '/api/predict', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ values })
@@ -41,7 +41,7 @@ export const api = {
   },
 
   predictSector: async (values: number[][], sector: string) => {
-    const res = await fetch(API_BASE + '/predict/sector', {
+    const res = await fetch(API_BASE + '/api/predict/sector', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ values, sector })
@@ -53,7 +53,7 @@ export const api = {
     const formData = new FormData()
     formData.append('file', file)
     if (folderId) formData.append('folder_id', folderId)
-    const res = await fetch(API_BASE + '/upload', {
+    const res = await fetch(API_BASE + '/api/upload', {
       method: 'POST',
       credentials: 'include',
       body: formData
@@ -66,7 +66,7 @@ export const api = {
   },
 
   train: async (fileId: string, filename: string, epochs: number = 5, batchSize: number = 64, targetColumn?: string) => {
-    const res = await fetch(API_BASE + '/train', {
+    const res = await fetch(API_BASE + '/api/train', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -76,7 +76,7 @@ export const api = {
   },
 
   multiTrain: async (fileIds: string[], modelName: string, epochs: number = 5, batchSize: number = 64, learningRate: number = 0.001, warmupSteps: number = 100, queryId?: string) => {
-    const res = await fetch(API_BASE + '/train/multi', {
+    const res = await fetch(API_BASE + '/api/train/multi', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -86,7 +86,7 @@ export const api = {
   },
 
   analyzeFiles: async (fileIds: string[]) => {
-    const res = await fetch(API_BASE + '/train/analyze', {
+    const res = await fetch(API_BASE + '/api/train/analyze', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -103,7 +103,7 @@ export const api = {
   },
 
   getTrainingProgress: async (queryId?: string) => {
-    const res = await fetch(API_BASE + '/train/progress' + (queryId ? '?query_id=' + queryId : ''), {
+    const res = await fetch(API_BASE + '/api/train/progress' + (queryId ? '?query_id=' + queryId : ''), {
       credentials: 'include'
     })
     if (!res.ok) {
@@ -120,7 +120,7 @@ export const api = {
   },
 
   getUploadedFiles: async () => {
-    const res = await fetch(API_BASE + '/files', {
+    const res = await fetch(API_BASE + '/api/files', {
       credentials: 'include'
     })
     return res.json()
@@ -131,19 +131,19 @@ export const api = {
     return res.json()
   },
   getQueries: async () => {
-    const res = await fetch(API_BASE + "/queries", { credentials: "include" })
+    const res = await fetch(API_BASE + "/api/queries", { credentials: "include" })
     return res.json()
   },
 
   getFineTunedModels: async () => {
-    const res = await fetch(API_BASE + '/models/finetuned', {
+    const res = await fetch(API_BASE + '/api/models/finetuned', {
       credentials: 'include'
     })
     return res.json()
   },
 
   deleteFineTunedModel: async (modelId: string) => {
-    const res = await fetch(API_BASE + '/models/finetuned/' + modelId, {
+    const res = await fetch(API_BASE + '/api/models/finetuned/' + modelId, {
       method: 'DELETE',
       credentials: 'include'
     })
@@ -151,7 +151,7 @@ export const api = {
   },
 
   renameFineTunedModel: async (modelId: string, newName: string) => {
-    const res = await fetch(API_BASE + '/models/finetuned/' + modelId, {
+    const res = await fetch(API_BASE + '/api/models/finetuned/' + modelId, {
       method: 'PATCH',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -161,22 +161,51 @@ export const api = {
   },
 
   deleteFile: async (fileId: string) => {
-    const res = await fetch(API_BASE + '/files/delete?id=' + fileId, {
+    const res = await fetch(API_BASE + '/api/files/delete?id=' + fileId, {
       method: 'DELETE',
       credentials: 'include'
     })
     return res.json()
   },
 
+  updateFile: async (fileId: string, data: { filename?: string }) => {
+    const res = await fetch(API_BASE + "/api/files/update?id=" + fileId, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(data)
+    })
+    return res.json()
+  },
+
+
+  generateDataset: async (data: {
+    name: string
+    description: string
+    rows: number
+    columns: number
+    vertical: string
+    prompt: string
+    use_python: boolean
+    python_code: string
+  }) => {
+    const res = await fetch(API_BASE + "/api/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(data)
+    })
+    return res.json()
+  },
   getFolders: async () => {
-    const res = await fetch(API_BASE + '/folders', {
+    const res = await fetch(API_BASE + '/api/folders', {
       credentials: 'include'
     })
     return res.json()
   },
 
   createFolder: async (name: string) => {
-    const res = await fetch(API_BASE + '/folders/create', {
+    const res = await fetch(API_BASE + '/api/folders/create', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -186,7 +215,7 @@ export const api = {
   },
 
   updateFolder: async (id: string, name: string) => {
-    const res = await fetch(API_BASE + '/folders/update?id=' + id, {
+    const res = await fetch(API_BASE + '/api/folders/update?id=' + id, {
       method: 'PUT',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -196,7 +225,7 @@ export const api = {
   },
 
   deleteFolder: async (id: string) => {
-    const res = await fetch(API_BASE + '/folders/delete?id=' + id, {
+    const res = await fetch(API_BASE + '/api/folders/delete?id=' + id, {
       method: 'DELETE',
       credentials: 'include'
     })
@@ -204,7 +233,7 @@ export const api = {
   },
 
   moveFileToFolder: async (fileId: string, folderId: string | null) => {
-    const res = await fetch(API_BASE + '/files/move', {
+    const res = await fetch(API_BASE + '/api/files/move', {
       method: 'PUT',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -221,8 +250,9 @@ export const api = {
     model: string
     data_context: string
     finetuned_model?: string
+    model_path?: string
   }) => {
-    const res = await fetch(API_BASE + '/chat', {
+    const res = await fetch(API_BASE + '/api/chat', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -240,11 +270,12 @@ export const api = {
       model: string
       data_context: string
       finetuned_model?: string
+      model_path?: string
     },
     onChunk: (content: string) => void,
     onDone: () => void
   ) => {
-    const res = await fetch(API_BASE + '/chat', {
+    const res = await fetch(API_BASE + '/api/chat', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -286,7 +317,7 @@ export const api = {
   },
 
   clearChatHistory: async (sessionId: string) => {
-    const res = await fetch(API_BASE + '/chat/clear', {
+    const res = await fetch(API_BASE + '/api/chat/clear', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -296,7 +327,7 @@ export const api = {
   },
 
   createQuery: async (name: string, model: string, dataSources: string[], fileId?: string, modelName?: string, modelAccuracy?: number, sourceCsvName?: string, trainingModelId?: string) => {
-    const res = await fetch(API_BASE + '/queries/create', {
+    const res = await fetch(API_BASE + '/api/queries/create', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -306,36 +337,46 @@ export const api = {
   },
 
   listQueries: async () => {
-    const res = await fetch(API_BASE + '/queries', {
+    const res = await fetch(API_BASE + '/api/queries', {
       credentials: 'include'
     })
     return res.json()
   },
 
   deleteQuery: async (id: string) => {
-    const res = await fetch(API_BASE + '/queries/delete?id=' + id, {
+    const res = await fetch(API_BASE + '/api/queries/delete?id=' + id, {
       method: 'DELETE',
       credentials: 'include'
     })
     return res.json()
   },
 
-  getMessages: async (queryId: string) => {
-    const res = await fetch(API_BASE + '/messages?query_id=' + queryId, {
+  getMessages: async (queryId: string, modelId?: string) => {
+    const params = new URLSearchParams()
+    if (queryId) params.append('query_id', queryId)
+    if (modelId) params.append('model_id', modelId)
+    const res = await fetch(API_BASE + '/api/messages?' + params.toString(), {
+      credentials: 'include'
+    })
+    return res.json()
+  },
+
+  getQuery: async (queryId: string) => {
+    const res = await fetch(API_BASE + '/api/queries/' + queryId, {
       credentials: 'include'
     })
     return res.json()
   },
 
   getConnections: async () => {
-    const res = await fetch(API_BASE + '/connections', {
+    const res = await fetch(API_BASE + '/api/connections', {
       credentials: 'include'
     })
     return res.json()
   },
 
   createConnection: async (data: any) => {
-    const res = await fetch(API_BASE + '/connections/create', {
+    const res = await fetch(API_BASE + '/api/connections/create', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -345,7 +386,7 @@ export const api = {
   },
 
   deleteConnection: async (id: string) => {
-    const res = await fetch(API_BASE + '/connections/delete?id=' + id, {
+    const res = await fetch(API_BASE + '/api/connections/delete?id=' + id, {
       method: 'DELETE',
       credentials: 'include'
     })
@@ -353,7 +394,7 @@ export const api = {
   },
 
   testConnection: async (data: any) => {
-    const res = await fetch(API_BASE + '/connections/test', {
+    const res = await fetch(API_BASE + '/api/connections/test', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -363,14 +404,14 @@ export const api = {
   },
 
   listTables: async (connectionId: string) => {
-    const res = await fetch(API_BASE + '/connections/tables?connection_id=' + connectionId, {
+    const res = await fetch(API_BASE + '/api/connections/tables?connection_id=' + connectionId, {
       credentials: 'include'
     })
     return res.json()
   },
 
   exportTable: async (connectionId: string, tableName: string, limit?: number) => {
-    const res = await fetch(API_BASE + '/connections/export', {
+    const res = await fetch(API_BASE + '/api/connections/export', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -381,14 +422,14 @@ export const api = {
 ,
 
   list: async () => {
-    const res = await fetch(API_BASE + '/keys', {
+    const res = await fetch(API_BASE + '/api/keys', {
       credentials: 'include'
     })
     return res.json()
   },
 
   create: async (name: string) => {
-    const res = await fetch(API_BASE + '/keys/create', {
+    const res = await fetch(API_BASE + '/api/keys/create', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -398,7 +439,7 @@ export const api = {
   },
 
   delete: async (id: string) => {
-    const res = await fetch(API_BASE + '/keys/delete?id=' + id, {
+    const res = await fetch(API_BASE + '/api/keys/delete?id=' + id, {
       method: 'DELETE',
       credentials: 'include'
     })
@@ -406,7 +447,7 @@ export const api = {
   },
 
   trainAsync: async (fileIds: string[], modelName: string, epochs: number = 5, batchSize: number = 64, learningRate: number = 0.001, warmupSteps: number = 100, queryId?: string) => {
-    const res = await fetch(API_BASE + '/train/async', {
+    const res = await fetch(API_BASE + '/api/train/async', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -416,10 +457,15 @@ export const api = {
   },
 
   getTrainingStatus: async (taskId: string) => {
-    const res = await fetch(API_BASE + '/train/status?task_id=' + taskId, {
+    const res = await fetch(API_BASE + '/api/train/status?task_id=' + taskId, {
       credentials: 'include'
     })
     return res.json()
-  }
+  },
+
+  getUploadLimits: async () => {
+    const res = await fetch(API_BASE + "/api/config/limits", { credentials: "include" })
+    return res.json()
+  },
 }
 

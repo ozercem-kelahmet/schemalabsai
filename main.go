@@ -165,8 +165,11 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		io.Copy(w, resp.Body)
 	}))
+	http.HandleFunc("/api/config/limits", enableCORS(handlers.GetUploadLimitsHandler))
 	http.HandleFunc("/api/files", enableCORS(handlers.AuthMiddleware(handlers.GetUploadedFilesHandler)))
 	http.HandleFunc("/api/files/delete", enableCORS(handlers.AuthMiddleware(handlers.DeleteFileHandler)))
+	http.HandleFunc("/api/files/update", enableCORS(handlers.AuthMiddleware(handlers.UpdateFileHandler)))
+	http.HandleFunc("/api/generate", enableCORS(handlers.AuthMiddleware(handlers.GenerateDatasetHandler)))
 	http.HandleFunc("/api/folders", enableCORS(handlers.AuthMiddleware(handlers.ListFoldersHandler)))
 	http.HandleFunc("/api/folders/create", enableCORS(handlers.AuthMiddleware(handlers.CreateFolderHandler)))
 	http.HandleFunc("/api/folders/update", enableCORS(handlers.AuthMiddleware(handlers.UpdateFolderHandler)))
@@ -189,6 +192,7 @@ func main() {
 	http.HandleFunc("/api/models/finetuned", enableCORS(handlers.AuthMiddleware(handlers.ListFineTunedModelsHandler)))
 	http.HandleFunc("/api/models/finetuned/delete", enableCORS(handlers.AuthMiddleware(handlers.DeleteFineTunedModelHandler)))
 	http.HandleFunc("/api/models/finetuned/update", enableCORS(handlers.AuthMiddleware(handlers.UpdateFineTunedModelHandler)))
+	http.HandleFunc("/api/models/finetuned/download", enableCORS(handlers.AuthMiddleware(handlers.DownloadModelHandler)))
 	http.HandleFunc("/api/models/finetuned/", enableCORS(handlers.AuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodDelete:

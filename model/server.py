@@ -3,6 +3,7 @@ from analytics_engine import detect_analytics_type, generate_analytics
 # smart_analyzer removed - LLM handles column matching directly
 os.environ["FLASK_SKIP_DOTENV"] = "1"
 import warnings
+import tempfile
 warnings.filterwarnings("ignore", category=UserWarning)
 
 from flask import Flask, request, jsonify
@@ -71,17 +72,68 @@ print(f"Using device: {device}")
 ft_model_cache = {}
 FT_CACHE_MAX_SIZE = 3  # Max 3 model tut (GPU memory için)
 
-def get_cached_finetuned_model(model_id, config):
+def get_cached_finetuned_model(model_id, config, model_path=None):
     """Load model from cache or disk"""
     global ft_model_cache
     
-    if model_id in ft_model_cache:
-        print(f"Model cache HIT: {model_id}")
-        return ft_model_cache[model_id]
+    # Use model_path as cache key if provided
+    cache_key = model_path if model_path else model_id
     
-    print(f"Model cache MISS: {model_id}, loading...")
-    ft_path = f'../checkpoints/{model_id}.pt'
-    ft_ckpt = torch.load(ft_path, map_location='cpu', weights_only=False)
+    if cache_key in ft_model_cache:
+        print(f"Model cache HIT: {cache_key}")
+        return ft_model_cache[cache_key]
+    
+    print(f"Model cache MISS: {cache_key}, loading...")
+    
+    # Try multiple checkpoint path options
+    ft_path = None
+    possible_paths = []
+    
+    # First priority: model_path if provided
+    if model_path:
+        if model_path.endswith('.pt'):
+            possible_paths.append(model_path)
+            possible_paths.append(f'../checkpoints/{model_path}')
+        else:
+            possible_paths.append(f'../checkpoints/{model_path}.pt')
+            possible_paths.append(model_path)
+    
+    # Then try model_id based paths
+    possible_paths.extend([
+        f'../checkpoints/{model_id}.pt',
+        f'../checkpoints/{model_id}',
+    ])
+    
+    # Also try to find by date pattern in model_path or model_id
+    import re
+    import glob
+    search_str = model_path or model_id
+    date_match = re.search(r'(\d{8})', search_str)
+    if date_match:
+        date_str = date_match.group(1)
+        pattern = f'../checkpoints/model_finetuned_{date_str}_*.pt'
+        matching_files = glob.glob(pattern)
+        if matching_files:
+            possible_paths.insert(0, matching_files[0])
+            print(f"Found checkpoint by date pattern: {matching_files[0]}")
+    
+    for path in possible_paths:
+        if os.path.exists(path):
+            ft_path = path
+            break
+    
+    if not ft_path or not os.path.exists(ft_path):
+        raise FileNotFoundError(f"No checkpoint found for model: {model_id}, model_path: {model_path}")
+    
+    print(f"Loading checkpoint from: {ft_path}")
+    # Use GPU if available, otherwise CPU
+    map_location = 'cuda' if torch.cuda.is_available() else 'cpu'
+    ft_ckpt = torch.load(ft_path, map_location=map_location, weights_only=False)
+    
+    # Use config from checkpoint if available, otherwise use provided config
+    ckpt_config = ft_ckpt.get('config', config)
+    if ckpt_config:
+        config = ckpt_config
     
     ft_model = TabularFoundationModel(config)
     ft_model.load_state_dict(ft_ckpt['model_state_dict'])
@@ -96,43 +148,9 @@ def get_cached_finetuned_model(model_id, config):
         del ft_model_cache[oldest_key]
         torch.cuda.empty_cache()
     
-    ft_model_cache[model_id] = {'model': ft_model, 'ckpt': ft_ckpt}
-    return ft_model_cache[model_id]
+    ft_model_cache[cache_key] = {'model': ft_model, 'ckpt': ft_ckpt}
+    return ft_model_cache[cache_key]
 
-# Fine-tuned model cache - her seferinde yüklememek için
-ft_model_cache = {}
-FT_CACHE_MAX_SIZE = 3  # Max 3 model tut (GPU memory için)
-
-def get_cached_finetuned_model(model_id, config):
-    """Load model from cache or disk"""
-    global ft_model_cache
-    
-    if model_id in ft_model_cache:
-        print(f"Model cache HIT: {model_id}")
-        return ft_model_cache[model_id]
-    
-    print(f"Model cache MISS: {model_id}, loading...")
-    ft_path = f'../checkpoints/{model_id}.pt'
-    ft_ckpt = torch.load(ft_path, map_location='cpu', weights_only=False)
-    
-    ft_model = TabularFoundationModel(config)
-    ft_model.load_state_dict(ft_ckpt['model_state_dict'])
-    ft_model.eval()
-    ft_model = ft_model.to(device)
-    
-    # Cache doluysa en eskiyi sil
-    if len(ft_model_cache) >= FT_CACHE_MAX_SIZE:
-        oldest_key = list(ft_model_cache.keys())[0]
-        print(f"Cache full, removing: {oldest_key}")
-        del ft_model_cache[oldest_key]['model']
-        del ft_model_cache[oldest_key]
-        torch.cuda.empty_cache()
-    
-    ft_model_cache[model_id] = {'model': ft_model, 'ckpt': ft_ckpt}
-    return ft_model_cache[model_id]
-import tempfile
-import glob
-from pathlib import Path
 from torch.optim import AdamW
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.utils.class_weight import compute_class_weight
@@ -1764,17 +1782,21 @@ def analyze():
                         config['n_classes'] = n_classes
                     
                     # Get model from cache or load
-                    cached = get_cached_finetuned_model(model_id, config)
+                    cached = get_cached_finetuned_model(model_id, config, data.get("model_path", ""))
                     ft_model = cached['model']
                     ft_ckpt = cached['ckpt']  # Update with cached checkpoint
+                    
+                    # Get input_dim from cached checkpoint (more reliable)
+                    input_dim = ft_ckpt.get('input_dim', ft_ckpt.get('config', {}).get('n_features', input_dim))
+                    print(f"DEBUG: Using input_dim={input_dim} from checkpoint")
                     
                     # Prepare data for prediction - sample for large datasets
                     num_cols = df.select_dtypes(include=['number']).columns.tolist()
                     df_sample = df.head(10000) if len(df) > 10000 else df
                     X_pred = df_sample[num_cols].fillna(0).values.astype(np.float32)
-                    print(f"Fine-tuned prediction: using {len(df_sample)}/{len(df)} rows")
+                    print(f"Fine-tuned prediction: using {len(df_sample)}/{len(df)} rows, X_pred.shape={X_pred.shape}, input_dim={input_dim}")
                     
-                    # Match feature dimensions
+                    # Match feature dimensions to checkpoint's expected input
                     if X_pred.shape[1] < input_dim:
                         X_pred = np.hstack([X_pred, np.zeros((X_pred.shape[0], input_dim - X_pred.shape[1]))])
                     elif X_pred.shape[1] > input_dim:

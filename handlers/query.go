@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"strings"
 	"fmt"
 	"net/http"
 	"time"
@@ -123,6 +124,7 @@ func CreateQueryHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func ListQueriesHandler(w http.ResponseWriter, r *http.Request) {
+startTime := time.Now()
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -135,48 +137,36 @@ func ListQueriesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var queries []Query
+	modelID := r.URL.Query().Get("model_id")
+var queries []Query
+	if modelID != "" {
+	DB.Where("user_id = ? AND training_model_id = ?", userID, modelID).Order("updated_at desc").Find(&queries)
+} else {
 	DB.Where("user_id = ?", userID).Order("updated_at desc").Find(&queries)
+}
 
-	var response []QueryResponse
-	for _, q := range queries {
-		var queryFiles []QueryFile
-		DB.Where("query_id = ?", q.ID).Find(&queryFiles)
-
-		fileIDs := make([]string, len(queryFiles))
-		for i, qf := range queryFiles {
-			fileIDs[i] = qf.FileID
-		}
-
-		// Get source_files from fine_tuned_model
-		sourceFiles := ""
-		if q.TrainingModelID != nil && *q.TrainingModelID != "" {
-			var model FineTunedModel
-			if err := DB.Where("id = ?", *q.TrainingModelID).First(&model).Error; err == nil {
-				sourceFiles = model.SourceFiles
-			}
-		}
-
-		response = append(response, QueryResponse{
-			ID:              q.ID,
-			Name:            q.Name,
-			Model:           q.Model,
-			DataSources:     fileIDs,
-			IsTraining:      q.IsTraining,
-			HasModel:        q.HasModel,
+var response []QueryResponse
+for _, q := range queries {
+response = append(response, QueryResponse{
+ID:              q.ID,
+Name:            q.Name,
+Model:           q.Model,
+DataSources:     []string{},
+IsTraining:      q.IsTraining,
+HasModel:        q.HasModel,
 TrainingFailed:  q.TrainingFailed,
-			TrainingModelID: q.TrainingModelID,
-		ModelName:       q.ModelName,
-		ModelAccuracy:   q.ModelAccuracy,
-		SourceCsvName:   q.SourceCsvName,
-			CreatedAt:       q.CreatedAt.Format(time.RFC3339),
-			FileID:          q.FileID,
-			SourceFiles:     sourceFiles,
-		})
-	}
-
+TrainingModelID: q.TrainingModelID,
+ModelName:       q.ModelName,
+ModelAccuracy:   q.ModelAccuracy,
+SourceCsvName:   q.SourceCsvName,
+CreatedAt:       q.CreatedAt.Format(time.RFC3339),
+FileID:          q.FileID,
+SourceFiles:     "",
+})
+}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"queries": response})
+	fmt.Printf("ListQueriesHandler took %v for %d queries\n", time.Since(startTime), len(response))
+json.NewEncoder(w).Encode(map[string]interface{}{"queries": response})
 }
 
 func DeleteQueryHandler(w http.ResponseWriter, r *http.Request) {
@@ -211,15 +201,31 @@ func GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	userID := r.Header.Get("X-User-ID")
 	fmt.Printf("USER ID FROM HEADER: %q\n", userID)
 	queryID := r.URL.Query().Get("query_id")
+	modelID := r.URL.Query().Get("model_id")
 
-	if userID == "" || queryID == "" {
+	if userID == "" {
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
 	}
 
 	var messages []Message
-	DB.Where("query_id = ? AND user_id = ?", queryID, userID).Order("created_at asc").Find(&messages)
 
+	if modelID != "" {
+		fmt.Printf("DEBUG: Getting messages for model_id: %s\n", modelID)
+		var queryIDs []string
+		var model FineTunedModel; modelName := modelID; if err := DB.Where("id = ?", modelID).First(&model).Error; err == nil && model.ModelPath != "" { modelName = strings.TrimSuffix(strings.TrimPrefix(model.ModelPath, "../checkpoints/"), ".pt") }; DB.Model(&Query{}).Where("user_id = ? AND (training_model_id = ? OR training_model_id = ?)", userID, modelID, modelName).Pluck("id", &queryIDs)
+		fmt.Printf("DEBUG: Found %d queries for model\n", len(queryIDs))
+		if len(queryIDs) > 0 {
+			DB.Where("query_id IN ? AND user_id = ?", queryIDs, userID).Order("created_at asc").Find(&messages)
+		}
+	} else if queryID != "" {
+		DB.Where("query_id = ? AND user_id = ?", queryID, userID).Order("created_at asc").Find(&messages)
+	} else {
+		http.Error(w, "Bad request: query_id or model_id required", http.StatusBadRequest)
+		return
+	}
+
+	fmt.Printf("DEBUG: Returning %d messages\n", len(messages))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"messages": messages})
 }
