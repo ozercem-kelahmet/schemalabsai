@@ -32,3 +32,8 @@ model/finetuned_models/*.pt
 data/
 schemalabsai_linux
 schemalabsai_linux
+uploads/
+checkpoints/
+data/
+*.csv
+*.xlsx
