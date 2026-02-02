@@ -174,7 +174,7 @@ export default function ConfigurationPage() {
   }
 
   const createEndpoint = async () => {
-    if (!newEndpointName || !newEndpointPath || !newEndpointModel || !newEndpointLLM) return
+    if (!newEndpointName || !newEndpointPath || !newEndpointModel ) return
     setCreatingEndpoint(true)
     try {
       const res = await fetch("/api/endpoints/create", {
@@ -381,17 +381,10 @@ export default function ConfigurationPage() {
                 <Input placeholder="My API Key" value={newKeyName} onChange={(e) => setNewKeyName(e.target.value)} className="border-border bg-background" />
               </div>
               <div className="space-y-2">
-                <Label>Fine-tuned Model</Label>
+                <Label>Base Model</Label>
                 <Select value={selectedFineTunedModel} onValueChange={setSelectedFineTunedModel}>
                   <SelectTrigger className="border-border bg-background"><SelectValue placeholder="Select model" /></SelectTrigger>
-                  <SelectContent>{fineTunedModels.map(m => <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>)}</SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>LLM Model</Label>
-                <Select value={selectedLLMModel} onValueChange={setSelectedLLMModel}>
-                  <SelectTrigger className="border-border bg-background"><SelectValue /></SelectTrigger>
-                  <SelectContent>{llmModels.map(m => <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>)}</SelectContent>
+                  <SelectContent><SelectItem value="schema-v0">schema-v0</SelectItem></SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
@@ -431,17 +424,10 @@ export default function ConfigurationPage() {
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Fine-tuned Model</Label>
+              <Label>Model</Label>
               <Select value={newEndpointModel} onValueChange={setNewEndpointModel}>
                 <SelectTrigger className="border-border bg-background"><SelectValue placeholder="Select model" /></SelectTrigger>
                 <SelectContent>{fineTunedModels.map(m => <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>LLM Model</Label>
-              <Select value={newEndpointLLM} onValueChange={setNewEndpointLLM}>
-                <SelectTrigger className="border-border bg-background"><SelectValue placeholder="Select LLM" /></SelectTrigger>
-                <SelectContent>{llmModels.map(m => <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div className="space-y-2">
@@ -462,7 +448,7 @@ export default function ConfigurationPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateEndpointModalOpen(false)}>Cancel</Button>
-            <Button onClick={createEndpoint} disabled={creatingEndpoint || !newEndpointModel || !newEndpointLLM || !newEndpointName || !newEndpointPath} className="bg-[#0052CC] text-white hover:bg-[#003D99]">
+            <Button onClick={createEndpoint} disabled={creatingEndpoint || !newEndpointModel  || !newEndpointName || !newEndpointPath} className="bg-[#0052CC] text-white hover:bg-[#003D99]">
               {creatingEndpoint ? "Creating..." : "Create Endpoint"}
             </Button>
           </DialogFooter>

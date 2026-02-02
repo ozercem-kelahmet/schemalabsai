@@ -1,1 +1,3 @@
-export const API_BASE = 'http://localhost:8080'
+const isProduction = typeof window !== 'undefined' && window.location.hostname !== 'localhost'
+
+export const API_BASE = isProduction ? '' : 'http://localhost:8080'

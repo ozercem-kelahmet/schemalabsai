@@ -20,7 +20,8 @@ interface Model {
 
 interface Query {
   id: string
-  model_id: string
+  training_model_id: string | null
+  model_name: string
   title: string
   created_at: string
 }
@@ -107,7 +108,7 @@ export default function UsagePage() {
     
     queries.forEach(q => {
       const d = safeDate(q.created_at)
-      const model = models.find(m => m.id === q.model_id)
+      const model = models.find(m => m.id === q.training_model_id || m.name === q.model_name)
       events.push({
         id: `query-${q.id}`,
         date: d.toISOString().split("T")[0],
@@ -115,7 +116,7 @@ export default function UsagePage() {
         event: "Query executed",
         kind: "query",
         model: "schema-v0",
-        builtModel: model?.name || "Unknown",
+        builtModel: q.model_name || model?.name || "Unknown",
         credits: 0.12,
         baseTokens: Math.floor(Math.random() * 300) + 200,
         endpointCalls: 1
@@ -265,6 +266,54 @@ export default function UsagePage() {
         <Button variant="outline" className="gap-2 bg-transparent"><Download className="h-4 w-4" /> Export Report</Button>
       </div>
 
+
+      {/* Quota Section */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <Card className="border-border bg-card">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-muted-foreground">Compute</span>
+              <span className="text-xs font-medium text-foreground">89.8 / 100 Hours</span>
+            </div>
+            <div className="h-2 bg-muted rounded-full overflow-hidden">
+              <div className="h-full bg-[#0052CC] rounded-full" style={{ width: "89.8%" }} />
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="border-border bg-card">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-muted-foreground">Storage</span>
+              <span className="text-xs font-medium text-foreground">42.5 / 50 GB</span>
+            </div>
+            <div className="h-2 bg-muted rounded-full overflow-hidden">
+              <div className="h-full bg-[#2684FF] rounded-full" style={{ width: "85%" }} />
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="border-border bg-card">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-muted-foreground">Memory</span>
+              <span className="text-xs font-medium text-foreground">2.4 / 5 GB</span>
+            </div>
+            <div className="h-2 bg-muted rounded-full overflow-hidden">
+              <div className="h-full bg-[#4C9AFF] rounded-full" style={{ width: "48%" }} />
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="border-border bg-card">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-muted-foreground">Queries</span>
+              <span className="text-xs font-medium text-foreground">12,847 / 50,000</span>
+            </div>
+            <div className="h-2 bg-muted rounded-full overflow-hidden">
+              <div className="h-full bg-[#7C3AED] rounded-full" style={{ width: "25.7%" }} />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
       {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card className="border-border bg-card lg:col-span-2">

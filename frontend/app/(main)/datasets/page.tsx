@@ -23,7 +23,7 @@ export default function DatabasePage() {
           <span className="text-muted-foreground">
             Connect and manage data from databases, APIs, cloud storage, and file uploads. Click any dataset to view its schema. Use the{" "}
             <span className="font-medium text-foreground">+ Connect</span> button to add new data sources, or{" "}
-            <span className="font-medium text-foreground">+ Generate</span> new ones.
+            <span className="font-medium text-foreground">+ Generate</span> new ones. <span className="italic text-amber-600 dark:text-amber-400">Don't upload sensitive personal data, confidential info, or anything you don't have rights to use.</span>
           </span>
         </p>
       </div>

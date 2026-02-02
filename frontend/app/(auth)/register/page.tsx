@@ -134,7 +134,7 @@ export default function RegisterPage() {
       
       <div className="relative flex min-h-screen flex-col items-center justify-center px-4">
         <Link href="/" className="mb-8">
-          <Image
+          <Image unoptimized
             src={isDark ? "/images/schemalabs-light.png" : "/images/schemalabs-dark.png"}
             alt="SchemaLabs"
             width={180}

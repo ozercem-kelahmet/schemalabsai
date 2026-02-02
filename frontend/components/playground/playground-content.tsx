@@ -1076,6 +1076,7 @@ api.getMessages(sessionId)
               </div>
             </div>
           </form>
+          <p className="text-center text-xs text-muted-foreground mt-2">v.Alpha: Outputs may be incorrect, verify important information.</p>
         </div>
       </div>
     </TooltipProvider>

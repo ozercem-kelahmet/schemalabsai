@@ -365,18 +365,18 @@ export function ConfigStep({
             <p className="text-xs text-muted-foreground">How should the model stay updated with data changes?</p>
             <div className="grid grid-cols-3 gap-2">
               {[
-                { mode: "real-time" as SyncMode, label: "Real-time", icon: Zap, desc: "Auto-track changes" },
-                { mode: "scheduled" as SyncMode, label: "Scheduled", icon: Clock, desc: "Periodic sync" },
+                { mode: "real-time" as SyncMode, label: "Real-time", icon: Zap, desc: "Coming soon", disabled: true },
+                { mode: "scheduled" as SyncMode, label: "Scheduled", icon: Clock, desc: "Coming soon", disabled: true },
                 { mode: "manual" as SyncMode, label: "Manual", icon: RefreshCw, desc: "On-demand" },
               ].map(option => (
                 <button
                   key={option.mode}
                   type="button"
-                  onClick={() => onSyncModeChange(option.mode)}
+                  onClick={() => !option.disabled && onSyncModeChange(option.mode)} disabled={option.disabled}
                   className={`flex flex-col items-center justify-center gap-1 rounded-lg border px-3 py-3 transition-all ${
                     syncMode === option.mode
                       ? "border-[#0052CC] bg-[#0052CC]/10 text-[#2684FF]"
-                      : "border-border bg-muted/50 text-muted-foreground hover:border-border/80"
+                      : option.disabled ? "border-border bg-muted/30 text-muted-foreground/50 cursor-not-allowed opacity-50" : "border-border bg-muted/50 text-muted-foreground hover:border-border/80"
                   }`}
                 >
                   <option.icon className="h-4 w-4" />

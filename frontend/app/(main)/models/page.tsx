@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Search, Layers, Play, MoreHorizontal, Calendar, Hash, Activity, Zap, ChevronLeft, ChevronRight, Database, FileText, MessageSquare } from "lucide-react"
+import { Search, Layers, Play, MoreHorizontal, Calendar, Hash, Activity, Zap, ChevronLeft, ChevronRight, Database, FileText, MessageSquare, Trash2 } from "lucide-react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -212,8 +212,11 @@ export default function ModelsPage() {
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild onClick={e => e.stopPropagation()}><Button variant="ghost" size="icon" className="h-8 w-8"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={e => { e.stopPropagation(); handleClick(m) }}><Play className="mr-2 h-4 w-4" /> Playground</DropdownMenuItem>
-                        <DropdownMenuItem onClick={e => { e.stopPropagation(); setSelectedModel(m); setMetricsOpen(true) }}><Activity className="mr-2 h-4 w-4" /> Metrics</DropdownMenuItem>
+                        <DropdownMenuItem onClick={e => { e.stopPropagation(); }}><FileText className="mr-2 h-4 w-4" /> Rename Model</DropdownMenuItem>
+                        <DropdownMenuItem onClick={e => { e.stopPropagation(); handleClick(m) }}><Play className="mr-2 h-4 w-4" /> Open in Playground</DropdownMenuItem>
+                        <DropdownMenuItem onClick={e => { e.stopPropagation(); }}><Zap className="mr-2 h-4 w-4" /> Create Endpoint</DropdownMenuItem>
+                        <DropdownMenuItem onClick={e => { e.stopPropagation(); }}><Database className="mr-2 h-4 w-4" /> Sync Data Sources</DropdownMenuItem>
+                        <DropdownMenuItem onClick={e => { e.stopPropagation(); }} className="text-red-500 focus:text-red-500"><Trash2 className="mr-2 h-4 w-4" /> Delete</DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>

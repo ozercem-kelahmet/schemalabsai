@@ -269,7 +269,7 @@ func main() {
 		path := r.URL.Path
 
 		// Public routes - no auth needed
-		publicPaths := []string{"/login", "/_next", "/favicon", "/icon", "/api/auth/session", "/api/auth/_log"}
+		publicPaths := []string{"/login", "/register", "/forgot-password", "/_next", "/favicon", "/icon", "/images", "/api/auth/session", "/api/auth/_log"}
 		for _, p := range publicPaths {
 			if strings.HasPrefix(path, p) {
 				nextProxy.ServeHTTP(w, r)

@@ -2440,3 +2440,4 @@ func GetSessionsHandler(w http.ResponseWriter, r *http.Request) {
 		"total":    len(sessions),
 	})
 }
+

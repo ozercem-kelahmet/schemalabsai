@@ -12,7 +12,7 @@ const geist = Geist({ subsets: ["latin"] })
 const geistMono = Geist_Mono({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: "SchemaLabs - Data Language Model Platform",
+  title: "Schema Console",
   description: "End-to-end transformer based neural network that brings table-native understanding to AI development.",
   generator: "Schema Labs",
   icons: {
