@@ -189,9 +189,10 @@ export default function ModelsPage() {
     } catch { return d }
   }
 
+  const cleanName = (s: string) => s.replace(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}[_.]?/, "").replace(/^\.csv_?/, "").replace(/_\d{8}_\d{6}/, "").replace(/\.csv$/, "")
   const getSourceNames = (m: FineTunedModel): string[] => {
-    if (m.source_file_names) return m.source_file_names.split(",").map(s => s.trim()).filter(Boolean)
-    if (m.source_name) return [m.source_name]
+    if (m.source_file_names) return m.source_file_names.split(",").map(s => cleanName(s.trim())).filter(Boolean)
+    if (m.source_name) return [cleanName(m.source_name)]
     if (m.source_files) return m.source_files.split(",").filter(Boolean).map((_, i) => "Dataset " + (i + 1))
     return []
   }
