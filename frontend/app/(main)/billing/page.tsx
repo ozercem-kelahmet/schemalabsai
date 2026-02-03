@@ -63,7 +63,7 @@ export default function BillingPage() {
   const isUnlimited = quota?.plan === "alpha_unlimited"
   const planName = isUnlimited ? "Alpha (Unlimited)" : "Alpha"
   const creditsTotal = isUnlimited ? quota?.credits_used || 0 : quota?.credits_total || 5
-  const creditsRemaining = isUnlimited ? Infinity : quota?.credits_remaining || 5
+  const creditsRemaining = isUnlimited ? 0 : quota?.credits_remaining || 5
   const resetDate = quota?.reset_date ? new Date(quota.reset_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"
   const daysUntilReset = quota?.days_until_reset || 0
 
@@ -162,7 +162,7 @@ export default function BillingPage() {
                 </div>
                 <div className="flex justify-between font-medium border-t border-border pt-1">
                   <span className="text-foreground">Remaining</span>
-                  <span className="text-foreground">{isUnlimited ? "∞" : `$${(creditsRemaining).toFixed(2)}`}</span>
+                  <span className="text-foreground">{isUnlimited ? "∞" : `$${creditsRemaining.toFixed(2)}`}</span>
                 </div>
               </div>
             </div>
