@@ -451,7 +451,7 @@ api.getMessages(sessionId)
     if (!queryId) {
       try {
         const createData = await api.createQuery(
-          `__hidden__${selectedModel.id}`,
+          message.trim().substring(0, 50) || selectedModel.name,
           selectedLLMs[0],
           [selectedModel.id],
           "",

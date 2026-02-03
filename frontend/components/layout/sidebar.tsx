@@ -116,12 +116,6 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
               .filter((q: BackendQuery) => {
                 // Filter out auto-created/hidden queries
                 const name = q.name || ""
-                // Hidden queries (model-based chats)
-                if (name.startsWith('__hidden__')) return false
-                // Model-named queries
-                if (name.startsWith('model_') || name.startsWith('Model_') || name.includes('_merged_')) return false
-                // Prompt-text queries (lowercase start with spaces)
-                if (/^[a-z]/.test(name) && name.includes(' ')) return false
                 return true
               })
               .map((q: BackendQuery) => ({
