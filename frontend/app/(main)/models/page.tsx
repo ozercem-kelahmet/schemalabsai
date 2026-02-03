@@ -137,7 +137,7 @@ export default function ModelsPage() {
       if (res.ok) {
         const data = await res.json()
         const list = (data.models || []).map((m: FineTunedModel) => {
-          const epochs = m.epochs || 10
+          const epochs = m.epochs || 5
           const lossHistory: number[] = []
           const accHistory: number[] = []
           let loss = 0.65 + Math.random() * 0.15
@@ -291,7 +291,7 @@ export default function ModelsPage() {
                   </div>
                   <div className="mt-4 grid grid-cols-3 gap-3 border-t border-border pt-4">
                     <div><div className="text-[10px] text-muted-foreground uppercase">Accuracy</div><div className="mt-1 text-lg font-semibold text-emerald-500">{m.accuracy?.toFixed(1) || 0}%</div></div>
-                    <div><div className="text-[10px] text-muted-foreground uppercase">Epochs</div><div className="mt-1 text-lg font-semibold">{m.epochs || 10}</div></div>
+                    <div><div className="text-[10px] text-muted-foreground uppercase">Epochs</div><div className="mt-1 text-lg font-semibold">{m.epochs || 5}</div></div>
                     <div><div className="text-[10px] text-muted-foreground uppercase">Loss</div><div className="mt-1 text-lg font-semibold">{(m.loss || 0).toFixed(3)}</div></div>
                   </div>
                   {getSourceNames(m).length > 0 && (

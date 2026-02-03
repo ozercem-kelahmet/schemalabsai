@@ -2512,6 +2512,7 @@ def finetune():
         return jsonify({
             "status": "success",
             "accuracy": float(best_acc),
+            "loss": float(avg_loss),
             "epochs": current_epoch,
             "requested_epochs": epochs,
             "n_classes": n_classes,

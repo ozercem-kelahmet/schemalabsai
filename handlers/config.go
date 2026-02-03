@@ -65,7 +65,7 @@ func GetBaseURL() string {
 		return url
 	}
 	if IsProduction() {
-		return "https://schemalabs.ai"
+		return "https://console.schemalabs.ai"
 	}
 	port := os.Getenv("API_PORT")
 	if port == "" {
