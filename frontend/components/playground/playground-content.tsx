@@ -55,6 +55,7 @@ interface BackendModel {
   sourceFiles?: string
   source_files?: string
   source_csv_name?: string
+  source_file_names?: string
   model_path?: string
   modelPath?: string
 }
@@ -83,11 +84,12 @@ function adaptBackendModel(m: BackendModel): AdaptedModel {
   console.log("DEBUG adaptBackendModel input:", m.name, "source_files:", m.source_files, "sourceFiles:", m.sourceFiles)
   const sourceFilesStr = m.sourceFiles || m.source_files || ""
   const sourceCsvName = m.sourceCsvName || m.source_csv_name || ""
+  const sourceFileNames = (m.source_file_names || "").split(",").filter(Boolean)
   const sourceFiles = sourceFilesStr ? sourceFilesStr.split(",").filter(Boolean) : []
   const datasets = sourceFiles.length > 0 
     ? sourceFiles.map((file, idx) => ({
         datasetId: `ds-${m.id}-${idx}`,
-        datasetName: file.trim(),
+        datasetName: (sourceFileNames[idx] || file).trim().replace(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}[_.]?/, "").replace(/_\d{8}_\d{6}/, "").replace(/\.csv$/, ""),
         source: "upload" as DataSource,
       }))
     : sourceCsvName 
