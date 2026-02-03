@@ -465,6 +465,17 @@ api.getMessages(sessionId)
           setCurrentQueryId(queryId)
           
           window.history.pushState({}, "", `/playground/${queryId}`)
+          
+          // Add to sidebar
+          setChatSessions(prev => [{
+            id: queryId!,
+            name: selectedModel?.name || "New Chat",
+            modelIds: [selectedModel?.id || ""],
+            llmIds: selectedLLMs,
+            messages: [],
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          }, ...prev])
         }
       } catch (e) {
         console.error("Failed to create query:", e)
@@ -753,6 +764,14 @@ api.getMessages(sessionId)
                         console.error("Model ID is empty!")
                         setMessages([])
                         setHasInitializedChat(true)
+                        return
+                      }
+                      // If new chat trigger, don't load old messages
+                      if (new URLSearchParams(window.location.search).get("new")) {
+                        setMessages([])
+                        setCurrentQueryId(null)
+                        setHasInitializedChat(true)
+                        setIsLoading(false)
                         return
                       }
                       const msgData = await api.getMessages("", model.id)

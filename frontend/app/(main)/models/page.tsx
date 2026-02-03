@@ -74,6 +74,59 @@ export default function ModelsPage() {
   const [metricsOpen, setMetricsOpen] = useState(false)
   const [selectedModel, setSelectedModel] = useState<FineTunedModel | null>(null)
 
+  const [editingModelId, setEditingModelId] = useState<string | null>(null)
+  const [editingName, setEditingName] = useState("")
+  const [endpointModalOpen, setEndpointModalOpen] = useState(false)
+  const [selectedModelForEndpoint, setSelectedModelForEndpoint] = useState<FineTunedModel | null>(null)
+  const [endpointForm, setEndpointForm] = useState({ name: "", urlPath: "", description: "" })
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [selectedModelForDelete, setSelectedModelForDelete] = useState<FineTunedModel | null>(null)
+
+  const startEditing = (model: FineTunedModel) => {
+    setEditingModelId(model.id)
+    setEditingName(model.name)
+  }
+
+  const saveModelName = async () => {
+    if (editingModelId && editingName.trim()) {
+      try {
+        await fetch("/api/models/finetuned/update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ id: editingModelId, name: editingName.trim() }),
+        })
+        setAllModels(prev => prev.map(m => m.id === editingModelId ? { ...m, name: editingName.trim() } : m))
+      } catch (e) { console.error(e) }
+    }
+    setEditingModelId(null)
+    setEditingName("")
+  }
+
+  const cancelEditing = () => {
+    setEditingModelId(null)
+    setEditingName("")
+  }
+
+  const openEndpointModal = (model: FineTunedModel) => {
+    setSelectedModelForEndpoint(model)
+    setEndpointForm({ name: "", urlPath: `/v1/models/${model.id}/`, description: "" })
+    setEndpointModalOpen(true)
+  }
+
+  const deleteModel = async () => {
+    if (!selectedModelForDelete) return
+    try {
+      await fetch("/api/models/" + selectedModelForDelete.id, {
+        method: "DELETE",
+        credentials: "include",
+      })
+      setAllModels(prev => prev.filter(m => m.id !== selectedModelForDelete.id))
+    } catch (e) { console.error(e) }
+    setDeleteConfirmOpen(false)
+    setSelectedModelForDelete(null)
+  }
+
   useEffect(() => {
     fetchModels()
   }, [])
@@ -202,21 +255,29 @@ export default function ModelsPage() {
         <>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {paginated.map(m => (
-              <Card key={m.id} className="border-border bg-card hover:border-[#0052CC]/50 transition-colors cursor-pointer" onClick={() => handleClick(m)}>
+              <Card key={m.id} className="border-border bg-card hover:border-[#0052CC]/50 transition-colors cursor-pointer" onClick={() => { if (editingModelId) return; setTimeout(() => handleClick(m), 100) }}>
                 <CardContent className="p-4">
                   <div className="flex items-start justify-between">
                     <div className="flex-1 min-w-0">
-                      <h3 className="font-medium text-foreground truncate">{m.name}</h3>
+                      {editingModelId === m.id ? (
+                        <div className="flex items-center gap-1 w-full" onClick={e => e.stopPropagation()}>
+                          <input className="font-medium text-foreground bg-background border border-border rounded px-2 py-0.5 flex-1 min-w-0" value={editingName} onChange={e => setEditingName(e.target.value)} onKeyDown={e => { if (e.key === "Enter") saveModelName(); if (e.key === "Escape") cancelEditing() }} autoFocus />
+                          <button className="p-1 rounded hover:bg-green-500/20 text-green-500" onClick={e => { e.stopPropagation(); saveModelName() }}>✓</button>
+                          <button className="p-1 rounded hover:bg-red-500/20 text-red-500" onClick={e => { e.stopPropagation(); cancelEditing() }}>✕</button>
+                        </div>
+                      ) : (
+                        <h3 className="font-medium text-foreground truncate">{m.name}</h3>
+                      )}
                       <p className="text-xs text-muted-foreground mt-0.5">Fine-tuned model</p>
                     </div>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild onClick={e => e.stopPropagation()}><Button variant="ghost" size="icon" className="h-8 w-8"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={e => { e.stopPropagation(); }}><FileText className="mr-2 h-4 w-4" /> Rename Model</DropdownMenuItem>
+                        <DropdownMenuItem onClick={e => { e.stopPropagation(); startEditing(m) }}><FileText className="mr-2 h-4 w-4" /> Rename Model</DropdownMenuItem>
                         <DropdownMenuItem onClick={e => { e.stopPropagation(); handleClick(m) }}><Play className="mr-2 h-4 w-4" /> Open in Playground</DropdownMenuItem>
-                        <DropdownMenuItem onClick={e => { e.stopPropagation(); }}><Zap className="mr-2 h-4 w-4" /> Create Endpoint</DropdownMenuItem>
+                        <DropdownMenuItem onClick={e => { e.stopPropagation(); openEndpointModal(m) }}><Zap className="mr-2 h-4 w-4" /> Create Endpoint</DropdownMenuItem>
                         <DropdownMenuItem onClick={e => { e.stopPropagation(); }}><Database className="mr-2 h-4 w-4" /> Sync Data Sources</DropdownMenuItem>
-                        <DropdownMenuItem onClick={e => { e.stopPropagation(); }} className="text-red-500 focus:text-red-500"><Trash2 className="mr-2 h-4 w-4" /> Delete</DropdownMenuItem>
+                        <DropdownMenuItem onClick={e => { e.stopPropagation(); setSelectedModelForDelete(m); setDeleteConfirmOpen(true) }} className="text-red-500 focus:text-red-500"><Trash2 className="mr-2 h-4 w-4" /> Delete</DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
@@ -304,6 +365,50 @@ export default function ModelsPage() {
           )}
         </DialogContent>
       </Dialog>
-    </div>
+
+      {/* Create Endpoint Modal */}
+      <Dialog open={endpointModalOpen} onOpenChange={setEndpointModalOpen}>
+        <DialogContent className="border-border bg-card sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Create Endpoint</DialogTitle>
+            <DialogDescription>Create a new API endpoint for {selectedModelForEndpoint?.name}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-foreground">Endpoint Name</label>
+              <input className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm" placeholder="Sales Prediction API" value={endpointForm.name} onChange={e => setEndpointForm(prev => ({ ...prev, name: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-foreground">URL Path</label>
+              <div className="flex items-center">
+                <span className="rounded-l-md border border-r-0 border-border bg-muted px-3 py-2 text-sm text-muted-foreground">/v1/query/</span>
+                <input className="w-full rounded-md rounded-l-none border border-border bg-background px-3 py-2 text-sm font-mono" placeholder="sales-prediction" value={endpointForm.urlPath} onChange={e => setEndpointForm(prev => ({ ...prev, urlPath: e.target.value.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "") }))} />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-foreground">Description (Optional)</label>
+              <textarea className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm resize-none" placeholder="What does this endpoint do?" rows={2} value={endpointForm.description} onChange={e => setEndpointForm(prev => ({ ...prev, description: e.target.value }))} />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button className="rounded-md border border-border px-4 py-2 text-sm hover:bg-muted" onClick={() => setEndpointModalOpen(false)}>Cancel</button>
+            <button className="rounded-md bg-[#0052CC] px-4 py-2 text-sm text-white hover:bg-[#003D99] disabled:opacity-50" disabled={!endpointForm.name || !endpointForm.urlPath} onClick={async () => { try { const res = await fetch("/api/endpoints/create", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ fine_tuned_model_id: selectedModelForEndpoint?.id, name: endpointForm.name, path: "/v1/query/" + endpointForm.urlPath, llm_model: "gpt-4o-mini", description: endpointForm.description }) }); if (res.ok) { setEndpointModalOpen(false) } } catch(e) { console.error(e) } }}>Create Endpoint</button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirm Modal */}
+      <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <DialogContent className="max-w-sm border-border bg-card">
+          <DialogHeader>
+            <DialogTitle>Delete Model</DialogTitle>
+            <DialogDescription>Are you sure you want to delete &quot;{selectedModelForDelete?.name}&quot;? This action cannot be undone.</DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 pt-4">
+            <button className="rounded-md border border-border px-4 py-2 text-sm hover:bg-muted" onClick={() => setDeleteConfirmOpen(false)}>Cancel</button>
+            <button className="rounded-md bg-red-500 px-4 py-2 text-sm text-white hover:bg-red-600" onClick={deleteModel}>Delete</button>
+          </div>
+        </DialogContent>
+      </Dialog>    </div>
   )
 }

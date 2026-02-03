@@ -136,7 +136,7 @@ def get_cached_finetuned_model(model_id, config, model_path=None):
         config = ckpt_config
     
     ft_model = TabularFoundationModel(config)
-    ft_model.load_state_dict(ft_ckpt['model_state_dict'])
+    ft_model.load_state_dict(ft_ckpt["model_state_dict"], strict=False)
     ft_model.eval()
     ft_model = ft_model.to(device)
     

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -15,31 +15,63 @@ import {
 import {
   CreditCard,
   Gift,
-  AlertCircle,
   Check,
   Calendar,
+  Loader2,
 } from "lucide-react"
 
+interface QuotaData {
+  plan: string
+  credits_total: number
+  credits_used: number
+  credits_remaining: number
+  models_limit: number
+  models_used: number
+  queries_daily: number
+  queries_used: number
+  storage_limit_mb: number
+  storage_used_mb: number
+  reset_date: string
+  days_until_reset: number
+  datasets_connected: number
+}
+
 export default function BillingPage() {
-  const [currentPlan] = useState({
-    name: "Alpha",
-    price: 0,
-    renewalDate: "Mar 1, 2026",
-    features: ["50,000 monthly credits", "Unlimited models", "Priority support", "API access"],
-  })
-
-  const [creditBalance] = useState({
-    total: 5.00,
-    creditId: "sch-7842",
-    gifted: 5.00,
-    monthly: 0.00,
-    purchased: 0.00,
-    resetDays: 21,
-  })
-
-  const [cancelPlanOpen, setCancelPlanOpen] = useState(false)
-  const [redeemCodeOpen, setRedeemCodeOpen] = useState(false)
+  const [quota, setQuota] = useState<QuotaData | null>(null)
+  const [loading, setLoading] = useState(true)
   const [redeemCode, setRedeemCode] = useState("")
+  const [redeemCodeOpen, setRedeemCodeOpen] = useState(false)
+
+  useEffect(() => {
+    fetchQuota()
+  }, [])
+
+  const fetchQuota = async () => {
+    try {
+      const res = await fetch("/api/quota", { credentials: "include" })
+      if (res.ok) {
+        const data = await res.json()
+        setQuota(data)
+      }
+    } catch (e) {
+      console.error("Failed to fetch quota:", e)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const isUnlimited = quota?.plan === "alpha_unlimited"
+  const planName = isUnlimited ? "Alpha (Unlimited)" : "Alpha"
+  const creditsTotal = isUnlimited ? quota?.credits_used || 0 : quota?.credits_total || 5
+  const creditsRemaining = isUnlimited ? Infinity : quota?.credits_remaining || 5
+  const resetDate = quota?.reset_date ? new Date(quota.reset_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"
+  const daysUntilReset = quota?.days_until_reset || 0
+
+  const features = isUnlimited
+    ? ["Unlimited credits", "Unlimited models", "Unlimited queries", "API access", "10 GB storage"]
+    : [`$${quota?.credits_total || 5} monthly credits`, `${quota?.models_limit || 5} AI models`, `${quota?.queries_daily || 10} queries/day`, "API access"]
+
+  if (loading) return <div className="flex items-center justify-center h-64 text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading...</div>
 
   return (
     <div className="space-y-4">
@@ -62,8 +94,7 @@ export default function BillingPage() {
               <div>
                 <p className="text-xs text-muted-foreground">Current Plan</p>
                 <div className="flex items-baseline gap-2 mt-0.5">
-                  <span className="text-xl font-bold text-foreground">{currentPlan.name}</span>
-                  <span className="text-lg font-semibold text-foreground">${currentPlan.price}<span className="text-xs font-normal text-muted-foreground">/mo</span></span>
+                  <span className="text-xl font-bold text-foreground">{planName}</span>
                 </div>
               </div>
               <span className="rounded-full bg-[#0052CC]/10 px-2 py-0.5 text-xs font-medium text-[#0052CC] dark:text-[#2684FF]">Active</span>
@@ -71,11 +102,11 @@ export default function BillingPage() {
             
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-3">
               <Calendar className="h-3 w-3" />
-              <span>Renews {currentPlan.renewalDate}</span>
+              <span>Renews {resetDate}</span>
             </div>
 
             <div className="flex flex-wrap gap-1.5 mb-3">
-              {currentPlan.features.map((feature, i) => (
+              {features.map((feature, i) => (
                 <span key={i} className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
                   <Check className="h-3 w-3 text-green-500" />
                   {feature}
@@ -96,7 +127,7 @@ export default function BillingPage() {
           <CardContent className="p-4">
             <div className="flex items-start justify-between mb-3">
               <div>
-                <p className="text-xs text-muted-foreground">Credit Balance · Resets in <span className="font-medium text-foreground">{creditBalance.resetDays}d</span></p>
+                <p className="text-xs text-muted-foreground">Credit Balance · Resets in <span className="font-medium text-foreground">{daysUntilReset}d</span></p>
               </div>
               <Button size="sm" disabled className="h-7 text-xs bg-[#0052CC]/50 text-white cursor-not-allowed">
                 Buy Credits (soon)
@@ -109,34 +140,36 @@ export default function BillingPage() {
                   <div className="w-5 h-3 rounded-sm bg-amber-400/80" />
                 </div>
                 <div>
-                  <div className="text-base font-bold text-white">${creditBalance.total.toFixed(2)}</div>
-                  <div className="text-[8px] text-gray-400">{creditBalance.creditId}</div>
+                  <div className="text-base font-bold text-white">
+                    {isUnlimited ? "∞" : `$${creditsRemaining.toFixed(2)}`}
+                  </div>
+                  <div className="text-[8px] text-gray-400">sch-{quota?.plan?.slice(0,4) || "alpha"}</div>
                 </div>
               </div>
 
               <div className="flex-1 space-y-1 text-xs">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Gifted</span>
-                  <span className="text-foreground">${creditBalance.gifted.toFixed(2)}</span>
+                  <span className="text-foreground">{isUnlimited ? "∞" : `$${(quota?.credits_total || 5).toFixed(2)}`}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Monthly</span>
-                  <span className="text-foreground">${creditBalance.monthly.toFixed(2)}</span>
+                  <span className="text-muted-foreground">Used</span>
+                  <span className="text-foreground">${(quota?.credits_used || 0).toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Purchased</span>
-                  <span className="text-foreground">${creditBalance.purchased.toFixed(2)}</span>
+                  <span className="text-foreground">$0.00</span>
                 </div>
                 <div className="flex justify-between font-medium border-t border-border pt-1">
-                  <span className="text-foreground">Total</span>
-                  <span className="text-foreground">${creditBalance.total.toFixed(2)}</span>
+                  <span className="text-foreground">Remaining</span>
+                  <span className="text-foreground">{isUnlimited ? "∞" : `$${(creditsRemaining).toFixed(2)}`}</span>
                 </div>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* Usage Code Card */}
+        {/* Redeem Code Card */}
         <Card className="border-border bg-card lg:col-span-2">
           <CardContent className="p-4">
             <div className="flex items-center gap-2 mb-2">

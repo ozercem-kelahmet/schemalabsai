@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { BarChart3, Download, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react"
+import { BarChart3, Download, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown, CreditCard, Zap, HardDrive, Activity } from "lucide-react"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, Legend } from "recharts"
 
 interface Model {
@@ -55,6 +55,7 @@ export default function UsagePage() {
   const [queries, setQueries] = useState<Query[]>([])
   const [endpoints, setEndpoints] = useState<Endpoint[]>([])
   const [loading, setLoading] = useState(true)
+  const [quota, setQuota] = useState<any>(null)
   
   const [dateFrom, setDateFrom] = useState("2024-01-01")
   const [dateTo, setDateTo] = useState(new Date().toISOString().split("T")[0])
@@ -68,14 +69,16 @@ export default function UsagePage() {
 
   const fetchData = async () => {
     try {
-      const [modelsRes, queriesRes, endpointsRes] = await Promise.all([
+      const [modelsRes, queriesRes, endpointsRes, quotaRes] = await Promise.all([
         fetch("/api/models/finetuned", { credentials: "include" }),
         fetch("/api/queries", { credentials: "include" }),
-        fetch("/api/endpoints", { credentials: "include" })
+        fetch("/api/endpoints", { credentials: "include" }),
+        fetch("/api/quota", { credentials: "include" })
       ])
       if (modelsRes.ok) setModels((await modelsRes.json()).models || [])
       if (queriesRes.ok) setQueries((await queriesRes.json()).queries || [])
       if (endpointsRes.ok) setEndpoints((await endpointsRes.json()) || [])
+      if (quotaRes.ok) setQuota(await quotaRes.json())
     } catch (e) { console.error("Failed to fetch:", e) }
     finally { setLoading(false) }
   }
@@ -267,49 +270,100 @@ export default function UsagePage() {
       </div>
 
 
-      {/* Quota Section */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      {/* Credits & Storage Overview */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Monthly Credits */}
         <Card className="border-border bg-card">
           <CardContent className="p-4">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-muted-foreground">Compute</span>
-              <span className="text-xs font-medium text-foreground">89.8 / 100 Hours</span>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-muted-foreground">Monthly Credits</p>
+                <p className="text-2xl font-semibold text-foreground mt-1">
+                  {quota?.plan === "alpha_unlimited" ? "\u221e" : (quota?.credits_used || 0).toFixed(1)}
+                  {quota?.plan !== "alpha_unlimited" && <span className="text-sm font-normal text-muted-foreground"> / {quota?.credits_total || 5}</span>}
+                </p>
+              </div>
+              <div className="h-10 w-10 rounded-full bg-[#0052CC]/10 flex items-center justify-center">
+                <CreditCard className="h-5 w-5 text-[#0052CC] dark:text-[#2684FF]" />
+              </div>
             </div>
-            <div className="h-2 bg-muted rounded-full overflow-hidden">
-              <div className="h-full bg-[#0052CC] rounded-full" style={{ width: "89.8%" }} />
+            <div className="mt-3">
+              <div className="h-2 rounded-full bg-muted overflow-hidden">
+                <div className="h-full bg-[#0052CC] rounded-full" style={{ width: quota?.plan === "alpha_unlimited" ? "5%" : `${Math.min(((quota?.credits_used || 0) / (quota?.credits_total || 5)) * 100, 100)}%` }} />
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">{quota?.plan === "alpha_unlimited" ? "Unlimited" : `${Math.round(((quota?.credits_used || 0) / (quota?.credits_total || 5)) * 100)}% used`} · Resets in {quota?.days_until_reset || 0} days</p>
             </div>
           </CardContent>
         </Card>
+
+        {/* Models Built */}
         <Card className="border-border bg-card">
           <CardContent className="p-4">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-muted-foreground">Storage</span>
-              <span className="text-xs font-medium text-foreground">42.5 / 50 GB</span>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-muted-foreground">Models Built</p>
+                <p className="text-2xl font-semibold text-foreground mt-1">
+                  {quota?.models_used || 0}
+                  {quota?.plan !== "alpha_unlimited" && <span className="text-sm font-normal text-muted-foreground"> / {quota?.models_limit || 5}</span>}
+                </p>
+              </div>
+              <div className="h-10 w-10 rounded-full bg-green-500/10 flex items-center justify-center">
+                <Zap className="h-5 w-5 text-green-500" />
+              </div>
             </div>
-            <div className="h-2 bg-muted rounded-full overflow-hidden">
-              <div className="h-full bg-[#2684FF] rounded-full" style={{ width: "85%" }} />
+            <div className="mt-3">
+              <div className="h-2 rounded-full bg-muted overflow-hidden">
+                <div className="h-full bg-green-500 rounded-full" style={{ width: quota?.plan === "alpha_unlimited" ? "5%" : `${Math.min(((quota?.models_used || 0) / (quota?.models_limit || 5)) * 100, 100)}%` }} />
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">{quota?.plan === "alpha_unlimited" ? "Unlimited" : `${(quota?.models_limit || 5) - (quota?.models_used || 0)} remaining`}</p>
             </div>
           </CardContent>
         </Card>
+
+        {/* Database Storage */}
         <Card className="border-border bg-card">
           <CardContent className="p-4">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-muted-foreground">Memory</span>
-              <span className="text-xs font-medium text-foreground">2.4 / 5 GB</span>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-muted-foreground">Database Storage</p>
+                <p className="text-2xl font-semibold text-foreground mt-1">
+                  {((quota?.storage_used_mb || 0) / 1024).toFixed(1)} GB
+                  <span className="text-sm font-normal text-muted-foreground"> / {((quota?.storage_limit_mb || 10240) / 1024).toFixed(0)} GB</span>
+                </p>
+              </div>
+              <div className="h-10 w-10 rounded-full bg-purple-500/10 flex items-center justify-center">
+                <HardDrive className="h-5 w-5 text-purple-500" />
+              </div>
             </div>
-            <div className="h-2 bg-muted rounded-full overflow-hidden">
-              <div className="h-full bg-[#4C9AFF] rounded-full" style={{ width: "48%" }} />
+            <div className="mt-3">
+              <div className="h-2 rounded-full bg-muted overflow-hidden">
+                <div className="h-full bg-purple-500 rounded-full" style={{ width: `${Math.min(((quota?.storage_used_mb || 0) / (quota?.storage_limit_mb || 10240)) * 100, 100)}%` }} />
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">{Math.round(((quota?.storage_used_mb || 0) / (quota?.storage_limit_mb || 10240)) * 100)}% used · {quota?.datasets_connected || 0} datasets</p>
             </div>
           </CardContent>
         </Card>
+
+        {/* Daily Queries */}
         <Card className="border-border bg-card">
           <CardContent className="p-4">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-muted-foreground">Queries</span>
-              <span className="text-xs font-medium text-foreground">12,847 / 50,000</span>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-muted-foreground">Queries Today</p>
+                <p className="text-2xl font-semibold text-foreground mt-1">
+                  {quota?.queries_used || 0}
+                  {quota?.plan !== "alpha_unlimited" && <span className="text-sm font-normal text-muted-foreground"> / {quota?.queries_daily || 10}</span>}
+                </p>
+              </div>
+              <div className="h-10 w-10 rounded-full bg-orange-500/10 flex items-center justify-center">
+                <Activity className="h-5 w-5 text-orange-500" />
+              </div>
             </div>
-            <div className="h-2 bg-muted rounded-full overflow-hidden">
-              <div className="h-full bg-[#7C3AED] rounded-full" style={{ width: "25.7%" }} />
+            <div className="mt-3">
+              <div className="h-2 rounded-full bg-muted overflow-hidden">
+                <div className="h-full bg-orange-500 rounded-full" style={{ width: quota?.plan === "alpha_unlimited" ? "5%" : `${Math.min(((quota?.queries_used || 0) / (quota?.queries_daily || 10)) * 100, 100)}%` }} />
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">{quota?.plan === "alpha_unlimited" ? "Unlimited" : `${(quota?.queries_daily || 10) - (quota?.queries_used || 0)} remaining today`}</p>
             </div>
           </CardContent>
         </Card>

@@ -316,7 +316,7 @@ export function Sidebar() {
   const isPlaygroundActive = pathname.startsWith("/playground")
 
   const handleNewChat = () => {
-    router.push(`/playground?new=${Date.now()}`)
+    router.push("/playground?new=" + Date.now())
   }
 
   const handleLogout = async () => {

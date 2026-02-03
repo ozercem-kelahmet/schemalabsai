@@ -241,6 +241,9 @@ func main() {
 	http.HandleFunc("/api/admin/models/", enableCORS(handlers.AuthMiddleware(handlers.AdminModelsHandler)))
 	http.HandleFunc("/api/admin/keys", enableCORS(handlers.AuthMiddleware(handlers.AdminKeysHandler)))
 	http.HandleFunc("/api/admin/keys/", enableCORS(handlers.AuthMiddleware(handlers.AdminKeysHandler)))
+
+	// Quota & Billing
+	http.HandleFunc("/api/quota", enableCORS(handlers.AuthMiddleware(handlers.QuotaHandler)))
 	http.HandleFunc("/api/admin/files", enableCORS(handlers.AuthMiddleware(handlers.AdminFilesHandler)))
 	http.HandleFunc("/api/admin/files/", enableCORS(handlers.AuthMiddleware(handlers.AdminFilesHandler)))
 	http.HandleFunc("/api/upload/file/", enableCORS(handlers.AuthMiddleware(handlers.GetFileByIDHandler)))
@@ -269,7 +272,7 @@ func main() {
 		path := r.URL.Path
 
 		// Public routes - no auth needed
-		publicPaths := []string{"/login", "/register", "/forgot-password", "/_next", "/favicon", "/icon", "/images", "/api/auth/session", "/api/auth/_log"}
+		publicPaths := []string{"/login", "/register", "/forgot-password", "/_next", "/favicon", "/icon", "/images", "/api/auth/session", "/api/auth/_log", "/api/auth/login", "/api/auth/signup", "/api/auth/send-verification", "/api/auth/verify-signup", "/api/auth/request-reset", "/api/auth/verify-reset-code", "/api/auth/reset-password", "/api/google/login"}
 		for _, p := range publicPaths {
 			if strings.HasPrefix(path, p) {
 				nextProxy.ServeHTTP(w, r)
