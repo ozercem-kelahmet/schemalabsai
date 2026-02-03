@@ -444,7 +444,7 @@ api.getMessages(sessionId)
     if (!input.trim() || isLoading || (!selectedModel && !sessionId)) return
 
     const userMessage = input.trim()
-    let queryId = currentQueryId
+    let queryId = currentQueryId || sessionId
     const startTime = Date.now()
 
     // Create new query if first message
@@ -467,9 +467,9 @@ api.getMessages(sessionId)
           window.history.pushState({}, "", `/playground/${queryId}`)
           
           // Add to sidebar
-          setChatSessions(prev => [{
+          setChatSessions(prev => prev.some(s => s.id === queryId) ? prev : [{
             id: queryId!,
-            name: selectedModel?.name || "New Chat",
+            name: userMessage.substring(0, 50) || selectedModel?.name || "New Chat",
             modelIds: [selectedModel?.id || ""],
             llmIds: selectedLLMs,
             messages: [],
