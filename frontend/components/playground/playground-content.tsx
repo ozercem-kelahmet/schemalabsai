@@ -451,7 +451,7 @@ api.getMessages(sessionId)
     if (!queryId) {
       try {
         const createData = await api.createQuery(
-          message.trim().substring(0, 50) || selectedModel.name,
+          userMessage.substring(0, 50) || selectedModel?.name || "New Chat",
           selectedLLMs[0],
           [selectedModel.id],
           "",
