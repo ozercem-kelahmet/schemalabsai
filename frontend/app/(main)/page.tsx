@@ -32,17 +32,28 @@ export default function DashboardPage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [modelsRes, datasetsRes] = await Promise.all([
+        const [modelsRes, datasetsRes, connectionsRes] = await Promise.all([
           fetch("/api/models/finetuned", { credentials: "include" }),
-          fetch("/api/files", { credentials: "include" })
+          fetch("/api/files", { credentials: "include" }),
+          fetch("/api/connections", { credentials: "include" }).catch(() => ({ ok: false }))
         ])
         if (modelsRes.ok) {
           const data = await modelsRes.json()
           setModels(data.models || [])
         }
         if (datasetsRes.ok) {
-          const data = await datasetsRes.json()
-          setDatasets(data.files || [])
+          const filesData = await datasetsRes.json()
+          const files = (filesData.files || []).filter((f: any) => !f.is_merged && !f.filename?.includes("_merged_all"))
+          
+          let allDatasets = [...files]
+          
+          if (connectionsRes.ok) {
+            const connectionsData = await connectionsRes.json()
+            const connections = connectionsData.connections || []
+            allDatasets = [...allDatasets, ...connections]
+          }
+          
+          setDatasets(allDatasets)
         }
       } catch (e) {
         console.error("Failed to fetch data:", e)
@@ -53,9 +64,22 @@ export default function DashboardPage() {
     fetchData()
   }, [])
 
-  const avgAccuracy = models.length > 0 ? models.reduce((sum, m) => sum + (m.accuracy || 0), 0) / models.length : 0
-  const totalEpochs = models.reduce((sum, m) => sum + (m.epochs || 0), 0)
-  const trainingHours = (totalEpochs * 0.1).toFixed(1)
+  const avgAccuracy = models.length > 0 
+    ? models.reduce((sum, m) => {
+        const acc = m.accuracy || 0
+        return sum + (acc > 1 ? acc : acc * 100)
+      }, 0) / models.length 
+    : 0
+  
+  const totalTrainingSeconds = models.reduce((sum, m) => {
+    if (m.training_duration && m.training_duration > 0) {
+      return sum + m.training_duration
+    }
+    const epochs = m.epochs || 5
+    const estimatedSeconds = epochs * 20
+    return sum + estimatedSeconds
+  }, 0)
+  const trainingHours = (totalTrainingSeconds / 3600).toFixed(1)
   const recentModels = models.slice(0, 2)
 
   const handleModelClick = async (model: Model) => {

@@ -1,5 +1,5 @@
 "use client"
-
+import { toast } from "sonner"
 import { useState, useEffect, useMemo } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -117,12 +117,17 @@ export default function ModelsPage() {
   const deleteModel = async () => {
     if (!selectedModelForDelete) return
     try {
-      await fetch("/api/models/" + selectedModelForDelete.id, {
+      const res = await fetch("/api/models/finetuned/" + selectedModelForDelete.id, {
         method: "DELETE",
         credentials: "include",
       })
-      setAllModels(prev => prev.filter(m => m.id !== selectedModelForDelete.id))
-    } catch (e) { console.error(e) }
+      if (res.ok) {
+        setAllModels(prev => prev.filter(m => m.id !== selectedModelForDelete.id))
+        toast.success("" + selectedModelForDelete.name + " deleted successfully")
+      } else {
+        toast.error("Failed to delete model")
+      }
+    } catch (e) { console.error(e); toast.error("Failed to delete model") }
     setDeleteConfirmOpen(false)
     setSelectedModelForDelete(null)
   }
@@ -137,20 +142,13 @@ export default function ModelsPage() {
       if (res.ok) {
         const data = await res.json()
         const list = (data.models || []).map((m: FineTunedModel) => {
-          const epochs = m.epochs || 5
-          const lossHistory: number[] = []
-          const accHistory: number[] = []
-          let loss = 0.65 + Math.random() * 0.15
-          let acc = 55 + Math.random() * 10
-          for (let i = 0; i < epochs; i++) {
-            loss = Math.max((m.loss || 0.2) * 0.95, loss - (0.65 - (m.loss || 0.2)) / epochs + (Math.random() - 0.5) * 0.08)
-            acc = Math.min((m.accuracy || 95) * 1.02, acc + ((m.accuracy || 95) - 55) / epochs + (Math.random() - 0.5) * 4)
-            lossHistory.push(loss)
-            accHistory.push(Math.max(55, Math.min(100, acc)))
+          return { 
+            ...m, 
+            loss_history: m.loss_history || [], 
+            accuracy_history: m.accuracy_history || [],
+            usage_count: m.usage_count || 0,
+            request_count: m.request_count || 0
           }
-          if (lossHistory.length > 0) lossHistory[lossHistory.length - 1] = m.loss || 0.2
-          if (accHistory.length > 0) accHistory[accHistory.length - 1] = m.accuracy || 95
-          return { ...m, loss_history: lossHistory, accuracy_history: accHistory, usage_count: Math.floor(Math.random() * 500) + 50, request_count: Math.floor(Math.random() * 2000) + 100 }
         })
         setAllModels(list)
       }

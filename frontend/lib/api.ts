@@ -343,6 +343,13 @@ export const api = {
     return res.json()
   },
 
+  listDatasets: async () => {
+    const res = await fetch(API_BASE + '/api/files', {
+      credentials: 'include'
+    })
+    return res.json()
+  },
+
   deleteQuery: async (id: string) => {
     const res = await fetch(API_BASE + '/api/queries/delete?id=' + id, {
       method: 'DELETE',

@@ -1,4 +1,7 @@
 "use client"
+import { useMemo } from "react"
+import jsPDF from "jspdf"
+import html2canvas from "html2canvas"
 
 import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -54,6 +57,9 @@ export default function UsagePage() {
   const [models, setModels] = useState<Model[]>([])
   const [queries, setQueries] = useState<Query[]>([])
   const [endpoints, setEndpoints] = useState<Endpoint[]>([])
+  const [datasets, setDatasets] = useState<any[]>([])
+  const [connections, setConnections] = useState<any[]>([])
+  const [usageLogs, setUsageLogs] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [quota, setQuota] = useState<any>(null)
   
@@ -69,16 +75,32 @@ export default function UsagePage() {
 
   const fetchData = async () => {
     try {
-      const [modelsRes, queriesRes, endpointsRes, quotaRes] = await Promise.all([
+      const [modelsRes, queriesRes, endpointsRes, quotaRes, datasetsRes, connectionsRes] = await Promise.all([
         fetch("/api/models/finetuned", { credentials: "include" }),
         fetch("/api/queries", { credentials: "include" }),
         fetch("/api/endpoints", { credentials: "include" }),
-        fetch("/api/quota", { credentials: "include" })
+        fetch("/api/quota", { credentials: "include" }),
+        fetch("/api/files", { credentials: "include" }),
+        fetch("/api/connections", { credentials: "include" }),
+
       ])
       if (modelsRes.ok) setModels((await modelsRes.json()).models || [])
       if (queriesRes.ok) setQueries((await queriesRes.json()).queries || [])
       if (endpointsRes.ok) setEndpoints((await endpointsRes.json()) || [])
       if (quotaRes.ok) setQuota(await quotaRes.json())
+      if (datasetsRes.ok) {
+        const files = (await datasetsRes.json()).files || []
+        setDatasets(files.filter((f: any) => !f.is_merged))
+      }
+      if (connectionsRes.ok) {
+        const conns = (await connectionsRes.json()).connections || []
+        setConnections(conns)
+      }
+      // Temporarily disabled - usage_logs table empty
+      // if (logsRes.ok) {
+      //   const logs = (await logsRes.json()).logs || []
+      //   setUsageLogs(logs)
+      // }
     } catch (e) { console.error("Failed to fetch:", e) }
     finally { setLoading(false) }
   }
@@ -89,65 +111,220 @@ export default function UsagePage() {
     return isNaN(d.getTime()) ? new Date() : d
   }
 
+  // Helper to get usage data from logs (with estimated fallbacks)
+  const getUsageData = (resourceId: string, eventType: string, fallbackCredits = 0, fallbackTokens = 0) => {
+    const log = usageLogs.find(l => l.resource_id === resourceId && l.event_type === eventType)
+    return {
+      credits: log?.credits_used || fallbackCredits,
+      tokens: log?.tokens_used || fallbackTokens
+    }
+  }
+
   // Generate usage events from real data
   const generateUsageEvents = (): UsageEvent[] => {
     const events: UsageEvent[] = []
     
     models.forEach(m => {
       const d = safeDate(m.created_at)
+      const modelUsage = getUsageData(m.id, "model_building", (m.epochs || 5) * 0.5, (m.epochs || 5) * 2500)
       events.push({
         id: `model-${m.id}`,
         date: d.toISOString().split("T")[0],
         time: d.toTimeString().split(" ")[0],
         event: "Model training completed",
         kind: "model_building",
-        model: "schema-v0",
+        model: m.base_model || "-",
         builtModel: m.name,
-        credits: (m.epochs || 5) * 0.5,
-        baseTokens: (m.epochs || 5) * 2500,
+        credits: modelUsage.credits,
+        baseTokens: modelUsage.tokens,
         endpointCalls: 0
       })
     })
     
     queries.forEach(q => {
       const d = safeDate(q.created_at)
-      const model = models.find(m => m.id === q.training_model_id || m.name === q.model_name)
+      const model = models.find(m => m.id === q.training_model_id || m.name === q.modelName)
+      
+      // If no model info, show "No Model" instead of "Unknown"
+      let modelName = "No Model"
+      if (q.modelName) modelName = q.modelName
+      else if (model?.name) modelName = model.name
+      else if (q.training_model_id) modelName = String(q.training_model_id).replace("model_finetuned_", "").replace(/_\d{8}_\d{6}/, "")
+      
+      // Determine event type based on source
+      const source = q.source || "playground"
+      const eventKind = source === "api" ? "api" : source === "endpoint" ? "endpoint" : "query"
+      const eventName = eventKind === "api" ? "API request" : eventKind === "endpoint" ? "Endpoint called" : "Query executed"
+      
+      const usage = getUsageData(q.id, eventKind, 0.12, 250)
       events.push({
-        id: `query-${q.id}`,
+        id: `${eventKind}-${q.id}`,
         date: d.toISOString().split("T")[0],
         time: d.toTimeString().split(" ")[0],
-        event: "Query executed",
-        kind: "query",
-        model: "schema-v0",
-        builtModel: q.model_name || model?.name || "Unknown",
-        credits: 0.12,
-        baseTokens: Math.floor(Math.random() * 300) + 200,
-        endpointCalls: 1
+        event: eventName,
+        kind: eventKind,
+        model: model?.base_model || "-",
+        builtModel: modelName,
+        credits: usage.credits,
+        baseTokens: usage.tokens,
+        endpointCalls: eventKind === "query" || eventKind === "endpoint" ? 1 : 0
       })
     })
     
     endpoints.forEach(e => {
       const d = safeDate(e.created_at)
-      for (let i = 0; i < Math.min(e.calls || 0, 5); i++) {
+      // Find the model this endpoint is for
+      const endpointModel = models.find(m => m.id === e.fine_tuned_model_id || e.finetuned_model_id)
+      const baseModel = endpointModel?.base_model || "-"
+      
+      // Only create event if there were actual calls
+      if (e.calls && e.calls > 0) {
+        const endpointUsage = getUsageData(e.id, "endpoint", (e.calls || 0) * 0.08, (e.calls || 0) * 150)
         events.push({
-          id: `endpoint-${e.id}-${i}`,
+          id: `endpoint-${e.id}`,
           date: d.toISOString().split("T")[0],
           time: d.toTimeString().split(" ")[0],
           event: "Endpoint called",
           kind: "endpoint",
-          model: "schema-v0",
+          model: baseModel,
           builtModel: e.name,
-          credits: 0.08,
-          baseTokens: 0,
-          endpointCalls: 1
+          credits: endpointUsage.credits,
+          baseTokens: endpointUsage.tokens,
+          endpointCalls: e.calls || 0
         })
       }
+    })
+    
+    // Data Generation events from dataset uploads
+    datasets.forEach(ds => {
+      const d = safeDate(ds.created_at || ds.uploaded_at)
+      const dataUsage = getUsageData(ds.id || ds.file_id, "data_generation", 0.05, Math.floor((ds.size || 0) / 1024))
+      events.push({
+        id: `data-file-${ds.id || ds.file_id}`,
+        date: d.toISOString().split("T")[0],
+        time: d.toTimeString().split(" ")[0],
+        event: "Data uploaded",
+        kind: "data_generation",
+        model: "-",
+        builtModel: "-",
+        credits: dataUsage.credits,
+        baseTokens: dataUsage.tokens,
+        endpointCalls: 0
+      })
+    })
+    
+    // Data Generation events from database connections
+    connections.forEach(conn => {
+      const d = safeDate(conn.created_at)
+      const connUsage = getUsageData(conn.id, "data_generation", 0.10, 0)
+      events.push({
+        id: `data-conn-${conn.id}`,
+        date: d.toISOString().split("T")[0],
+        time: d.toTimeString().split(" ")[0],
+        event: "Database connected",
+        kind: "data_generation",
+        model: "-",
+        builtModel: "-",
+        credits: connUsage.credits,
+        baseTokens: connUsage.tokens,
+        endpointCalls: 0
+      })
     })
     
     return events.sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`))
   }
 
-  const usageEvents = generateUsageEvents()
+  const usageEvents = useMemo(() => generateUsageEvents(), [models, queries, endpoints, datasets, connections, usageLogs])
+
+  // Export to PDF
+  const exportToPDF = async () => {
+    const pdf = new jsPDF('p', 'mm', 'a4')
+    const pageWidth = pdf.internal.pageSize.getWidth()
+    const pageHeight = pdf.internal.pageSize.getHeight()
+    
+    // Title
+    pdf.setFontSize(20)
+    pdf.text('Usage Report', pageWidth / 2, 20, { align: 'center' })
+    pdf.setFontSize(10)
+    pdf.text(new Date().toLocaleDateString(), pageWidth / 2, 27, { align: 'center' })
+    
+    let yPos = 40
+    
+    // Summary Stats
+    pdf.setFontSize(14)
+    pdf.text('Summary', 15, yPos)
+    yPos += 8
+    pdf.setFontSize(10)
+    pdf.text(`Total Credits: ${totalCredits.toFixed(2)}`, 15, yPos)
+    yPos += 6
+    pdf.text(`Total Tokens: ${totalTokens.toLocaleString()}`, 15, yPos)
+    yPos += 6
+    pdf.text(`Endpoint Calls: ${totalEndpointCalls}`, 15, yPos)
+    yPos += 6
+    pdf.text(`Total Events: ${filteredData.length}`, 15, yPos)
+    yPos += 12
+    
+    // Capture charts
+    const chartsDiv = document.querySelector('.grid.gap-4.mb-6')
+    if (chartsDiv) {
+      const canvas = await html2canvas(chartsDiv as HTMLElement, { scale: 2 })
+      const imgData = canvas.toDataURL('image/png')
+      const imgWidth = pageWidth - 30
+      const imgHeight = (canvas.height * imgWidth) / canvas.width
+      
+      if (yPos + imgHeight > pageHeight - 20) {
+        pdf.addPage()
+        yPos = 20
+      }
+      
+      pdf.addImage(imgData, 'PNG', 15, yPos, imgWidth, imgHeight)
+      yPos += imgHeight + 10
+    }
+    
+    // Table header
+    if (yPos > pageHeight - 40) {
+      pdf.addPage()
+      yPos = 20
+    }
+    
+    pdf.setFontSize(14)
+    pdf.text('Usage History', 15, yPos)
+    yPos += 8
+    
+    // Table
+    pdf.setFontSize(8)
+    const headers = ['Date', 'Event', 'Type', 'Model', 'Credits']
+    const colWidths = [25, 50, 30, 40, 25]
+    let xPos = 15
+    
+    headers.forEach((h, i) => {
+      pdf.text(h, xPos, yPos)
+      xPos += colWidths[i]
+    })
+    yPos += 5
+    
+    filteredData.slice(0, 50).forEach(e => {
+      if (yPos > pageHeight - 15) {
+        pdf.addPage()
+        yPos = 20
+      }
+      
+      xPos = 15
+      pdf.text(e.date, xPos, yPos)
+      xPos += colWidths[0]
+      pdf.text(e.event.substring(0, 20), xPos, yPos)
+      xPos += colWidths[1]
+      pdf.text(e.kind, xPos, yPos)
+      xPos += colWidths[2]
+      pdf.text(e.model.substring(0, 15), xPos, yPos)
+      xPos += colWidths[3]
+      pdf.text(e.credits.toFixed(2), xPos, yPos)
+      
+      yPos += 5
+    })
+    
+    pdf.save(`usage-report-${new Date().toISOString().split('T')[0]}.pdf`)
+  }
 
   // Filter
   const filteredData = usageEvents.filter(item => {
@@ -184,7 +361,8 @@ export default function UsagePage() {
   const totalPages = Math.ceil(sortedData.length / itemsPerPage)
   const paginatedData = sortedData.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage)
 
-  const totalCredits = filteredData.reduce((sum, item) => sum + item.credits, 0)
+  // Use REAL credits from quota API, not calculated from events
+  const totalCredits = quota?.credits_used || 0
   const totalTokens = filteredData.reduce((sum, item) => sum + item.baseTokens, 0)
   const totalEndpointCalls = filteredData.reduce((sum, item) => sum + item.endpointCalls, 0)
 
@@ -212,9 +390,9 @@ export default function UsagePage() {
   // Usage by type pie chart
   const queryCount = usageEvents.filter(e => e.kind === "query").length
   const modelCount = usageEvents.filter(e => e.kind === "model_building").length
-  const apiCount = Math.floor(queryCount * 0.5)
+  const apiCount = usageEvents.filter(e => e.kind === "api").length
   const endpointCount = usageEvents.filter(e => e.kind === "endpoint").length
-  const dataGenCount = Math.floor(modelCount * 0.4)
+  const dataGenCount = usageEvents.filter(e => e.kind === "data_generation").length
   const total = queryCount + modelCount + apiCount + endpointCount + dataGenCount || 1
 
   const usageByKind = [
@@ -266,7 +444,7 @@ export default function UsagePage() {
             <p className="text-sm text-muted-foreground">Monitor your resource consumption and costs</p>
           </div>
         </div>
-        <Button variant="outline" className="gap-2 bg-transparent"><Download className="h-4 w-4" /> Export Report</Button>
+        <Button onClick={exportToPDF} variant="outline" className="gap-2 bg-transparent"><Download className="h-4 w-4" /> Export Report</Button>
       </div>
 
 
@@ -328,7 +506,11 @@ export default function UsagePage() {
                 <p className="text-sm text-muted-foreground">Database Storage</p>
                 <p className="text-2xl font-semibold text-foreground mt-1">
                   {((quota?.storage_used_mb || 0) / 1024).toFixed(1)} GB
-                  <span className="text-sm font-normal text-muted-foreground"> / {((quota?.storage_limit_mb || 10240) / 1024).toFixed(0)} GB</span>
+                  <span className="text-sm font-normal text-muted-foreground">
+                    {quota?.storage_limit_mb === -1 || !quota?.storage_limit_mb 
+                      ? ' / Unlimited' 
+                      : ` / ${(quota.storage_limit_mb / 1024).toFixed(0)} GB`}
+                  </span>
                 </p>
               </div>
               <div className="h-10 w-10 rounded-full bg-purple-500/10 flex items-center justify-center">
@@ -337,9 +519,17 @@ export default function UsagePage() {
             </div>
             <div className="mt-3">
               <div className="h-2 rounded-full bg-muted overflow-hidden">
-                <div className="h-full bg-purple-500 rounded-full" style={{ width: `${Math.min(((quota?.storage_used_mb || 0) / (quota?.storage_limit_mb || 10240)) * 100, 100)}%` }} />
+                <div className="h-full bg-purple-500 rounded-full" style={{ 
+                  width: quota?.storage_limit_mb === -1 || !quota?.storage_limit_mb 
+                    ? '0%' 
+                    : `${Math.min(((quota?.storage_used_mb || 0) / quota.storage_limit_mb) * 100, 100)}%` 
+                }} />
               </div>
-              <p className="text-xs text-muted-foreground mt-1">{Math.round(((quota?.storage_used_mb || 0) / (quota?.storage_limit_mb || 10240)) * 100)}% used · {quota?.datasets_connected || 0} datasets</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {quota?.storage_limit_mb === -1 || !quota?.storage_limit_mb
+                  ? 'Unlimited'
+                  : `${Math.round(((quota?.storage_used_mb || 0) / quota.storage_limit_mb) * 100)}% used`} · {quota?.datasets_connected || 0} datasets
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -471,6 +661,7 @@ export default function UsagePage() {
                   <SelectItem value="model_building">Model Building</SelectItem>
                   <SelectItem value="api">API</SelectItem>
                   <SelectItem value="endpoint">Endpoint</SelectItem>
+                  <SelectItem value="data_generation">Data Generation</SelectItem>
                 </SelectContent>
               </Select>
             </div>

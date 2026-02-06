@@ -5,7 +5,6 @@ import { ThemeProvider } from "@/components/theme-provider"
 import { QueryStoreProvider } from "@/lib/query-store"
 import { Providers } from "@/components/providers"
 import { AuthProvider } from "@/lib/auth"
-import { Toaster } from "sonner"
 import "./globals.css"
 
 const geist = Geist({ subsets: ["latin"] })
@@ -38,7 +37,6 @@ export default function RootLayout({
             <AuthProvider>
               <QueryStoreProvider>
                 {children}
-                <Toaster position="top-right" richColors />
               </QueryStoreProvider>
             </AuthProvider>
           </Providers>

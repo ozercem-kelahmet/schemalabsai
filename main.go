@@ -244,6 +244,7 @@ func main() {
 
 	// Quota & Billing
 	http.HandleFunc("/api/quota", enableCORS(handlers.AuthMiddleware(handlers.QuotaHandler)))
+	http.HandleFunc("/api/usage/logs", enableCORS(handlers.AuthMiddleware(handlers.GetUsageLogsHandler)))
 	http.HandleFunc("/api/admin/files", enableCORS(handlers.AuthMiddleware(handlers.AdminFilesHandler)))
 	http.HandleFunc("/api/admin/files/", enableCORS(handlers.AuthMiddleware(handlers.AdminFilesHandler)))
 	http.HandleFunc("/api/upload/file/", enableCORS(handlers.AuthMiddleware(handlers.GetFileByIDHandler)))

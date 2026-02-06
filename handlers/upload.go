@@ -311,6 +311,7 @@ func GetUploadedFilesHandler(w http.ResponseWriter, r *http.Request) {
 			"row_count":   f.RowCount,
 			"vertical":    f.Vertical,
 			"source":      f.Source,
+"is_merged":   f.IsMerged,
 			}
 		}
 

@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"os"
+	"strconv"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -46,28 +48,45 @@ func GetOrCreateQuota(userID string) (*UserQuota, error) {
 		now := time.Now()
 		nextMonth := time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, now.Location())
 
-		creditsTotal := 5.0
-		modelsLimit := 5
-		queriesDaily := 10
-		plan := "alpha"
-		if isExisting {
-			creditsTotal = 9999.0
-			modelsLimit = 9999
-			queriesDaily = 9999
-			plan = "alpha_unlimited"
+			// Get limits from ENV
+	getEnvFloat := func(key string, def float64) float64 {
+		if v, err := strconv.ParseFloat(os.Getenv(key), 64); err == nil && v > 0 {
+			return v
 		}
+		return def
+	}
+	getEnvInt := func(key string, def int) int {
+		if v, err := strconv.Atoi(os.Getenv(key)); err == nil && v > 0 {
+			return v
+		}
+		return def
+	}
 
-		quota = UserQuota{
-			ID:             fmt.Sprintf("quota-%s", userID[:8]),
-			UserID:         userID,
-			Plan:           plan,
-			CreditsTotal:   creditsTotal,
-			CreditsUsed:    0,
-			ModelsLimit:    modelsLimit,
-			ModelsUsed:     0,
-			QueriesDaily:   queriesDaily,
-			QueriesUsed:    0,
-			StorageLimitMB: 10240,
+	creditsTotal := getEnvFloat("ALPHA_CREDITS_TOTAL", 5.0)
+	modelsLimit := getEnvInt("ALPHA_MODELS_LIMIT", 5)
+	queriesDaily := getEnvInt("ALPHA_QUERIES_DAILY", 10)
+	storageLimitMB := getEnvFloat("MAX_TOTAL_STORAGE_MB", 1024.0)
+	plan := "alpha"
+	
+	if isExisting {
+		creditsTotal = getEnvFloat("UNLIMITED_CREDITS_TOTAL", 9999.0)
+		modelsLimit = getEnvInt("UNLIMITED_MODELS_LIMIT", 9999)
+		queriesDaily = getEnvInt("UNLIMITED_QUERIES_DAILY", 9999)
+		storageLimitMB = getEnvFloat("MAX_TOTAL_STORAGE_MB_UNLIMITED", 10240.0)
+		plan = "alpha_unlimited"
+	}
+
+	quota = UserQuota{
+		ID:             fmt.Sprintf("quota-%s", userID[:8]),
+		UserID:         userID,
+		Plan:           plan,
+		CreditsTotal:   creditsTotal,
+		CreditsUsed:    0,
+		ModelsLimit:    modelsLimit,
+		ModelsUsed:     0,
+		QueriesDaily:   queriesDaily,
+		QueriesUsed:    0,
+		StorageLimitMB: storageLimitMB,
 			StorageUsedMB:  0,
 			ResetDate:      nextMonth,
 			CreatedAt:      now,
@@ -188,7 +207,7 @@ func QuotaHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Count connected datasets
 	var datasetCount int64
-	DB.Model(&UploadedFile{}).Where("user_id = ?", userID).Count(&datasetCount)
+	DB.Model(&UploadedFile{}).Where("user_id = ? AND (is_merged = ? OR is_merged IS NULL)", userID, false).Count(&datasetCount)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{

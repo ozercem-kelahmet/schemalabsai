@@ -3,7 +3,6 @@
 import type React from "react"
 import { useState, createContext, useContext, useEffect, useRef } from "react"
 import Link from "next/link"
-import Image from "next/image"
 import { usePathname, useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/lib/auth"
@@ -337,7 +336,7 @@ export function Sidebar() {
       <div className={cn("flex h-16 items-center gap-2 border-b px-4", theme === "dark" ? "border-white/10" : "border-gray-200")}>
         {!collapsed && (
           <>
-            <Image src={theme === "dark" ? "/images/schema-light.png" : "/images/schema-dark.png"} alt="Schema" width={72} height={20} className="h-5 w-auto" priority />
+            <img src={theme === "dark" ? "/images/schema-light.png" : "/images/schema-dark.png"} alt="Schema" className="h-5 w-auto" />
             <span className="ml-auto rounded bg-[#0052CC]/20 px-1.5 py-0.5 font-mono text-[10px] text-[#2684FF]">ALPHA</span>
           </>
         )}

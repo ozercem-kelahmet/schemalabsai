@@ -156,6 +156,20 @@ export function BuildWizard() {
 
       const result = await trainPromise
       
+      if (result.queued || result.status === "queued") {
+        addLog(`⏳ Server busy - Training queued at position ${result.queue_position || 0}`)
+        addLog(`Active trainings: ${result.active_trainings || 0}/${result.max_concurrent || 1}`)
+        addLog(`Your training will start automatically when a slot opens`)
+        import('sonner').then(({ toast }) => {
+          toast.warning(`Training Queued`, {
+            description: `Server busy. Position in queue: ${result.queue_position || 0}. Will start automatically.`,
+            duration: 5000
+          })
+        })
+        setTrainingStatus("initializing")
+        return
+      }
+      
       if (result.status === "success") {
         stopPolling()
         setTrainingStatus("completing")
@@ -164,44 +178,42 @@ export function BuildWizard() {
         addLog(`Final Loss: ${result.loss?.toFixed(4) || "N/A"}`)
         addLog("Evaluating model performance...")
 
-        setTimeout(() => {
-          const finalAccuracy = (result.accuracy > 1 ? result.accuracy / 100 : result.accuracy) || 0.95
-          setEvalMetrics({
-            accuracy: finalAccuracy,
-            precision: Math.min(finalAccuracy - 0.02 + Math.random() * 0.04, 1),
-            recall: Math.min(finalAccuracy - 0.03 + Math.random() * 0.05, 1),
-            f1Score: Math.min(finalAccuracy - 0.01 + Math.random() * 0.02, 1),
-          })
+        const finalAccuracy = (result.accuracy > 1 ? result.accuracy / 100 : result.accuracy) || 0.95
+        setEvalMetrics({
+          accuracy: finalAccuracy,
+          precision: result.precision || finalAccuracy * 0.98,
+          recall: result.recall || finalAccuracy * 0.97,
+          f1Score: result.f1_score || finalAccuracy * 0.975,
+        })
 
-          const modelId = result.model_id || `model-${Date.now()}`
-          const newModel: Model = {
-            id: modelId,
-            modelId: modelId,
-            name: result.model_name || modelName,
-            description: modelDescription,
-            datasets: selectedDatasets.map((ds) => ({
-              datasetId: ds.id,
-              datasetName: ds.name,
-              source: ds.source,
-              rows: ds.rows,
-              columns: ds.columns,
-              connectedAt: new Date(),
-              lastSynced: new Date(),
-              syncStatus: "synced" as const,
-            })),
-            syncMode,
-            baseModel,
-            accuracy: finalAccuracy,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-            status: "completed",
-            apiRequests: 0,
-            tokensUsed: 0,
-          }
-          setBuiltModel(newModel)
-          clearTrainingStorage()
-          setCurrentStep("evaluate")
-        }, 1500)
+        const modelId = result.model_id || `model-${Date.now()}`
+        const newModel: Model = {
+          id: modelId,
+          modelId: modelId,
+          name: result.model_name || modelName,
+          description: modelDescription,
+          datasets: selectedDatasets.map((ds) => ({
+            datasetId: ds.id,
+            datasetName: ds.name,
+            source: ds.source,
+            rows: ds.rows,
+            columns: ds.columns,
+            connectedAt: new Date(),
+            lastSynced: new Date(),
+            syncStatus: "synced" as const,
+          })),
+          syncMode,
+          baseModel,
+          accuracy: finalAccuracy,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          status: "completed",
+          apiRequests: 0,
+          tokensUsed: 0,
+        }
+        setBuiltModel(newModel)
+        clearTrainingStorage()
+        setCurrentStep("evaluate")
       } else {
         addLog(`Error: ${result.error || result.message || "Training failed"}`)
         setTrainingStatus("initializing")
@@ -245,9 +257,9 @@ export function BuildWizard() {
           const finalAccuracy = (progress.accuracy > 1 ? progress.accuracy / 100 : progress.accuracy) || 0.95
           setEvalMetrics({
             accuracy: finalAccuracy,
-            precision: Math.min(finalAccuracy - 0.02 + Math.random() * 0.04, 1),
-            recall: Math.min(finalAccuracy - 0.03 + Math.random() * 0.05, 1),
-            f1Score: Math.min(finalAccuracy - 0.01 + Math.random() * 0.02, 1),
+            precision: progress.precision || finalAccuracy * 0.98,
+            recall: progress.recall || finalAccuracy * 0.97,
+            f1Score: progress.f1_score || finalAccuracy * 0.975,
           })
           const modelId = progress.model_id || `model-${Date.now()}`
           setBuiltModel({

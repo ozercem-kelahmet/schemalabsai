@@ -2085,7 +2085,100 @@ def analyze():
         return jsonify({'analysis': f'Error: {e}', 'status': 'error'})
 
 @app.route('/finetune', methods=['POST'])
-def finetune():
+def finetune(bypass_queue=False):
+    # ============================================================
+    from training_queue import training_queue
+    import uuid
+    import threading
+    import tempfile
+    
+    query_id_from_form = request.form.get('query_id', None)
+    if not query_id_from_form:
+        query_id_from_form = str(uuid.uuid4())
+    
+    if not bypass_queue:
+        queue_check = training_queue.get_status()
+        active = queue_check['active_trainings']
+        max_concurrent = queue_check['max_concurrent']
+    else:
+        active = 0
+        max_concurrent = 999
+    
+    if active >= max_concurrent and not bypass_queue:
+        print(f"[Queue] Server busy ({active}/{max_concurrent}), queueing task {query_id_from_form}")
+        
+        session = get_session(query_id_from_form)
+        session.update({
+            "epoch": 0, "epochs": 0, "accuracy": 0.0, "loss": 0.0,
+            "status": "queued", "eta": "0%", "start_time": time.time(),
+            "query_id": query_id_from_form, "queued": True, "queue_position": 0
+        })
+        save_session(query_id_from_form, session)
+        
+        form_data_copy = dict(request.form)
+        form_data_copy['query_id'] = query_id_from_form
+        
+        temp_files = []
+        if 'file' in request.files:
+            files = request.files.getlist('file')
+            for f in files:
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
+                f.save(temp_file.name)
+                temp_file.close()
+                temp_files.append((temp_file.name, f.filename))
+        
+        def queued_training():
+            try:
+                print(f"[Queue] Starting queued training {query_id_from_form}")
+                
+                sess = get_session(query_id_from_form)
+                sess['status'] = 'starting'
+                sess['queued'] = False
+                save_session(query_id_from_form, sess)
+                
+                with app.test_request_context(method='POST', data=form_data_copy):
+                    from werkzeug.datastructures import FileStorage, MultiDict
+                    files_dict = MultiDict()
+                    for temp_path, orig_name in temp_files:
+                        with open(temp_path, 'rb') as tf:
+                            files_dict.add('file', FileStorage(tf, filename=orig_name))
+                    
+                    with app.request_context(request.environ.copy()):
+                        request.files = files_dict
+                        request.form = form_data_copy
+                        
+                        finetune(bypass_queue=True)
+                
+                for temp_path, _ in temp_files:
+                    try: os.unlink(temp_path)
+                    except: pass
+                    
+            except Exception as e:
+                print(f"[Queue] Training {query_id_from_form} failed: {e}")
+                sess = get_session(query_id_from_form)
+                sess['status'] = 'failed'
+                sess['error'] = str(e)
+                save_session(query_id_from_form, sess)
+        
+        user_id = request.headers.get('X-User-ID', '')
+        result = training_queue.submit(
+            task_id=query_id_from_form,
+            train_func=queued_training,
+            user_id=user_id
+        )
+        
+        return jsonify({
+            "task_id": query_id_from_form,
+            "status": "queued",
+            "queued": True,
+            "queue_position": result.get('position', 0),
+            "active_trainings": result.get('active', 0),
+            "max_concurrent": result.get('max_concurrent', 1),
+            "message": result.get('message', 'Training queued')
+        }), 202
+    
+    print(f"[Queue] Server available ({active}/{max_concurrent}), starting immediately")
+    
     """Fine-tune model on user data"""
     try:
         epochs_req = int(request.form.get('epochs', 0))  # 0 = auto
@@ -2336,6 +2429,8 @@ def finetune():
             total_loss = 0
             correct = 0
             batches = 0
+            all_preds = []
+            all_labels = []
             
             for batch_idx, (batch_X, batch_y) in enumerate(dataloader):
                 batch_X, batch_y = batch_X.to(device), batch_y.to(device)
@@ -2386,12 +2481,30 @@ def finetune():
                 
                 total_loss += loss.item()
                 correct += (logits.argmax(1) == batch_y).sum().item()
+                all_preds.extend(logits.argmax(1).cpu().tolist())
+                all_labels.extend(batch_y.cpu().tolist())
                 batches += 1
             
             current_epoch += 1
             scheduler.step()
             acc = 100 * correct / min(len(X), max_samples_per_epoch)
             avg_loss = total_loss / max(batches, 1)
+            
+            # Calculate precision, recall, f1
+            try:
+                from sklearn.metrics import precision_score, recall_score, f1_score
+                avg_mode = 'binary' if len(set(all_labels)) == 2 else 'weighted'
+                precision = precision_score(all_labels, all_preds, average=avg_mode, zero_division=0)
+                recall = recall_score(all_labels, all_preds, average=avg_mode, zero_division=0)
+                f1 = f1_score(all_labels, all_preds, average=avg_mode, zero_division=0)
+            except:
+                precision = acc / 100
+                recall = acc / 100
+                f1 = acc / 100
+            
+            session["precision"] = round(precision, 4)
+            session["recall"] = round(recall, 4)
+            session["f1_score"] = round(f1, 4)
             
             if acc > best_acc:
                 best_acc = acc
@@ -2509,10 +2622,18 @@ def finetune():
             sector_conf = sector_probs.max(1).values.mean().item() * 100
             dominant_sector = sector_probs.mean(0).argmax().item()
         
+        # Calculate training duration
+        training_duration = 0
+        if session.get("start_time"):
+            training_duration = int(time.time() - session["start_time"])
+        
         return jsonify({
             "status": "success",
             "accuracy": float(best_acc),
             "loss": float(avg_loss),
+            "precision": session.get("precision", 0),
+            "recall": session.get("recall", 0),
+            "f1_score": session.get("f1_score", 0),
             "epochs": current_epoch,
             "requested_epochs": epochs,
             "n_classes": n_classes,
@@ -2520,6 +2641,7 @@ def finetune():
             "model_path": ft_path,
             "model_id": model_id,
             "rows": len(df),
+            "training_duration": training_duration,
             "sector": {
                 "id": dominant_sector,
                 "confidence": round(sector_conf, 1),
@@ -2662,7 +2784,7 @@ def finetune_async():
             temp_files.append(temp_file.name)
     
     # Thread'de finetune çalıştır
-    def run_finetune():
+    def run_finetune(bypass_queue=True):
         try:
             # Geçici dosyaları aç
             file_storages = []
@@ -2682,7 +2804,7 @@ def finetune_async():
                 
                 with app.request_context((request.environ.copy())):
                     request.files = files_dict
-                    finetune()
+                    finetune(bypass_queue=True)
             
             # Cleanup
             for f in file_storages:

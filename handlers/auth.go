@@ -332,6 +332,7 @@ TrainingFailed  bool      `gorm:"column:training_failed" json:"trainingFailed"`
 	ModelName       string    `gorm:"column:model_name" json:"modelName"`
 	ModelAccuracy   float64   `gorm:"column:model_accuracy" json:"modelAccuracy"`
 	SourceCsvName   string    `gorm:"column:source_csv_name" json:"sourceCsvName"`
+	Source          string    `gorm:"column:source;default:playground" json:"source"`
 }
 
 func (Query) TableName() string { return "queries" }
@@ -366,6 +367,7 @@ type FineTunedModel struct {
 	Epochs       int       `json:"epochs"`
 	BatchSize    int       `json:"batch_size"`
 	Loss         float64   `json:"loss"`
+	TrainingDuration int       `json:"training_duration"`
 	UserID       string    `json:"user_id"`
 	CreatedAt    time.Time `json:"created_at"`
 }
@@ -2441,3 +2443,19 @@ func GetSessionsHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+
+// UsageLog model
+type UsageLog struct {
+	ID           string    `gorm:"primaryKey" json:"id"`
+	UserID       string    `json:"user_id"`
+	EventType    string    `json:"event_type"`
+	EventName    string    `json:"event_name"`
+	ResourceID   string    `json:"resource_id"`
+	ResourceName string    `json:"resource_name"`
+	CreditsUsed  float64   `json:"credits_used"`
+	TokensUsed   int       `json:"tokens_used"`
+	ModelUsed    string    `json:"model_used"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+func (UsageLog) TableName() string { return "usage_logs" }
