@@ -18,6 +18,7 @@ interface Model {
   name: string
   accuracy: number
   epochs: number
+  llm_model?: string
   created_at: string
 }
 
@@ -133,7 +134,7 @@ export default function UsagePage() {
         time: d.toTimeString().split(" ")[0],
         event: "Model training completed",
         kind: "model_building",
-        model: m.base_model || "-",
+        model: process.env.NEXT_PUBLIC_BASE_MODEL || "schema-v0",
         builtModel: m.name,
         credits: modelUsage.credits,
         baseTokens: modelUsage.tokens,
@@ -238,7 +239,7 @@ export default function UsagePage() {
 
   // Export to PDF
   const exportToPDF = async () => {
-    const pdf = new jsPDF('p', 'mm', 'a4')
+    const pdf = new jsPDF('l', 'mm', 'a4') // landscape
     const pageWidth = pdf.internal.pageSize.getWidth()
     const pageHeight = pdf.internal.pageSize.getHeight()
     
@@ -264,28 +265,8 @@ export default function UsagePage() {
     pdf.text(`Total Events: ${filteredData.length}`, 15, yPos)
     yPos += 12
     
-    // Capture charts
-    const chartsDiv = document.getElementById('charts-section')
-    if (chartsDiv) {
-      const canvas = await html2canvas(chartsDiv as HTMLElement, { 
-        scale: 2,
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: '#000000',
-        logging: false
-      })
-      const imgData = canvas.toDataURL('image/png')
-      const imgWidth = pageWidth - 30
-      const imgHeight = (canvas.height * imgWidth) / canvas.width
-      
-      if (yPos + imgHeight > pageHeight - 20) {
-        pdf.addPage()
-        yPos = 20
-      }
-      
-      pdf.addImage(imgData, 'PNG', 15, yPos, imgWidth, imgHeight)
-      yPos += imgHeight + 10
-    }
+    // Skip chart capture due to CSS parsing issues
+    // Charts are visible in the web interface
     
     // Table header
     if (yPos > pageHeight - 40) {
@@ -293,14 +274,14 @@ export default function UsagePage() {
       yPos = 20
     }
     
-    pdf.setFontSize(14)
+    pdf.setFontSize(12)
     pdf.text('Usage History', 15, yPos)
-    yPos += 8
+    yPos += 6
     
     // Table
-    pdf.setFontSize(8)
-    const headers = ['Date', 'Event', 'Type', 'Model', 'Credits']
-    const colWidths = [25, 50, 30, 40, 25]
+    pdf.setFontSize(7)
+    const headers = ['Date', 'Event', 'Type', 'Base Model', 'Built Model', 'Credits']
+    const colWidths = [25, 50, 30, 35, 70, 20]
     let xPos = 15
     
     headers.forEach((h, i) => {
@@ -309,7 +290,7 @@ export default function UsagePage() {
     })
     yPos += 5
     
-    filteredData.slice(0, 50).forEach(e => {
+    filteredData.forEach(e => {
       if (yPos > pageHeight - 15) {
         pdf.addPage()
         yPos = 20
@@ -318,12 +299,14 @@ export default function UsagePage() {
       xPos = 15
       pdf.text(e.date, xPos, yPos)
       xPos += colWidths[0]
-      pdf.text(e.event.substring(0, 20), xPos, yPos)
+      pdf.text(e.event.substring(0, 22), xPos, yPos)
       xPos += colWidths[1]
-      pdf.text(e.kind, xPos, yPos)
+      pdf.text(e.kind.substring(0, 12), xPos, yPos)
       xPos += colWidths[2]
-      pdf.text(e.model.substring(0, 15), xPos, yPos)
+      pdf.text(e.model, xPos, yPos)
       xPos += colWidths[3]
+      pdf.text(e.builtModel, xPos, yPos)
+      xPos += colWidths[4]
       pdf.text(e.credits.toFixed(2), xPos, yPos)
       
       yPos += 5

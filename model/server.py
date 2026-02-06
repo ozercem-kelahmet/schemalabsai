@@ -68,6 +68,41 @@ import threading
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
+# Base model - startup'ta yukle
+BASE_MODEL_PATH = "checkpoints/base_model_v0_1M_final.pt"
+base_model = None
+
+def load_base_model():
+    global base_model
+    if base_model is not None:
+        return base_model
+    
+    try:
+        from model import TabularFoundationModel
+        config = {"d_model": 256, "n_layers": 6, "n_heads": 8, "d_ff": 1024, "dropout": 0.1, "n_sectors": 50, "n_subsectors": 50}
+        base_model = TabularFoundationModel(config).to(device)
+        
+        if os.path.exists(BASE_MODEL_PATH):
+            ckpt = torch.load(BASE_MODEL_PATH, map_location=device, weights_only=False)
+            if "model_state_dict" in ckpt:
+                base_model.load_state_dict(ckpt["model_state_dict"], strict=False)
+            else:
+                base_model.load_state_dict(ckpt, strict=False)
+            print(f"[BASE MODEL] Loaded from {BASE_MODEL_PATH}")
+        else:
+            print(f"[BASE MODEL] WARNING: {BASE_MODEL_PATH} not found!")
+        
+        base_model.eval()
+        return base_model
+    except Exception as e:
+        print(f"[BASE MODEL] Error loading: {e}")
+        return None
+
+# Load base model at startup
+print("[STARTUP] Loading base model...")
+load_base_model()
+print("[STARTUP] Base model ready")
+
 # Fine-tuned model cache - her seferinde yüklememek için
 ft_model_cache = {}
 FT_CACHE_MAX_SIZE = 3  # Max 3 model tut (GPU memory için)
@@ -1658,14 +1693,20 @@ def analyze():
     try:
         data = request.json
         file_id = data.get('file_id', '')
-        model_id = data.get('model_id', '')  # Fine-tuned model ID
+        model_id = data.get('model_id', '')  # Fine-tuned model ID or "schema-v0" for base
         query = data.get('query', data.get('message', '')).lower()
+        use_base_model = (model_id == "schema-v0" or model_id == "" or model_id == "none")
         
         uploads_dir = '../uploads'
         file_path = None
         
+        # If using base model (schema-v0), skip fine-tuned model loading
+        if use_base_model:
+            print(f"[ANALYZE] Using base model (schema-v0)")
+            # Base model analizi - sadece veri analizi yap, model inference yok
+            pass
         # If model_id exists, try to get source_file_id (merged file) from checkpoint
-        if model_id and model_id != "none":
+        elif model_id:
             try:
                 # Try model_path first (from database), then fallback to model_id.pt
                 model_path = data.get('model_path', '')

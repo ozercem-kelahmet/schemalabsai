@@ -53,10 +53,7 @@ const llmModels = [
 ]
 
 const rateLimitOptions = [
-  { value: "100/min", label: "100 requests/min" },
-  { value: "1000/min", label: "1,000 requests/min" },
-  { value: "10000/min", label: "10,000 requests/min" },
-  { value: "unlimited", label: "Unlimited" },
+  { value: "1000/min", label: "1,000 requests/min (Alpha)" },
 ]
 
 export default function ConfigurationPage() {
@@ -138,11 +135,9 @@ export default function ConfigurationPage() {
         credentials: "include",
         body: JSON.stringify({
           name: newKeyName,
-          rate_limit: newKeyRateLimit,
+          rate_limit: "1000/min",
           permissions: Object.entries(permissions).filter(([, v]) => v).map(([k]) => k),
-          finetuned_model: selectedFineTunedModel,
-          llm_provider: llmModels.find(m => m.id === selectedLLMModel)?.provider || "claude",
-          llm_model: selectedLLMModel
+          finetuned_model: selectedFineTunedModel
         })
       })
       const data = await res.json()
@@ -289,8 +284,6 @@ export default function ConfigurationPage() {
                     </div>
                     <div className="flex items-center gap-2 flex-wrap text-xs text-muted-foreground">
                       <span className="flex items-center gap-1"><Brain className="h-3 w-3" /> {getModelName(apiKey.finetuned_model)}</span>
-                      <span>|</span>
-                      <span>{getLLMName(apiKey.llm_model)}</span>
                       <span>|</span>
                       <span>{apiKey.rate_limit}</span>
                     </div>
