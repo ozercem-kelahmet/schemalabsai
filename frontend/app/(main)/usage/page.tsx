@@ -265,9 +265,15 @@ export default function UsagePage() {
     yPos += 12
     
     // Capture charts
-    const chartsDiv = document.querySelector('.grid.gap-4.mb-6')
+    const chartsDiv = document.getElementById('charts-section')
     if (chartsDiv) {
-      const canvas = await html2canvas(chartsDiv as HTMLElement, { scale: 2 })
+      const canvas = await html2canvas(chartsDiv as HTMLElement, { 
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#000000',
+        logging: false
+      })
       const imgData = canvas.toDataURL('image/png')
       const imgWidth = pageWidth - 30
       const imgHeight = (canvas.height * imgWidth) / canvas.width
@@ -559,7 +565,7 @@ export default function UsagePage() {
         </Card>
       </div>
       {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div id="charts-section" className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card className="border-border bg-card lg:col-span-2">
           <CardHeader className="pb-2">
             <CardTitle className="text-base font-medium text-foreground">Usage Trend (Last 7 Days)</CardTitle>
