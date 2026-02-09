@@ -14,19 +14,45 @@ git add -A -- ":!uploads" ":!checkpoints" ":!data" ":!*.csv" ":!*.xlsx" || true
 git commit -m "Deploy $(date '+%Y-%m-%d %H:%M')" || true
 git push origin main || true
 
-# 2. Dosyaları yolla
-echo "📁 Syncing files..."
-scp main.go go.mod go.sum $SERVER:$REMOTE_DIR/
-scp model/server.py $SERVER:$REMOTE_DIR/model/
-scp handlers/*.go $SERVER:$REMOTE_DIR/handlers/
-scp services/*.go $SERVER:$REMOTE_DIR/services/ 2>/dev/null || true
-scp -r frontend/components $SERVER:$REMOTE_DIR/frontend/
-scp -r frontend/lib $SERVER:$REMOTE_DIR/frontend/
-scp -r frontend/hooks $SERVER:$REMOTE_DIR/frontend/
-scp -r frontend/app $SERVER:$REMOTE_DIR/frontend/
-scp frontend/package.json frontend/tsconfig.json frontend/next.config.mjs $SERVER:$REMOTE_DIR/frontend/
+# 2. SSHD restart (SCP sorunlarını önlemek için)
+echo "🔄 Restarting SSHD..."
+ssh $SERVER "sudo systemctl restart sshd"
+sleep 2
 
-# 3. Remote build and restart
+# 3. Dosyaları yolla (scp dene, başarısız olursa rsync)
+echo "📁 Syncing files..."
+
+sync_file() {
+    scp "$1" "$SERVER:$2" 2>/dev/null || rsync -avz -e ssh "$1" "$SERVER:$2"
+}
+
+sync_dir() {
+    scp -r "$1" "$SERVER:$2" 2>/dev/null || rsync -avz -e ssh --delete "$1/" "$SERVER:$2/"
+}
+
+sync_file main.go $REMOTE_DIR/
+sync_file go.mod $REMOTE_DIR/
+sync_file go.sum $REMOTE_DIR/
+sync_file model/server.py $REMOTE_DIR/model/
+
+for f in handlers/*.go; do
+    sync_file "$f" $REMOTE_DIR/handlers/
+done
+
+for f in services/*.go; do
+    [ -f "$f" ] && sync_file "$f" $REMOTE_DIR/services/ 2>/dev/null || true
+done
+
+sync_dir frontend/components $REMOTE_DIR/frontend/components
+sync_dir frontend/lib $REMOTE_DIR/frontend/lib
+sync_dir frontend/hooks $REMOTE_DIR/frontend/hooks 2>/dev/null || true
+sync_dir frontend/app $REMOTE_DIR/frontend/app
+
+sync_file frontend/package.json $REMOTE_DIR/frontend/
+sync_file frontend/tsconfig.json $REMOTE_DIR/frontend/
+sync_file frontend/next.config.mjs $REMOTE_DIR/frontend/
+
+# 4. Remote build and restart
 echo "🔧 Building and restarting..."
 ssh $SERVER 'bash -s' << 'REMOTE'
 set -e

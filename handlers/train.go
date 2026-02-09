@@ -70,6 +70,16 @@ func TrainHandler(w http.ResponseWriter, r *http.Request) {
 if req.Epochs == 0 {
 		req.Epochs = 5
 	}
+
+// Check quota
+allowed, reason := CheckQuota(userID, "train")
+if !allowed {
+w.Header().Set("Content-Type", "application/json")
+w.WriteHeader(http.StatusForbidden)
+json.NewEncoder(w).Encode(map[string]string{"error": reason})
+return
+}
+
 	if req.BatchSize == 0 {
 		req.BatchSize = 64
 	}
@@ -153,6 +163,13 @@ if DB != nil && userID != "" {
 		modelPath = mp
 	}
 	if acc, ok := flaskResp["accuracy"].(float64); ok {
+
+// Get actual epochs from Flask
+if actualEpochs, ok := flaskResp["epochs"]; ok {
+if ep, ok := actualEpochs.(float64); ok && ep > 0 {
+req.Epochs = int(ep)
+}
+}
 		accuracy = acc
 		log.Printf("✅ Accuracy parsed from Flask: %.2f", accuracy)
 	} else {
@@ -199,13 +216,28 @@ ftModel := FineTunedModel{
 			SourceFiles:  req.FileID,
 			ModelPath:    modelPath,
 			Accuracy:     accuracy,
-			Epochs:       req.Epochs,
+			Epochs:       func() int { if e, ok := flaskResp["epochs"].(float64); ok && e > 0 { return int(e) }; return req.Epochs }(),
 			BatchSize:    req.BatchSize,
 		Loss:         loss,
 			UserID:       userID,
 			CreatedAt:    now,
 		}
 		DB.Create(&ftModel)
+
+// Deduct credits and log usage
+UseCredit(userID, "train")
+DB.Create(&UsageLog{
+ID:           generateSessionID()[:16],
+UserID:       userID,
+EventType:    "train",
+EventName:    "Model Training",
+ResourceID:   ftModel.ID,
+ResourceName: ftModel.Name,
+CreditsUsed:  CreditPerTrain,
+ModelUsed:    "schema-v0",
+CreatedAt:    time.Now(),
+})
+
 	}
 
 	// Send training complete email (only if training succeeded)
@@ -329,6 +361,15 @@ ConnectionIDs string   `json:"connection_ids"`
 }
 
 func MultiTrainHandler(w http.ResponseWriter, r *http.Request) {
+	// Reset training progress for new training
+	trainingProgress.Status = "training"
+	trainingProgress.Epoch = 0
+	trainingProgress.Epochs = 0
+	trainingProgress.Accuracy = 0
+	trainingProgress.Loss = 0
+	trainingProgress.ModelID = ""
+	trainingProgress.ModelName = ""
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -342,7 +383,18 @@ func MultiTrainHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-fmt.Printf("DEBUG MultiTrain: QueryID=%s, ModelName=%s\n", req.QueryID, req.ModelName)
+
+// Check quota before training
+log.Printf("🔍 QUOTA CHECK: userID=%s", userID)
+allowed, reason := CheckQuota(userID, "train")
+log.Printf("🔍 QUOTA RESULT: allowed=%v, reason=%s", allowed, reason)
+if !allowed {
+w.Header().Set("Content-Type", "application/json")
+w.WriteHeader(http.StatusForbidden)
+json.NewEncoder(w).Encode(map[string]string{"error": reason})
+return
+}
+
 
 if req.Epochs == 0 {
 		req.Epochs = 5
@@ -457,7 +509,6 @@ queryIDField.Write([]byte(req.QueryID))
 mergedFileID := ""
 if mfid, ok := flaskResp["merged_file_id"].(string); ok && mfid != "" {
 mergedFileID = mfid
-fmt.Printf("DEBUG: Got merged_file_id from Flask: %s\n", mergedFileID)
 }
 
 	// Save merged file to uploaded_files table
@@ -502,7 +553,7 @@ SourceFileID: func() string { if mergedFileID != "" { return mergedFileID }; ret
 			SourceFiles:  strings.Join(req.FileIDs, ","),
 			ModelPath:    modelPath,
 			Accuracy:     accuracy,
-			Epochs:       req.Epochs,
+			Epochs:       func() int { if e, ok := flaskResp["epochs"].(float64); ok && e > 0 { return int(e) }; return req.Epochs }(),
 			BatchSize:    req.BatchSize,
 		Loss:         loss,
 			UserID:       userID,
@@ -513,6 +564,21 @@ ScheduleDesc: req.ScheduleDesc,
 ConnectionIDs: req.ConnectionIDs,
 		}
 		DB.Create(&ftModel)
+
+// Deduct credits and log usage
+UseCredit(userID, "train")
+DB.Create(&UsageLog{
+ID:           generateSessionID()[:16],
+UserID:       userID,
+EventType:    "train",
+EventName:    "Model Training",
+ResourceID:   ftModel.ID,
+ResourceName: ftModel.Name,
+CreditsUsed:  CreditPerTrain,
+ModelUsed:    "schema-v0",
+CreatedAt:    time.Now(),
+})
+
 if req.SyncMode == "scheduled" && req.ScheduleCron != "" { GlobalScheduler.AddJob(ftModel) }
 if req.SyncMode == "real-time" && req.ConnectionIDs != "" { GlobalWatcher.StartWatching(ftModel) }
 	}
@@ -657,6 +723,8 @@ var trainingProgress = struct {
 	Accuracy float64 `json:"accuracy"`
 	Loss     float64 `json:"loss"`
 	Status   string  `json:"status"`
+	ModelID   string  `json:"model_id"`
+	ModelName string  `json:"model_name"`
 }{}
 
 func TrainingProgressHandler(w http.ResponseWriter, r *http.Request) {

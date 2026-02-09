@@ -362,14 +362,17 @@ api.getMessages(sessionId)
   // Reset on new chat
   useEffect(() => {
     if (newChatTrigger && !sessionId) {
-      setSelectedModel(null)
-      setSelectedFiles([])
       setMessages([])
       setInput("")
       setCurrentQueryId(null)
       setHasInitializedChat(false)
+      // Don't reset model if coming from build page with model param
+      if (!modelIdFromUrl) {
+        setSelectedModel(null)
+        setSelectedFiles([])
+      }
     }
-  }, [newChatTrigger, sessionId])
+  }, [newChatTrigger, sessionId, modelIdFromUrl])
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -434,7 +437,7 @@ api.getMessages(sessionId)
     selectedFiles.forEach((file: any) => {
       context += "- File: " + file.filename + "\n"
       if (file.size) context += "- Size: " + file.size + " bytes\n"
-      if (file.columns) context += "- Columns: " + file.columns.join(", ") + "\n"
+      if (file.columns) context += "- Columns: " + (Array.isArray(file.columns) ? file.columns.join(", ") : String(file.columns)) + "\n"
       if (file.unique_values) context += "- Target classes: " + file.unique_values.join(", ") + "\n"
       if (file.row_count) context += "- Rows: " + file.row_count + "\n"
     })

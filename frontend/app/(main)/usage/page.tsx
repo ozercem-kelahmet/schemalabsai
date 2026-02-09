@@ -76,14 +76,14 @@ export default function UsagePage() {
 
   const fetchData = async () => {
     try {
-      const [modelsRes, queriesRes, endpointsRes, quotaRes, datasetsRes, connectionsRes] = await Promise.all([
+      const [modelsRes, queriesRes, endpointsRes, quotaRes, datasetsRes, connectionsRes, logsRes] = await Promise.all([
         fetch("/api/models/finetuned", { credentials: "include" }),
         fetch("/api/queries", { credentials: "include" }),
         fetch("/api/endpoints", { credentials: "include" }),
         fetch("/api/quota", { credentials: "include" }),
         fetch("/api/files", { credentials: "include" }),
         fetch("/api/connections", { credentials: "include" }),
-
+        fetch("/api/usage/logs", { credentials: "include" }),
       ])
       if (modelsRes.ok) setModels((await modelsRes.json()).models || [])
       if (queriesRes.ok) setQueries((await queriesRes.json()).queries || [])
@@ -97,11 +97,10 @@ export default function UsagePage() {
         const conns = (await connectionsRes.json()).connections || []
         setConnections(conns)
       }
-      // Temporarily disabled - usage_logs table empty
-      // if (logsRes.ok) {
-      //   const logs = (await logsRes.json()).logs || []
-      //   setUsageLogs(logs)
-      // }
+      if (logsRes.ok) {
+        const logs = (await logsRes.json()).logs || []
+        setUsageLogs(logs)
+      }
     } catch (e) { console.error("Failed to fetch:", e) }
     finally { setLoading(false) }
   }
@@ -496,8 +495,8 @@ export default function UsagePage() {
                 <p className="text-2xl font-semibold text-foreground mt-1">
                   {((quota?.storage_used_mb || 0) / 1024).toFixed(1)} GB
                   <span className="text-sm font-normal text-muted-foreground">
-                    {quota?.storage_limit_mb === -1 || !quota?.storage_limit_mb 
-                      ? ' / Unlimited' 
+                    {quota?.storage_limit_mb === -1 || !quota?.storage_limit_mb || quota?.storage_limit_mb >= 99999
+                      ? '' 
                       : ` / ${(quota.storage_limit_mb / 1024).toFixed(0)} GB`}
                   </span>
                 </p>
@@ -509,13 +508,13 @@ export default function UsagePage() {
             <div className="mt-3">
               <div className="h-2 rounded-full bg-muted overflow-hidden">
                 <div className="h-full bg-purple-500 rounded-full" style={{ 
-                  width: quota?.storage_limit_mb === -1 || !quota?.storage_limit_mb 
+                  width: quota?.storage_limit_mb === -1 || !quota?.storage_limit_mb || quota?.storage_limit_mb >= 99999
                     ? '0%' 
                     : `${Math.min(((quota?.storage_used_mb || 0) / quota.storage_limit_mb) * 100, 100)}%` 
                 }} />
               </div>
               <p className="text-xs text-muted-foreground mt-1">
-                {quota?.storage_limit_mb === -1 || !quota?.storage_limit_mb
+                {quota?.storage_limit_mb === -1 || !quota?.storage_limit_mb || quota?.storage_limit_mb >= 99999
                   ? 'Unlimited'
                   : `${Math.round(((quota?.storage_used_mb || 0) / quota.storage_limit_mb) * 100)}% used`} · {quota?.datasets_connected || 0} datasets
               </p>

@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef } from "react"
+import { toast } from "sonner"
 import { useSearchParams, useRouter } from "next/navigation"
 import { ConfigStep } from "@/components/build/config-step"
 import { TrainingStep } from "@/components/build/training-step"
@@ -116,35 +117,17 @@ export function BuildWizard() {
     checkOngoingTraining()
   }, [addLog])
   const startTraining = async () => {
-    setCurrentStep("training")
-    setTrainingStatus("initializing")
-    setMetricsHistory([])
-    setLogs([])
-    setElapsedTime(0)
-    setCurrentMetrics(null)
     trainingStartedRef.current = false
-
-    addLog("Initializing build environment...")
-    addLog(`Model: ${modelName}`)
-    addLog(`Base Model: ${baseModel}`)
-    addLog(`Sync Mode: ${syncMode}${scheduleCron ? ` (${scheduleDesc || scheduleCron})` : ""}`)
-    addLog(`Connecting ${selectedDatasets.length} data source(s)...`)
-    
-    selectedDatasets.forEach((ds) => {
-      addLog(`  → ${ds.name} (${ds.source}): ${ds.rows.toLocaleString()} rows, ${ds.columns} columns`)
-    })
 
     try {
       const fileIds = selectedDatasets.map((ds) => ds.id)
-      
-      addLog("Starting fine-tuning process...")
-      addLog("Sending data to ML server...")
       
       const connectionIds = connectionIDs || selectedDatasets
         .filter(d => d.connectionId)
         .map(d => d.connectionId)
         .join(",")
-      
+
+      // Start training - show UI immediately, handle result async
       const trainPromise = api.multiTrain(
         fileIds,
         modelName,
@@ -159,16 +142,51 @@ export function BuildWizard() {
         connectionIds
       )
 
-      setTimeout(() => {
-        addLog("Data preprocessing complete")
-        addLog("Building knowledge base...")
-        addLog("Training neural architecture...")
-        setTrainingStatus("training")
-        trainingStartedRef.current = true
-      }, 2000)
+      setCurrentStep("training")
+      setTrainingStatus("initializing")
+      setMetricsHistory([])
+      setLogs([])
+      setElapsedTime(0)
+      setCurrentMetrics(null)
 
-      const result = await trainPromise
-      
+      addLog("Initializing build environment...")
+      addLog(`Model: ${modelName}`)
+      addLog(`Base Model: ${baseModel}`)
+      addLog(`Sync Mode: ${syncMode}${scheduleCron ? ` (${scheduleDesc || scheduleCron})` : ""}`)
+      addLog(`Connecting ${selectedDatasets.length} data source(s)...`)
+      selectedDatasets.forEach((ds) => {
+        addLog(`  → ${ds.name} (${ds.source}): ${ds.rows.toLocaleString()} rows, ${ds.columns} columns`)
+      })
+      addLog("Starting fine-tuning process...")
+      addLog("Sending data to ML server...")
+      addLog("Data preprocessing complete")
+      addLog("Building knowledge base...")
+      addLog("Training neural architecture...")
+      setTrainingStatus("training")
+      trainingStartedRef.current = true
+
+      trainPromise.then((result: any) => {
+        if (result.error) {
+          toast.error("Cannot Build Model", { description: result.error, duration: 10000 })
+          setCurrentStep("config")
+          setTrainingStatus("idle")
+          return
+        }
+        handleTrainResult(result)
+      }).catch((err: any) => {
+        toast.error("Training Failed", { description: err.message, duration: 10000 })
+        setCurrentStep("config")
+        setTrainingStatus("idle")
+      })
+      return
+    } catch (err: any) {
+      toast.error("Training Failed", { description: err.message || "Unknown error", duration: 10000 })
+      setCurrentStep("config")
+      setTrainingStatus("idle")
+    }
+  }
+
+  const handleTrainResult = (result: any) => {
       if (result.queued || result.status === "queued") {
         addLog(`⏳ Server busy - Training queued at position ${result.queue_position || 0}`)
         addLog(`Active trainings: ${result.active_trainings || 0}/${result.max_concurrent || 1}`)
@@ -232,10 +250,6 @@ export function BuildWizard() {
         addLog(`Error: ${result.error || result.message || "Training failed"}`)
         setTrainingStatus("initializing")
       }
-    } catch (error: any) {
-      addLog(`Error: ${error.message || "Training failed"}`)
-      setTrainingStatus("initializing")
-    }
   }
 
   useEffect(() => {
@@ -276,10 +290,10 @@ export function BuildWizard() {
             recall: progress.recall || finalAccuracy * 0.97,
             f1Score: progress.f1_score || finalAccuracy * 0.975,
           })
-          const modelId = progress.model_id || `model-${Date.now()}`
+          const pollingModelId = progress.model_id || "pending"
           setBuiltModel({
-            id: modelId,
-            modelId: modelId,
+            id: pollingModelId,
+            modelId: pollingModelId,
             name: modelName || "Trained Model",
             description: modelDescription,
             datasets: selectedDatasets.map((ds) => ({

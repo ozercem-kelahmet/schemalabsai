@@ -37,7 +37,10 @@ const (
 // GetOrCreateQuota ensures a quota record exists for user
 func GetOrCreateQuota(userID string) (*UserQuota, error) {
 	var quota UserQuota
-	err := DB.Where("user_id = ?", userID).First(&quota).Error
+	err := DB.Raw("SELECT * FROM user_quotas WHERE user_id = ? LIMIT 1", userID).Scan(&quota).Error
+if err == nil && quota.ID != "" {
+return &quota, nil
+}
 	if err != nil {
 		// Check if existing user (created before 2026-02-04)
 		var user User
@@ -140,6 +143,24 @@ func CheckQuota(userID string, creditType string) (bool, string) {
 	if err != nil {
 		return true, "" // Allow on error
 	}
+
+	// Get real counts from DB
+	var modelCount int64
+	if err := DB.Model(&FineTunedModel{}).Where("user_id = ?", userID).Count(&modelCount).Error; err != nil {
+	}
+	quota.ModelsUsed = int(modelCount)
+
+	var totalCreditsUsed float64
+	if err := DB.Model(&UsageLog{}).Where("user_id = ?", userID).Select("COALESCE(SUM(credits_used), 0)").Scan(&totalCreditsUsed).Error; err != nil {
+	}
+	quota.CreditsUsed = totalCreditsUsed
+
+	today := time.Now().Truncate(24 * time.Hour)
+	var queryCount int64
+	DB.Model(&Message{}).Where("user_id = ? AND role = 'user' AND created_at >= ?", userID, today).Count(&queryCount)
+	quota.QueriesUsed = int(queryCount)
+
+	DB.Save(quota)
 
 	remaining := quota.CreditsTotal - quota.CreditsUsed
 
