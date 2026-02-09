@@ -75,12 +75,12 @@ export const api = {
     return res.json()
   },
 
-  multiTrain: async (fileIds: string[], modelName: string, epochs: number = 5, batchSize: number = 64, learningRate: number = 0.001, warmupSteps: number = 100, queryId?: string) => {
+  multiTrain: async (fileIds: string[], modelName: string, epochs: number = 5, batchSize: number = 64, learningRate: number = 0.001, warmupSteps: number = 100, queryId?: string, syncMode?: string, scheduleCron?: string, scheduleDesc?: string, connectionIds?: string) => {
     const res = await fetch(API_BASE + '/api/train/multi', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file_ids: fileIds, model_name: modelName, epochs, batch_size: batchSize, learning_rate: learningRate, warmup_steps: warmupSteps, query_id: queryId })
+      body: JSON.stringify({ file_ids: fileIds, model_name: modelName, epochs, batch_size: batchSize, learning_rate: learningRate, warmup_steps: warmupSteps, query_id: queryId, sync_mode: syncMode || "manual", schedule_cron: scheduleCron || "", schedule_desc: scheduleDesc || "", connection_ids: connectionIds || "" })
     })
     return res.json()
   },

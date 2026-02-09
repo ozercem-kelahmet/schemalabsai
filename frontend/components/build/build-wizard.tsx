@@ -27,6 +27,9 @@ export function BuildWizard() {
   const [modelName, setModelName] = useState("")
   const [modelDescription, setModelDescription] = useState("")
   const [syncMode, setSyncMode] = useState<SyncMode>("manual")
+  const [scheduleCron, setScheduleCron] = useState("")
+  const [scheduleDesc, setScheduleDesc] = useState("")
+  const [connectionIDs, setConnectionIDs] = useState("")
   const [baseModel, setBaseModel] = useState<string>("schema-v0")
 
   const [trainingStatus, setTrainingStatus] = useState<TrainingStatus>("initializing")
@@ -124,7 +127,7 @@ export function BuildWizard() {
     addLog("Initializing build environment...")
     addLog(`Model: ${modelName}`)
     addLog(`Base Model: ${baseModel}`)
-    addLog(`Sync Mode: ${syncMode}`)
+    addLog(`Sync Mode: ${syncMode}${scheduleCron ? ` (${scheduleDesc || scheduleCron})` : ""}`)
     addLog(`Connecting ${selectedDatasets.length} data source(s)...`)
     
     selectedDatasets.forEach((ds) => {
@@ -137,13 +140,23 @@ export function BuildWizard() {
       addLog("Starting fine-tuning process...")
       addLog("Sending data to ML server...")
       
+      const connectionIds = connectionIDs || selectedDatasets
+        .filter(d => d.connectionId)
+        .map(d => d.connectionId)
+        .join(",")
+      
       const trainPromise = api.multiTrain(
         fileIds,
         modelName,
         totalEpochs,
         64,
         0.001,
-        100
+        100,
+        undefined,
+        syncMode,
+        scheduleCron,
+        scheduleDesc,
+        connectionIds
       )
 
       setTimeout(() => {
@@ -172,6 +185,7 @@ export function BuildWizard() {
       
       if (result.status === "success") {
         stopPolling()
+        if (result.training_duration) setElapsedTime(result.training_duration)
         setTrainingStatus("completing")
         addLog("Build complete!")
         addLog(`Final Accuracy: ${result.accuracy?.toFixed(2)}%`)
@@ -254,6 +268,7 @@ export function BuildWizard() {
           })
         } else if (progress.status === "completed") {
           // Training completed - move to evaluate
+          stopPolling()
           const finalAccuracy = (progress.accuracy > 1 ? progress.accuracy / 100 : progress.accuracy) || 0.95
           setEvalMetrics({
             accuracy: finalAccuracy,
@@ -386,6 +401,9 @@ export function BuildWizard() {
           onModelNameChange={setModelName}
           onModelDescriptionChange={setModelDescription}
           onSyncModeChange={setSyncMode}
+          scheduleCron={scheduleCron}
+          onScheduleChange={(cron, desc) => { setScheduleCron(cron); setScheduleDesc(desc); }}
+          onConnectionIDsChange={setConnectionIDs}
           onBaseModelChange={setBaseModel}
           onStartTraining={startTraining}
         />

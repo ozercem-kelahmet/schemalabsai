@@ -296,7 +296,6 @@ func MeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	fmt.Println("DEBUG: AuthMiddleware called")
 	return func(w http.ResponseWriter, r *http.Request) {
 		fmt.Println("DEBUG: AuthMiddleware handler called for:", r.URL.Path)
 		cookie, err := r.Cookie("session")
@@ -370,6 +369,13 @@ type FineTunedModel struct {
 	TrainingDuration int       `json:"training_duration"`
 	UserID       string    `json:"user_id"`
 	CreatedAt    time.Time `json:"created_at"`
+SyncMode       string     `json:"sync_mode" gorm:"default:manual"`
+ScheduleCron   string     `json:"schedule_cron"`
+ScheduleDesc   string     `json:"schedule_desc"`
+LastSyncAt     *time.Time `json:"last_sync_at"`
+NextSyncAt     *time.Time `json:"next_sync_at"`
+SyncStatus     string     `json:"sync_status" gorm:"default:idle"`
+ConnectionIDs  string     `json:"connection_ids"`
 }
 
 type Folder struct {

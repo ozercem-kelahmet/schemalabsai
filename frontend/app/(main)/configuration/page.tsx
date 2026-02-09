@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Settings, Key, Globe, Plus, Copy, Eye, EyeOff, Trash2, CheckCircle2, Play, Brain, Check, AlertTriangle } from "lucide-react"
+import { Settings, Key, Globe, Plus, Copy, Eye, EyeOff, Trash2, CheckCircle2, Play, Brain, Check, AlertTriangle, Info } from "lucide-react"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
@@ -58,6 +58,12 @@ const rateLimitOptions = [
 
 export default function ConfigurationPage() {
   const [apiKeys, setApiKeys] = useState<APIKey[]>([])
+  const [apiKeyPage, setApiKeyPage] = useState(1)
+  const apiKeysPerPage = 5
+  const [openTooltip, setOpenTooltip] = useState<string | null>(null)
+  const [copiedApi, setCopiedApi] = useState<string | null>(null)
+  const [endpointPage, setEndpointPage] = useState(1)
+  const endpointsPerPage = 5
   const [endpoints, setEndpoints] = useState<Endpoint[]>([])
   const [fineTunedModels, setFineTunedModels] = useState<FineTunedModel[]>([])
   const [loading, setLoading] = useState(true)
@@ -77,6 +83,7 @@ export default function ConfigurationPage() {
   const [newEndpointName, setNewEndpointName] = useState("")
   const [newEndpointPath, setNewEndpointPath] = useState("")
   const [newEndpointModel, setNewEndpointModel] = useState("")
+  const [newEndpointBaseModel, setNewEndpointBaseModel] = useState("schema-v0")
   const [newEndpointLLM, setNewEndpointLLM] = useState("")
   const [newEndpointDescription, setNewEndpointDescription] = useState("")
   const [creatingEndpoint, setCreatingEndpoint] = useState(false)
@@ -180,7 +187,6 @@ export default function ConfigurationPage() {
           name: newEndpointName,
           path: newEndpointPath,
           fine_tuned_model_id: newEndpointModel,
-          llm_model: newEndpointLLM,
           description: newEndpointDescription
         })
       })
@@ -242,6 +248,15 @@ export default function ConfigurationPage() {
 
   return (
     <div className="space-y-6">
+      {/* Delete Notification */}
+      {deleteNotification && (
+        <div className="fixed bottom-4 right-4 z-50 animate-in slide-in-from-bottom-2 fade-in duration-300">
+          <div className="flex items-center gap-3 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-4 py-3 rounded-lg shadow-lg">
+            <CheckCircle2 className="h-5 w-5" />
+            <span className="text-sm font-medium">{deleteNotification.type === 'key' ? 'API Key' : 'Endpoint'} "{deleteNotification.name}" deleted successfully</span>
+          </div>
+        </div>
+      )}
       <div className="flex items-center gap-3">
         <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#0052CC]/10 dark:bg-[#0052CC]/20">
           <Settings className="h-5 w-5 text-[#0052CC] dark:text-[#2684FF]" />
@@ -270,7 +285,7 @@ export default function ConfigurationPage() {
             </div>
           ) : (
             <div className="space-y-3">
-              {apiKeys.map((apiKey) => (
+              {apiKeys.slice((apiKeyPage - 1) * apiKeysPerPage, apiKeyPage * apiKeysPerPage).map((apiKey) => (
                 <div key={apiKey.id} className="group flex items-center justify-between rounded-lg border border-border bg-muted/30 p-4 hover:border-border/80 transition-colors">
                   <div className="space-y-1.5 flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -288,11 +303,47 @@ export default function ConfigurationPage() {
                       <span>{apiKey.rate_limit}</span>
                     </div>
                   </div>
+                  <div className="relative">
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => setOpenTooltip(openTooltip === apiKey.id ? null : apiKey.id)}>
+                      <Info className="h-4 w-4" />
+                    </Button>
+                    {openTooltip === apiKey.id && (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setOpenTooltip(null)} />
+                        <div className="absolute right-0 top-10 z-50 w-[520px] p-4 rounded-lg border border-border bg-card shadow-xl">
+                          <div className="flex items-center justify-between mb-3">
+                            <p className="text-sm font-semibold text-foreground">API Usage</p>
+                            <Button variant="ghost" size="sm" className="h-7 px-2 gap-1" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(`curl -X POST https://api.schemalabs.ai/v1/analyze \\n  -H "Authorization: Bearer ${apiKey.key}" \\n  -F "file=@data.csv" \\n  -F "query=Analyze this data"`); setCopiedApi(apiKey.id); setTimeout(() => setCopiedApi(null), 2000); }}>
+                              {copiedApi === apiKey.id ? <><Check className="h-3.5 w-3.5 text-emerald-500" /><span className="text-xs text-emerald-500">Copied!</span></> : <Copy className="h-3.5 w-3.5" />}
+                            </Button>
+                          </div>
+                          <div className="bg-muted p-3 rounded-md font-mono text-[11px] text-muted-foreground leading-6">
+                            <div>curl -X POST https://api.schemalabs.ai/v1/analyze \</div>
+                            <div className="pl-4">-H "Authorization: Bearer {apiKey.key.slice(0,20)}..." \</div>
+                            <div className="pl-4">-F "file=@yourdata.csv" \</div>
+                            <div className="pl-4">-F "query=Analyze this data"</div>
+                          </div>
+                          <div className="mt-3 pt-3 border-t border-border text-xs text-muted-foreground">
+                            <span className="font-medium text-foreground">Response: </span>JSON with file_info, statistics, predictions
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
                   <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:text-red-600 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => deleteAPIKey(apiKey.id)}>
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </div>
               ))}
+              {apiKeys.length > apiKeysPerPage && (
+                <div className="flex items-center justify-center mt-4 pt-4 border-t border-border gap-1">
+                  {Array.from({ length: Math.ceil(apiKeys.length / apiKeysPerPage) }, (_, i) => (
+                    <Button key={i} variant={apiKeyPage === i + 1 ? "default" : "outline"} size="sm" className="h-8 w-8 p-0" onClick={() => setApiKeyPage(i + 1)}>
+                      {i + 1}
+                    </Button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </CardContent>
@@ -316,7 +367,7 @@ export default function ConfigurationPage() {
             </div>
           ) : (
             <div className="space-y-3">
-              {endpoints.map((endpoint) => (
+              {endpoints.slice((endpointPage - 1) * endpointsPerPage, endpointPage * endpointsPerPage).map((endpoint) => (
                 <div key={endpoint.id} className="group flex items-center justify-between rounded-lg border border-border bg-muted/30 p-4 hover:border-border/80 transition-colors">
                   <div className="space-y-1.5 flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -327,14 +378,38 @@ export default function ConfigurationPage() {
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                       <span className="flex items-center gap-1"><Brain className="h-3 w-3" /> {getModelName(endpoint.fine_tuned_model_id)}</span>
                       <span>|</span>
-                      <span>{getLLMName(endpoint.llm_model)}</span>
-                      <span>|</span>
+
                       <span>{endpoint.calls?.toLocaleString() || 0} calls</span>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Button variant="outline" size="sm" onClick={() => openTestModal(endpoint)}><Play className="h-4 w-4 mr-1" /> Test</Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => copyToClipboard(`https://api.schemalabs.ai/v1/query/${endpoint.path}`)}><Copy className="h-4 w-4" /></Button>
+                    <div className="relative">
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => setOpenTooltip(openTooltip === "ep-" + endpoint.id ? null : "ep-" + endpoint.id)}>
+                        <Info className="h-4 w-4" />
+                      </Button>
+                      {openTooltip === "ep-" + endpoint.id && (
+                        <>
+                          <div className="fixed inset-0 z-40" onClick={() => setOpenTooltip(null)} />
+                          <div className="absolute right-0 top-10 z-50 w-[520px] p-4 rounded-lg border border-border bg-card shadow-xl">
+                            <div className="flex items-center justify-between mb-3">
+                              <p className="text-sm font-semibold text-foreground">Endpoint Usage</p>
+                              <Button variant="ghost" size="sm" className="h-7 px-2 gap-1" onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(`curl -X POST https://api.schemalabs.ai/v1/query/${endpoint.path} -H "Authorization: Bearer YOUR_API_KEY" -H "Content-Type: application/json" -d '{\"query\": \"Your question\"}'`); setCopiedApi("ep-" + endpoint.id); setTimeout(() => setCopiedApi(null), 2000); }}>
+                                {copiedApi === "ep-" + endpoint.id ? <><Check className="h-3.5 w-3.5 text-emerald-500" /><span className="text-xs text-emerald-500">Copied!</span></> : <Copy className="h-3.5 w-3.5" />}
+                              </Button>
+                            </div>
+                            <div className="bg-muted p-3 rounded-md font-mono text-[11px] text-muted-foreground leading-6">
+                              <div>curl -X POST https://api.schemalabs.ai/v1/query/{endpoint.path} \</div>
+                              <div className="pl-4">-H "Authorization: Bearer YOUR_API_KEY" \</div>
+                              <div className="pl-4">-H "Content-Type: application/json" \</div>
+                              <div className="pl-4">-d '\"query\": \"Your question\"'</div>
+                            </div>
+                            <div className="mt-3 pt-3 border-t border-border text-xs text-muted-foreground">
+                              <span className="font-medium text-foreground">Response: </span>JSON with prediction and analysis
+                            </div>
+                          </div>
+                        </>
+                      )}
+                    </div>
                     <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:text-red-600 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => deleteEndpoint(endpoint.id)}>
                       <Trash2 className="h-4 w-4" />
                     </Button>
@@ -417,9 +492,18 @@ export default function ConfigurationPage() {
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Model</Label>
+              <Label>Base Model</Label>
+              <Select value={newEndpointBaseModel} onValueChange={setNewEndpointBaseModel}>
+                <SelectTrigger className="border-border bg-background"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="schema-v0">schema-v0</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Fine-tuned Model</Label>
               <Select value={newEndpointModel} onValueChange={setNewEndpointModel}>
-                <SelectTrigger className="border-border bg-background"><SelectValue placeholder="Select model" /></SelectTrigger>
+                <SelectTrigger className="border-border bg-background"><SelectValue placeholder="Select your trained model" /></SelectTrigger>
                 <SelectContent>{fineTunedModels.map(m => <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>)}</SelectContent>
               </Select>
             </div>
@@ -441,7 +525,7 @@ export default function ConfigurationPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateEndpointModalOpen(false)}>Cancel</Button>
-            <Button onClick={createEndpoint} disabled={creatingEndpoint || !newEndpointModel  || !newEndpointName || !newEndpointPath} className="bg-[#0052CC] text-white hover:bg-[#003D99]">
+            <Button onClick={createEndpoint} disabled={creatingEndpoint || !newEndpointModel || !newEndpointName || !newEndpointPath} className="bg-[#0052CC] text-white hover:bg-[#003D99]">
               {creatingEndpoint ? "Creating..." : "Create Endpoint"}
             </Button>
           </DialogFooter>

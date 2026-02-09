@@ -158,9 +158,9 @@ export function DatasetCard({ dataset, onViewSchema, onEdit, onDelete }: Dataset
         <div className="mt-4 rounded-lg bg-muted/50 p-3">
           <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Schema Preview</p>
           <div className="flex flex-wrap gap-1.5">
-            {dataset.schema.slice(0, 4).map((col) => (
+            {dataset.schema.slice(0, 4).map((col, i) => (
               <span
-                key={col.name}
+                key={`${col.name}-${i}`}
                 className="rounded bg-background px-1.5 py-0.5 font-mono text-xs text-muted-foreground border border-border"
               >
                 {col.name}

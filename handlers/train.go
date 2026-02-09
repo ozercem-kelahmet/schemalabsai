@@ -58,6 +58,7 @@ func TrainHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userID := r.Header.Get("X-User-ID")
+	log.Printf("=== TRAIN HANDLER START: user=%s ===", userID)
 
 	var req TrainRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -119,9 +120,11 @@ if req.Epochs == 0 {
 	defer resp.Body.Close()
 
 	responseBody, _ := io.ReadAll(resp.Body)
+	log.Printf("Flask response body: %s", string(responseBody))
 
 	var flaskResp map[string]interface{}
 	json.Unmarshal(responseBody, &flaskResp)
+	log.Printf("Flask parsed response: %+v", flaskResp)
 
 	now := time.Now()
 	timestamp := now.Format("20060102_150405")
@@ -151,6 +154,9 @@ if DB != nil && userID != "" {
 	}
 	if acc, ok := flaskResp["accuracy"].(float64); ok {
 		accuracy = acc
+		log.Printf("✅ Accuracy parsed from Flask: %.2f", accuracy)
+	} else {
+		log.Printf("⚠️  No accuracy in Flask response or type mismatch")
 	}
 	loss := 0.0
 	if l, ok := flaskResp["loss"].(float64); ok {
@@ -202,11 +208,13 @@ ftModel := FineTunedModel{
 		DB.Create(&ftModel)
 	}
 
-	// Send training complete email
+	// Send training complete email (only if training succeeded)
+	if accuracy > 0 {
 	var user User
 	if DB.Where("id = ?", userID).First(&user).Error == nil {
 		emailService := NewEmailService()
 		emailService.SendTrainingComplete(user.Email, modelName, accuracy)
+	}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -281,6 +289,13 @@ func ListFineTunedModelsHandler(w http.ResponseWriter, r *http.Request) {
 			"loss":           m.Loss,
 			"user_id":        m.UserID,
 			"created_at":     m.CreatedAt,
+"sync_mode":      m.SyncMode,
+"sync_status":    m.SyncStatus,
+"schedule_cron":  m.ScheduleCron,
+"schedule_desc":  m.ScheduleDesc,
+"next_sync_at":   m.NextSyncAt,
+"last_sync_at":   m.LastSyncAt,
+"connection_ids": m.ConnectionIDs,
 		}
 
 		if m.SourceFiles != "" {
@@ -306,7 +321,11 @@ type MultiTrainRequest struct {
 	BatchSize    int      `json:"batch_size"`
 	LearningRate float64  `json:"learning_rate"`
 	WarmupSteps  int      `json:"warmup_steps"`
-QueryID      string   `json:"query_id"`
+QueryID       string   `json:"query_id"`
+SyncMode      string   `json:"sync_mode"`
+ScheduleCron  string   `json:"schedule_cron"`
+ScheduleDesc  string   `json:"schedule_desc"`
+ConnectionIDs string   `json:"connection_ids"`
 }
 
 func MultiTrainHandler(w http.ResponseWriter, r *http.Request) {
@@ -403,9 +422,11 @@ queryIDField.Write([]byte(req.QueryID))
 	defer resp.Body.Close()
 
 	responseBody, _ := io.ReadAll(resp.Body)
+	log.Printf("Flask response body: %s", string(responseBody))
 
 	var flaskResp map[string]interface{}
 	json.Unmarshal(responseBody, &flaskResp)
+	log.Printf("Flask parsed response: %+v", flaskResp)
 
 	now := time.Now()
 	timestamp := now.Format("20060102_150405")
@@ -422,6 +443,9 @@ queryIDField.Write([]byte(req.QueryID))
 	}
 	if acc, ok := flaskResp["accuracy"].(float64); ok {
 		accuracy = acc
+		log.Printf("✅ Accuracy parsed from Flask: %.2f", accuracy)
+	} else {
+		log.Printf("⚠️  No accuracy in Flask response or type mismatch")
 	}
 	loss := 0.0
 	if l, ok := flaskResp["loss"].(float64); ok {
@@ -483,17 +507,25 @@ SourceFileID: func() string { if mergedFileID != "" { return mergedFileID }; ret
 		Loss:         loss,
 			UserID:       userID,
 			CreatedAt:    now,
+SyncMode:     func() string { if req.SyncMode != "" { return req.SyncMode }; return "manual" }(),
+ScheduleCron: req.ScheduleCron,
+ScheduleDesc: req.ScheduleDesc,
+ConnectionIDs: req.ConnectionIDs,
 		}
 		DB.Create(&ftModel)
+if req.SyncMode == "scheduled" && req.ScheduleCron != "" { GlobalScheduler.AddJob(ftModel) }
+if req.SyncMode == "real-time" && req.ConnectionIDs != "" { GlobalWatcher.StartWatching(ftModel) }
 	}
 
 
-	// Send training complete email
-	var user User
-	if DB.Where("id = ?", userID).First(&user).Error == nil {
-		emailService := NewEmailService()
-		emailService.SendTrainingComplete(user.Email, modelName, accuracy)
-	}
+// Send training complete email (only if training succeeded)
+if accuracy > 0 {
+var user User
+if DB.Where("id = ?", userID).First(&user).Error == nil {
+emailService := NewEmailService()
+emailService.SendTrainingComplete(user.Email, modelName, accuracy)
+}
+}
 	w.Header().Set("Content-Type", "application/json")
 	rows := 0
 	if r, ok := flaskResp["rows"].(float64); ok {

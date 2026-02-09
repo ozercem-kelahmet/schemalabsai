@@ -192,6 +192,8 @@ func main() {
 	http.HandleFunc("/api/models/finetuned", enableCORS(handlers.AuthMiddleware(handlers.ListFineTunedModelsHandler)))
 	http.HandleFunc("/api/models/finetuned/delete", enableCORS(handlers.AuthMiddleware(handlers.DeleteFineTunedModelHandler)))
 	http.HandleFunc("/api/models/finetuned/update", enableCORS(handlers.AuthMiddleware(handlers.UpdateFineTunedModelHandler)))
+ http.HandleFunc("/api/models/sync", enableCORS(handlers.AuthMiddleware(handlers.UpdateModelSyncHandler)))
+ http.HandleFunc("/api/scheduler/status", enableCORS(handlers.AuthMiddleware(handlers.GetSchedulerStatusHandler)))
 	http.HandleFunc("/api/models/finetuned/download", enableCORS(handlers.AuthMiddleware(handlers.DownloadModelHandler)))
 	http.HandleFunc("/api/models/finetuned/", enableCORS(handlers.AuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -221,6 +223,7 @@ func main() {
 	http.HandleFunc("/v1/predict", enableCORS(handlers.APIKeyAuthMiddleware("query")(handlers.PredictHandler)))
 	http.HandleFunc("/v1/chat", enableCORS(handlers.APIKeyAuthMiddleware("query")(handlers.ChatHandler)))
 	http.HandleFunc("/v1/files", enableCORS(handlers.APIKeyAuthMiddleware("read")(handlers.GetUploadedFilesHandler)))
+	http.HandleFunc("/v1/analyze", enableCORS(handlers.APIKeyAuthMiddleware("query")(handlers.AnalyzeHandler)))
 	http.HandleFunc("/api/google/auth", enableCORS(handlers.GoogleAuthHandler))
 	http.HandleFunc("/api/google/callback", handlers.GoogleCallbackHandler)
 	http.HandleFunc("/api/google/login", handlers.GoogleLoginHandler)
@@ -297,7 +300,9 @@ func main() {
 		nextProxy.ServeHTTP(w, r)
 	})
 
-	log.Println("SCHEMALABS AI running on http://localhost:" + apiPort)
+	// Start scheduler for scheduled/real-time sync
+ handlers.GlobalScheduler.Start()
+ log.Println("SCHEMALABS AI running on http://localhost:" + apiPort)
 	server := &http.Server{Addr: ":" + apiPort, Handler: nil, MaxHeaderBytes: 1 << 20}
 	log.Fatal(server.ListenAndServe())
 }

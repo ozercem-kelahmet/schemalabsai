@@ -1,4 +1,5 @@
 import os
+import importlib
 from analytics_engine import detect_analytics_type, generate_analytics
 # smart_analyzer removed - LLM handles column matching directly
 os.environ["FLASK_SKIP_DOTENV"] = "1"
@@ -79,11 +80,14 @@ def load_base_model():
     
     try:
         from model import TabularFoundationModel
-        config = {"d_model": 256, "n_layers": 6, "n_heads": 8, "d_ff": 1024, "dropout": 0.1, "n_sectors": 50, "n_subsectors": 50}
-        base_model = TabularFoundationModel(config).to(device)
         
         if os.path.exists(BASE_MODEL_PATH):
             ckpt = torch.load(BASE_MODEL_PATH, map_location=device, weights_only=False)
+            config = ckpt.get("config", {"d_model": 256, "n_heads": 8, "n_layers": 3, "schema_layers": 3, "n_latents": 64, "n_features": 64, "n_classes": 10, "n_sectors": 10, "n_types": 10, "max_cols": 1024})
+            base_model = TabularFoundationModel(config).to(device)
+            # Update heads to match checkpoint shapes before loading
+            base_model.update_heads(n_classes=18, n_sectors=10)
+            
             if "model_state_dict" in ckpt:
                 base_model.load_state_dict(ckpt["model_state_dict"], strict=False)
             else:
@@ -1123,6 +1127,34 @@ def smart_column_mapping(df_cols, target_col):
     return mapped, feature_cols
 
 
+
+def detect_sector_with_llm(column_names):
+    """Kolon isimlerinden sektor tahmin et"""
+    try:
+        api_key = os.getenv('SECTOR_MODEL')
+        if not api_key:
+            return 'unknown'
+        
+        sector_module = importlib.import_module(os.getenv("SECTOR_CLIENT"))
+        client = sector_module.Anthropic(api_key=api_key)
+        
+        cols_str = ', '.join(column_names[:30])  # İlk 30 kolon
+        
+        response = client.messages.create(
+            model=os.getenv('SECTOR_MODEL_NAME'),
+            max_tokens=int(os.getenv('SECTOR_MODEL_MAX_TOKENS')),
+            messages=[{
+                "role": "user",
+                "content": f"Bu veri kolonlarına bakarak sektörü belirle. Sadece tek kelime cevap ver (sports, finance, healthcare, technology, retail, manufacturing, education, entertainment, real_estate, transportation, energy, agriculture, hospitality, government, other): {cols_str}"
+            }]
+        )
+        
+        return response.content[0].text.strip().lower()
+    except Exception as e:
+        print(f"Sector detection error: {e}")
+        return 'unknown'
+
+
 app = Flask(__name__)
 app.json_encoder = NaNSafeEncoder
 
@@ -1359,8 +1391,13 @@ def predict():
             "status": "success"
         })
     except Exception as e:
+        print("="*80)
+        print("❌ TRAINING EXCEPTION")
+        print("="*80)
         import traceback
         traceback.print_exc()
+        print(f"best_acc at exception: {best_acc if 'best_acc' in locals() else 'UNDEFINED'}")
+        print("="*80)
         return jsonify({"error": str(e)}), 500
 
 @app.route('/predict/batch', methods=['POST'])
@@ -1421,8 +1458,13 @@ def predict_batch():
             "status": "success"
         })
     except Exception as e:
+        print("="*80)
+        print("❌ TRAINING EXCEPTION")
+        print("="*80)
         import traceback
         traceback.print_exc()
+        print(f"best_acc at exception: {best_acc if 'best_acc' in locals() else 'UNDEFINED'}")
+        print("="*80)
         return jsonify({"error": str(e)}), 500
 
 
@@ -1781,6 +1823,7 @@ def analyze():
         
         # === FINE-TUNED MODEL PREDICTION ===
         ft_prediction_text = ""
+        ft_structured = None
         if model_id and model_id != "none":
             try:
                 # Try model_path first (from database), then fallback to model_id.pt
@@ -1897,29 +1940,46 @@ def analyze():
                         preds = probs.argmax(dim=-1).numpy()
                         confs = probs.max(dim=-1).values.numpy()
                     
-                    # Build prediction summary
+                    # Build structured prediction data
+                    from collections import Counter
+                    pred_counts = Counter(preds)
+                    
+                    # Structured predictions list
+                    structured_predictions = []
+                    for i in range(min(100, len(preds))):  # First 100 rows
+                        cls_name = class_names[preds[i]] if preds[i] < len(class_names) else f"class_{preds[i]}"
+                        structured_predictions.append({
+                            "row": i + 1,
+                            "label": cls_name,
+                            "confidence": round(float(confs[i]), 4)
+                        })
+                    
+                    # Class distribution
+                    class_distribution = {}
+                    for cls_idx, count in pred_counts.most_common():
+                        cls_name = class_names[cls_idx] if cls_idx < len(class_names) else f"class_{cls_idx}"
+                        class_distribution[cls_name] = {
+                            "count": int(count),
+                            "percentage": round(count / len(preds) * 100, 2)
+                        }
+                    
+                    # Store structured data for response
+                    ft_structured = {
+                        "model_id": model_id,
+                        "training_accuracy": round(float(accuracy), 4),
+                        "classes": class_names[:20],
+                        "total_predictions": len(preds),
+                        "predictions": structured_predictions,
+                        "class_distribution": class_distribution
+                    }
+                    
+                    # Also keep text version for backward compatibility
                     ft_prediction_text = f"\n=== FINE-TUNED MODEL PREDICTIONS ===\n"
                     ft_prediction_text += f"Model: {model_id}\n"
                     ft_prediction_text += f"Training Accuracy: {accuracy*100:.1f}%\n"
                     ft_prediction_text += f"Classes: {', '.join(class_names[:10])}{'...' if len(class_names) > 10 else ''}\n"
-                    ft_prediction_text += f"Total Predictions: {len(preds)}\n\n"
+                    ft_prediction_text += f"Total Predictions: {len(preds)}\n"
                     
-                    # Class distribution
-                    from collections import Counter
-                    pred_counts = Counter(preds)
-                    ft_prediction_text += "CLASS DISTRIBUTION:\n"
-                    for cls_idx, count in pred_counts.most_common(10):
-                        cls_name = class_names[cls_idx] if cls_idx < len(class_names) else f"class_{cls_idx}"
-                        pct = count / len(preds) * 100
-                        ft_prediction_text += f"  {cls_name}: {count} ({pct:.1f}%)\n"
-                    
-                    # Sample predictions with confidence
-                    ft_prediction_text += "\nSAMPLE PREDICTIONS (top 10):\n"
-                    for i in range(min(10, len(preds))):
-                        cls_name = class_names[preds[i]] if preds[i] < len(class_names) else f"class_{preds[i]}"
-                        ft_prediction_text += f"  Row {i+1}: {cls_name} (conf: {confs[i]*100:.1f}%)\n"
-                    
-                    ft_prediction_text += "\n"
                     print(f"Fine-tuned model prediction completed: {len(preds)} rows, {n_classes} classes")
                 else:
                     ft_prediction_text = f"\n[Fine-tuned model not found: {model_id}]\n"
@@ -2119,10 +2179,61 @@ def analyze():
         # Cache this result
         set_cached_query_result(file_id, query, analysis)
         
+        # Dynamic row-level context: include actual data rows so LLM can answer specific questions
+        try:
+            n_rows = len(df)
+            all_cols = df.columns.tolist()
+            # Small dataset: include all rows with all columns
+            if n_rows <= 200:
+                analysis += f"\n=== RAW DATA ({n_rows} rows) ===\n"
+                analysis += df.to_string(index=False) + "\n"
+            elif n_rows <= 1000:
+                # Medium: include all rows but limit columns
+                show_cols = all_cols[:20] if len(all_cols) > 20 else all_cols
+                analysis += f"\n=== RAW DATA ({n_rows} rows, {len(show_cols)}/{len(all_cols)} cols) ===\n"
+                analysis += df[show_cols].to_string(index=False) + "\n"
+            else:
+                # Large: sample rows
+                show_cols = all_cols[:15] if len(all_cols) > 15 else all_cols
+                analysis += f"\n=== DATA SAMPLE (100/{n_rows} rows) ===\n"
+                analysis += df[show_cols].head(100).to_string(index=False) + "\n"
+        except Exception as e:
+            print(f"Row context error: {e}")
+        
+        # Truncate if too long
+        if len(analysis) > 15000:
+            analysis = analysis[:15000] + "\n...(truncated)"
+        
+        # Return structured JSON with FULL analysis text so LLM can answer questions
+        if ft_structured:
+            return jsonify({
+                'status': 'success',
+                'analysis': analysis,
+                'predictions': ft_structured['predictions'],
+                'class_distribution': ft_structured['class_distribution'],
+                'model': {
+                    'id': ft_structured['model_id'],
+                    'training_accuracy': ft_structured['training_accuracy'],
+                    'classes': ft_structured['classes'],
+                    'total_predictions': ft_structured['total_predictions']
+                },
+                'data_summary': {
+                    'rows': len(df),
+                    'columns': len(df.columns),
+                    'numeric_columns': len(df.select_dtypes(include=['number']).columns),
+                    'categorical_columns': len(df.select_dtypes(include=['object', 'category']).columns)
+                }
+            })
+        
         return jsonify({'analysis': analysis, 'status': 'success'})
     except Exception as e:
+        print("="*80)
+        print("❌ TRAINING EXCEPTION")
+        print("="*80)
         import traceback
         traceback.print_exc()
+        print(f"best_acc at exception: {best_acc if 'best_acc' in locals() else 'UNDEFINED'}")
+        print("="*80)
         return jsonify({'analysis': f'Error: {e}', 'status': 'error'})
 
 @app.route('/finetune', methods=['POST'])
@@ -2134,6 +2245,9 @@ def finetune(bypass_queue=False):
     import tempfile
     
     query_id_from_form = request.form.get('query_id', None)
+
+    # Reset training_progress immediately so polling returns "training" not old "completed"
+    training_progress.update({"epoch": 0, "epochs": 0, "accuracy": 0.0, "loss": 0.0, "status": "training", "eta": "starting...", "start_time": time.time()})
     if not query_id_from_form:
         query_id_from_form = str(uuid.uuid4())
     
@@ -2222,6 +2336,9 @@ def finetune(bypass_queue=False):
     
     """Fine-tune model on user data"""
     try:
+        print("="*80)
+        print("🚀 TRAINING START")
+        print("="*80)
         epochs_req = int(request.form.get('epochs', 0))  # 0 = auto
         batch_size_req = int(request.form.get('batch_size', 0))  # 0 = auto
         target_column = request.form.get('target_column', None)
@@ -2229,7 +2346,7 @@ def finetune(bypass_queue=False):
         analyze_only = request.form.get('analyze_only', 'false').lower() == 'true'
         
         session = get_session(query_id)
-        print(f"DEBUG FINETUNE START: query_id={query_id}, epochs_req={epochs_req}, analyze_only={analyze_only}")
+        # print(f"DEBUG FINETUNE START: query_id={query_id}, epochs_req={epochs_req}, analyze_only={analyze_only}")
         # Reset session for new training
         session.update({"epoch": 0, "epochs": 0, "accuracy": 0.0, "loss": 0.0, "status": "starting", "eta": "0%", "start_time": time.time(), "query_id": query_id, "user_id": request.headers.get("X-User-ID")})
         save_session(query_id, session)
@@ -2260,7 +2377,17 @@ def finetune(bypass_queue=False):
             elif file.filename.endswith('.parquet'):
                 df_temp = pd.read_parquet(temp_file.name)
             else:
-                df_temp = pd.read_csv(temp_file.name)
+                # Multi-row header detection: if first row has many duplicate values, skip it
+                try:
+                    first_row = pd.read_csv(temp_file.name, nrows=0).columns.tolist()
+                    unique_ratio = len(set(str(c).split('.')[0] for c in first_row)) / max(len(first_row), 1)
+                    if unique_ratio < 0.5 and len(first_row) > 3:
+                        df_temp = pd.read_csv(temp_file.name, header=1)
+                        print(f"Multi-row header detected in {file.filename}, using row 2 as header")
+                    else:
+                        df_temp = pd.read_csv(temp_file.name)
+                except:
+                    df_temp = pd.read_csv(temp_file.name)
             
             dataframes.append(df_temp)
             file_names.append(file.filename)
@@ -2269,9 +2396,7 @@ def finetune(bypass_queue=False):
         # Birden fazla dosya varsa smart merge yap
         merged_file_id = None
         if len(dataframes) > 1 and merge_files:
-            print(f"Smart merging {len(dataframes)} files: {file_names}")
             df = smart_merge_datasets(dataframes, file_names)
-            print(f"Merged shape: {df.shape}")
             
             # Save merged file to uploads
             import uuid
@@ -2281,23 +2406,19 @@ def finetune(bypass_queue=False):
             merged_filename = f"{merged_file_id[:8]}_merged_all_{timestamp}.csv"
             merged_path = os.path.join('../uploads', merged_filename)
             df.to_csv(merged_path, index=False)
-            print(f"Merged file saved: {merged_path}")
         else:
             df = dataframes[0]
         
         # Otomatik akıllı target seçimi
         target_col = auto_select_target(df, target_column)
-        print(f"Auto-selected target: {target_col}")
+        # print(f"Auto-selected target: {target_col}")
         
         df, cleaning_report = smart_data_cleaning(df)
         df, ts_report = smart_time_series_prep(df)
-        print(f"Time series prep: {ts_report}")
-        print(f"Data cleaning: {cleaning_report}")
         numeric_df = df.select_dtypes(include=['number'])
         # Agnostik: Tüm sayısal kolonları feature olarak kullan
         col_mapping, feature_cols = smart_column_mapping(numeric_df.columns.tolist(), target_col)
         
-        print(f"Feature columns: {feature_cols}")
         
         # Tüm feature kolonlarını al
         X = df[feature_cols].values.astype(np.float32)
@@ -2307,7 +2428,6 @@ def finetune(bypass_queue=False):
         if has_missing:
             missing_pct = np.isnan(X).mean() * 100
             X = np.nan_to_num(X, nan=0.0)
-            print(f"Missing data filled: {missing_pct:.1f}%")
         
         numeric_cols = feature_cols
         
@@ -2339,7 +2459,7 @@ def finetune(bypass_queue=False):
         # TabularFoundationModel herhangi feature sayısı ile çalışır
         # Agnostik: Herhangi feature sayısı ile çalışır
         input_dim = X.shape[1]
-        print(f"Training with {input_dim} features")
+        # print(f"Training with {input_dim} features")
         
         # Tam dinamik config
         dyn_cfg = get_dynamic_config(len(X), input_dim, n_classes)
@@ -2357,13 +2477,12 @@ def finetune(bypass_queue=False):
             'max_cols': dyn_cfg['max_cols']
         }
         
-        print(f"Dynamic: d={dyn_cfg['d_model']}, L={dyn_cfg['n_layers']}, lat={dyn_cfg['n_latents']}, bs={dyn_cfg['batch_size']}, ep={dyn_cfg['epochs']}, lr={dyn_cfg['lr']:.4f}")
+        # print(f"Dynamic: d={dyn_cfg['d_model']}, L={dyn_cfg['n_layers']}, lat={dyn_cfg['n_latents']}, bs={dyn_cfg['batch_size']}, ep={dyn_cfg['epochs']}, lr={dyn_cfg['lr']:.4f}")
         # Check if MIRAS is requested
         use_miras = request.form.get('use_miras', 'false').lower() == 'true'
         miras_bias = request.form.get('miras_bias', 'huber')
         miras_retention = request.form.get('miras_retention', 'lq')
         
-        print(f"Creating model with config: {ft_config}, MIRAS={use_miras}")
         try:
             if use_miras:
                 miras_config = {
@@ -2375,24 +2494,20 @@ def finetune(bypass_queue=False):
                     'use_gated_output': True
                 }
                 ft_model = TabularFoundationModelMIRAS(ft_config, miras_config)
-                print(f"MIRAS Model created with bias={miras_bias}, retention={miras_retention}")
+                # print(f"MIRAS Model created with bias={miras_bias}, retention={miras_retention}")
             else:
                 ft_model = TabularFoundationModel(ft_config)
-            print(f"Model created successfully, params: {sum(p.numel() for p in ft_model.parameters())}")
             ft_model = ft_model.to(device)
-            print(f"Model moved to {device}")
             for m in ft_model.modules():
                 if isinstance(m, nn.BatchNorm1d):
                     m.momentum = 0.01
             if hasattr(torch, "compile") and not torch.cuda.is_available():
                 try:
                     ft_model = torch.compile(ft_model, mode="default", backend="eager")
-                    print("Model compiled for CPU optimization")
                 except:
                     pass
                 try:
                     ft_model = torch.quantization.quantize_dynamic(ft_model, {nn.Linear}, dtype=torch.qint8)
-                    print("Model quantized to INT8")
                 except:
                     pass
         except Exception as e:
@@ -2464,8 +2579,8 @@ def finetune(bypass_queue=False):
         prefetch = 2 if num_workers > 0 else None
         dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=pin_mem, prefetch_factor=prefetch)
         
+        print(f"📊 Training loop starting: max_epochs={max_epochs}, best_acc={best_acc}")
         while current_epoch < max_epochs:
-            print(f"Epoch {current_epoch + 1} starting...")
             ft_model.train()
             total_loss = 0
             correct = 0
@@ -2547,7 +2662,8 @@ def finetune(bypass_queue=False):
             session["recall"] = round(recall, 4)
             session["f1_score"] = round(f1, 4)
             
-            if acc > best_acc:
+            # Always update best_acc on first epoch or if improved
+            if best_acc == 0 or acc > best_acc:
                 best_acc = acc
                 best_state = {k: v.clone() for k, v in ft_model.state_dict().items()}
                 no_improve = 0
@@ -2611,7 +2727,8 @@ def finetune(bypass_queue=False):
             result = cur.fetchone()
             if result:
                 print(f"Sending completion email to {result[0]}")
-                send_training_email(result[0], "completed", "model", best_acc, user_name=result[1] if len(result) > 1 else None)
+                pass  # Email disabled here - Go handles it
+                # send_training_email(result[0], "completed", "model", best_acc, user_name=result[1] if len(result) > 1 else None)
             cur.close()
             conn.close()
         except Exception as e:
@@ -2668,6 +2785,7 @@ def finetune(bypass_queue=False):
         if session.get("start_time"):
             training_duration = int(time.time() - session["start_time"])
         
+        print(f"✅ TRAINING COMPLETE: best_acc={best_acc:.2f}%, epochs={current_epoch}")
         return jsonify({
             "status": "success",
             "accuracy": float(best_acc),
@@ -2694,8 +2812,19 @@ def finetune(bypass_queue=False):
             "merged_file_id": merged_file_id if 'merged_file_id' in locals() and merged_file_id else None
         })
     except Exception as e:
+        print("="*80)
+        print("❌ TRAINING EXCEPTION")
+        print("="*80)
         import traceback
         traceback.print_exc()
+        print(f"best_acc at exception: {best_acc if 'best_acc' in locals() else 'UNDEFINED'}")
+        print("="*80)
+        
+        # Try to return partial results if training started
+        partial_acc = 0.0
+        if 'best_acc' in locals() and best_acc > 0:
+            partial_acc = best_acc
+        
         # Update DB training_failed flag
         query_id = request.form.get("query_id") or request.args.get("query_id")
         if query_id:
@@ -2709,7 +2838,14 @@ def finetune(bypass_queue=False):
                 conn.close()
             except Exception as db_ex:
                 print(f"DB update failed: {db_ex}")
-        return jsonify({"error": str(e)}), 500
+        
+        # Return error with partial accuracy if available
+        error_response = {"error": str(e), "status": "failed"}
+        if partial_acc > 0:
+            error_response["accuracy"] = partial_acc
+            error_response["partial_results"] = True
+        
+        return jsonify(error_response), 500
 
 @app.route('/training/progress', methods=['GET'])
 def get_training_progress():
@@ -2878,6 +3014,199 @@ def training_status(task_id):
 # Load sessions on startup and mark stale trainings
 _load_sessions()
 _save_sessions()  # Save after marking stale
+
+@app.route('/analyze_file', methods=['POST'])
+def analyze_file():
+    """API endpoint - kullanıcı dosya + query gönderir, base model analiz eder, LLM yok"""
+    try:
+        query = request.form.get('query', 'Analyze this data')
+        user_id = request.form.get('user_id', '')
+        
+        # Dosyayı al
+        if 'file' not in request.files:
+            return jsonify({
+                'error': 'No file provided',
+                'message': 'Please upload a file using the "file" field',
+                'supported_formats': ['csv', 'xlsx', 'xls', 'json'],
+                'example': 'curl -X POST /v1/analyze -F "file=@data.csv" -F "query=Analyze this"'
+            }), 400
+        
+        files = request.files.getlist('file')
+        if len(files) > 1:
+            return jsonify({
+                'error': 'Multiple files not supported',
+                'message': 'Please upload only one file at a time',
+                'files_received': len(files)
+            }), 400
+        
+        file = files[0]
+        if not file.filename:
+            return jsonify({
+                'error': 'Empty filename',
+                'message': 'The uploaded file has no name'
+            }), 400
+            
+        filename = file.filename.lower()
+        
+        # Format kontrolü
+        supported_formats = ['.csv', '.xlsx', '.xls', '.json']
+        file_ext = os.path.splitext(filename)[1]
+        if file_ext not in supported_formats:
+            return jsonify({
+                'error': 'Unsupported file format',
+                'message': f'File format "{file_ext}" is not supported',
+                'your_file': file.filename,
+                'supported_formats': ['csv', 'xlsx', 'xls', 'json'],
+                'example': 'Upload a CSV, Excel, or JSON file'
+            }), 400
+        
+        # Dosyayı oku
+        import pandas as pd
+        import tempfile
+        
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1])
+        file.save(temp_file.name)
+        temp_file.close()
+        
+        try:
+            if filename.endswith('.csv'):
+                df = pd.read_csv(temp_file.name)
+            elif filename.endswith(('.xlsx', '.xls')):
+                df = pd.read_excel(temp_file.name)
+            elif filename.endswith('.json'):
+                df = pd.read_json(temp_file.name)
+            else:
+                return jsonify({
+                    'error': 'Unsupported file type',
+                    'message': f'Cannot process file: {filename}',
+                    'supported_formats': ['csv', 'xlsx', 'xls', 'json']
+                }), 400
+        except Exception as e:
+            return jsonify({
+                'error': 'Failed to parse file',
+                'message': str(e),
+                'hint': 'Make sure your file is properly formatted and not corrupted',
+                'your_file': file.filename
+            }), 400
+        finally:
+            try: os.unlink(temp_file.name)
+            except: pass
+        
+        # Base model ile analiz
+        analysis = {
+            'file_info': {
+                'filename': file.filename,
+                'rows': len(df),
+                'columns': len(df.columns),
+                'column_names': df.columns.tolist()
+            },
+            'statistics': {},
+            'predictions': []
+        }
+        
+        # Numeric columns için istatistik
+        numeric_cols = df.select_dtypes(include=['int64', 'float64']).columns.tolist()
+        for col in numeric_cols[:10]:  # Max 10 column
+            analysis['statistics'][col] = {
+                'mean': float(df[col].mean()) if not pd.isna(df[col].mean()) else 0,
+                'std': float(df[col].std()) if not pd.isna(df[col].std()) else 0,
+                'min': float(df[col].min()) if not pd.isna(df[col].min()) else 0,
+                'max': float(df[col].max()) if not pd.isna(df[col].max()) else 0
+            }
+        
+        # Base model prediction (eğer yüklüyse)
+        if base_model is not None:
+            try:
+                # Numeric değerleri al
+                numeric_data = df.select_dtypes(include=['int64', 'float64']).values
+                if len(numeric_data) > 0:
+                    # İlk 100 satır için prediction
+                    sample = numeric_data[:min(100, len(numeric_data))]
+                    
+                    import torch
+                    import torch.nn.functional as F
+                    
+                    for row in sample[:5]:  # İlk 5 satır örnek
+                        # Replace NaN/inf with 0
+                        import numpy as np
+                        row = np.nan_to_num(row, nan=0.0, posinf=0.0, neginf=0.0)
+                        
+                        # Pad/truncate to 64 features (model expects n_features=64)
+                        row = list(row)
+                        if len(row) < 64:
+                            row = row + [0] * (64 - len(row))
+                        elif len(row) > 64:
+                            row = row[:64]
+                        
+                        X = torch.FloatTensor([row]).to(device)
+                        
+                        with torch.inference_mode():
+                            out = base_model(X)
+                            if isinstance(out, dict) and 'sector' in out:
+                                probs = F.softmax(out['sector'], dim=1)
+                                conf, pred = probs.max(1)
+                                conf_val = float(conf.item())
+                                # Handle NaN confidence
+                                if np.isnan(conf_val) or np.isinf(conf_val):
+                                    conf_val = 0.0
+                                analysis['predictions'].append({
+                                    'sector_id': int(pred.item()),
+                                    'confidence': conf_val
+                                })
+            except Exception as e:
+                analysis['model_error'] = str(e)
+        else:
+            analysis['model_status'] = 'Base model not loaded'
+        
+        # Model Card formatında response
+        import uuid
+        request_id = f"req_{uuid.uuid4().hex[:12]}"
+        
+        # Predictions formatını düzenle
+        formatted_predictions = []
+        sector_labels = ['finance', 'healthcare', 'technology', 'retail', 'manufacturing', 
+                        'energy', 'real_estate', 'transportation', 'education', 'entertainment',
+                        'agriculture', 'hospitality', 'construction', 'telecom', 'media',
+                        'government', 'nonprofit', 'other']
+        
+        for pred in analysis.get('predictions', []):
+            sector_id = pred.get('sector_id', 0)
+            label = sector_labels[sector_id] if sector_id < len(sector_labels) else f"sector_{sector_id}"
+            formatted_predictions.append({
+                'label': label,
+                'confidence': round(pred.get('confidence', 0), 4)
+            })
+        
+        # Detect sector with LLM
+        column_names = analysis['file_info'].get('column_names', [])
+        sector_detected = detect_sector_with_llm(column_names)
+        
+        response = {
+            'status': 'success',
+            'request_id': request_id,
+            'predictions': formatted_predictions,
+            'sector_detected': sector_detected,
+            'data_summary': {
+                'filename': analysis['file_info']['filename'],
+                'rows': analysis['file_info']['rows'],
+                'columns': analysis['file_info']['columns'],
+                'numeric_columns': len([k for k in analysis.get('statistics', {}).keys()]),
+                'column_names': analysis['file_info']['column_names'][:20]  # İlk 20
+            },
+            'statistics': analysis.get('statistics', {})
+        }
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        print("="*80)
+        print("❌ TRAINING EXCEPTION")
+        print("="*80)
+        import traceback
+        traceback.print_exc()
+        print(f"best_acc at exception: {best_acc if 'best_acc' in locals() else 'UNDEFINED'}")
+        print("="*80)
+        return jsonify({'error': str(e), 'status': 'error'}), 500
 
 if __name__ == '__main__':
     port = int(os.getenv('FLASK_PORT', 6000))

@@ -76,7 +76,7 @@ func CreateEndpointHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Name == "" || req.Path == "" || req.FineTunedModelID == "" || req.LLMModel == "" {
+	if req.Name == "" || req.Path == "" || req.FineTunedModelID == "" {
 		http.Error(w, "Missing required fields", http.StatusBadRequest)
 		return
 	}
@@ -202,64 +202,37 @@ func QueryEndpointHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Call fine-tuned model
 	var fineTunedResult string
-	if endpoint.FineTunedModelID != "" {
-		queryWithData := req.Query
-		if len(req.Data) > 0 {
-			dataJSON, _ := json.Marshal(req.Data)
-			queryWithData = req.Query + "\n\nInput Data: " + string(dataJSON)
-		}
-		result, err := callFineTunedModel(endpoint.FineTunedModelID, "", queryWithData, "")
-		if err != nil {
-			fmt.Printf("Fine-tuned model error: %v\n", err)
-		} else {
-			fineTunedResult = result
-		}
-	}
+if endpoint.FineTunedModelID != "" {
+queryWithData := req.Query
+if len(req.Data) > 0 {
+dataJSON, _ := json.Marshal(req.Data)
+queryWithData = req.Query + "\n\nInput Data: " + string(dataJSON)
+}
+// Get source_file_id from fine_tuned_models table
+var modelInfo struct {
+SourceFileID string
+ModelPath    string
+}
+DB.Table("fine_tuned_models").Where("id = ?", endpoint.FineTunedModelID).Select("source_file_id, model_path").First(&modelInfo)
+fmt.Printf("DEBUG Endpoint: model=%s, source_file_id=%s\n", endpoint.FineTunedModelID, modelInfo.SourceFileID)
+result, err := callFineTunedModel(endpoint.FineTunedModelID, modelInfo.SourceFileID, queryWithData, modelInfo.ModelPath)
+if err != nil {
+fmt.Printf("Fine-tuned model error: %v\n", err)
+} else {
+fineTunedResult = result
+}
+}
 
-	// Build system prompt
-	systemPrompt := "You are an AI assistant for data analysis. Provide clear, concise answers based on the model predictions and data analysis."
-	if fineTunedResult != "" {
-		systemPrompt += "\n\n### Fine-tuned Model Analysis:\n" + fineTunedResult + "\n\nUse this analysis to provide accurate insights."
-	}
 
-	// Prepare chat history
-	history := []ChatMessage{{Role: "user", Content: req.Query}}
+// Return raw analysis - no LLM
+result := map[string]interface{}{
+"query":       req.Query,
+"endpoint_id": endpoint.ID,
+"fine_tuned":  endpoint.FineTunedModelID,
+"analysis":    fineTunedResult,
+}
 
-	// Determine which LLM to call based on endpoint config
-	llmModel := endpoint.LLMModel
-	var response string
-	var tokens int
-	var err error
-
-	// Check model type and call appropriate API
-	if isClaudeModel(llmModel) {
-		response, tokens, err = callClaudeAPI(history, systemPrompt, llmModel, false, w)
-	} else if isOpenAIModel(llmModel) {
-		// Set header for OpenAI handler
-		r.Header.Set("X-LLM-Model", llmModel)
-		response, tokens, err = callOpenAIChat(history, systemPrompt, llmModel)
-	} else {
-		// Default to Claude
-		response, tokens, err = callClaudeAPI(history, systemPrompt, "claude-3-5-sonnet-20241022", false, w)
-	}
-
-	if err != nil {
-		http.Error(w, "LLM error: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	result := map[string]interface{}{
-		"answer":      response,
-		"model":       llmModel,
-		"fine_tuned":  endpoint.FineTunedModelID,
-		"tokens_used": tokens,
-		"endpoint_id": endpoint.ID,
-	}
-
-	if fineTunedResult != "" {
-		result["prediction"] = fineTunedResult
-	}
-
+w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
 }

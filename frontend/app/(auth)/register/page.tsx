@@ -362,6 +362,7 @@ export default function RegisterPage() {
                   We've sent a verification code to
                 </p>
                 <p className="mt-1 text-sm font-medium text-foreground">{email}</p>
+                <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">If you don't see it, please check your spam or junk folder</p>
               </div>
 
               {error && (

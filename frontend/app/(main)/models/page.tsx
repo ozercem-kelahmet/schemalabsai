@@ -24,6 +24,12 @@ interface FineTunedModel {
   request_count?: number
   loss_history?: number[]
   accuracy_history?: number[]
+  sync_mode?: string
+  sync_status?: string
+  schedule_cron?: string
+  schedule_desc?: string
+  next_sync_at?: string
+  last_sync_at?: string
 }
 
 function ChartWithTooltip({ data, label, finalValue, isLoss = false }: { data: number[]; label: string; finalValue: string; isLoss?: boolean }) {
@@ -80,6 +86,16 @@ export default function ModelsPage() {
   const [selectedModelForEndpoint, setSelectedModelForEndpoint] = useState<FineTunedModel | null>(null)
   const [endpointForm, setEndpointForm] = useState({ name: "", urlPath: "", description: "" })
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [syncModalOpen, setSyncModalOpen] = useState(false)
+  const [syncModel, setSyncModel] = useState<FineTunedModel | null>(null)
+  const [syncMode, setSyncMode] = useState("manual")
+  const [syncConnections, setSyncConnections] = useState<any[]>([])
+  const [syncSelectedConns, setSyncSelectedConns] = useState<string[]>([])
+  const [syncStartDate, setSyncStartDate] = useState(() => new Date().toISOString().split("T")[0])
+  const [syncStartTime, setSyncStartTime] = useState("02:00")
+  const [syncIntervalValue, setSyncIntervalValue] = useState(24)
+  const [syncIntervalUnit, setSyncIntervalUnit] = useState("hours")
+  const [syncSaving, setSyncSaving] = useState(false)
   const [selectedModelForDelete, setSelectedModelForDelete] = useState<FineTunedModel | null>(null)
 
   const startEditing = (model: FineTunedModel) => {
@@ -112,6 +128,42 @@ export default function ModelsPage() {
     setSelectedModelForEndpoint(model)
     setEndpointForm({ name: "", urlPath: `/v1/models/${model.id}/`, description: "" })
     setEndpointModalOpen(true)
+  }
+
+  const openSyncModal = async (m: FineTunedModel) => {
+    setSyncModel(m)
+    setSyncMode(m.sync_mode || "manual")
+    setSyncSelectedConns(m.connection_ids ? m.connection_ids.split(",").filter(Boolean) : [])
+    setSyncModalOpen(true)
+    try {
+      const res = await fetch("/api/connections", { credentials: "include" })
+      const data = await res.json()
+      setSyncConnections(data.connections || [])
+    } catch {}
+  }
+
+  const saveSyncSettings = async () => {
+    if (!syncModel) return
+    setSyncSaving(true)
+    try {
+      const desc = syncMode === "scheduled" ? `Every ${syncIntervalValue} ${syncIntervalUnit} from ${syncStartDate} ${syncStartTime}` : ""
+      const cron = syncMode === "scheduled" ? `${syncIntervalValue}${syncIntervalUnit.charAt(0)}` : ""
+      await fetch("/api/models/sync", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model_id: syncModel.id,
+          sync_mode: syncMode,
+          schedule_cron: cron,
+          schedule_desc: desc,
+          connection_ids: syncSelectedConns.join(","),
+        })
+      })
+      setSyncModalOpen(false)
+      fetchModels()
+    } catch {}
+    setSyncSaving(false)
   }
 
   const deleteModel = async () => {
@@ -275,7 +327,7 @@ export default function ModelsPage() {
                         <DropdownMenuItem onClick={e => { e.stopPropagation(); startEditing(m) }}><FileText className="mr-2 h-4 w-4" /> Rename Model</DropdownMenuItem>
                         <DropdownMenuItem onClick={e => { e.stopPropagation(); handleClick(m) }}><Play className="mr-2 h-4 w-4" /> Open in Playground</DropdownMenuItem>
                         <DropdownMenuItem onClick={e => { e.stopPropagation(); openEndpointModal(m) }}><Zap className="mr-2 h-4 w-4" /> Create Endpoint</DropdownMenuItem>
-                        <DropdownMenuItem onClick={e => { e.stopPropagation(); }}><Database className="mr-2 h-4 w-4" /> Sync Data Sources</DropdownMenuItem>
+                        <DropdownMenuItem onClick={e => { e.stopPropagation(); openSyncModal(m) }}><Database className="mr-2 h-4 w-4" /> Sync Data Sources</DropdownMenuItem>
                         <DropdownMenuItem onClick={e => { e.stopPropagation(); setSelectedModelForDelete(m); setDeleteConfirmOpen(true) }} className="text-red-500 focus:text-red-500"><Trash2 className="mr-2 h-4 w-4" /> Delete</DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -287,12 +339,31 @@ export default function ModelsPage() {
                   <div className="mt-3 flex items-center gap-2">
                     <span className="inline-flex items-center rounded-md bg-[#0052CC]/10 px-2 py-1 text-xs font-medium text-[#0052CC] dark:text-[#2684FF]">schema-v0</span>
                     <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/10 px-2 py-1 text-xs font-medium text-emerald-500"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />Active</span>
+                    {m.sync_mode && m.sync_mode !== "manual" && (
+                      <span className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium ${
+                        m.sync_mode === "real-time" ? "bg-purple-500/10 text-purple-500" : "bg-amber-500/10 text-amber-500"
+                      }`}>
+                        {m.sync_mode === "real-time" ? <><Zap className="h-3 w-3" />Real-time</> : <><Calendar className="h-3 w-3" />{m.schedule_desc || m.schedule_cron || "Scheduled"}</>}
+                      </span>
+                    )}
+                    {m.sync_status === "syncing" && (
+                      <span className="inline-flex items-center gap-1 rounded-md bg-blue-500/10 px-2 py-1 text-xs font-medium text-blue-500 animate-pulse">Syncing...</span>
+                    )}
+                    {m.sync_status === "error" && (
+                      <span className="inline-flex items-center gap-1 rounded-md bg-red-500/10 px-2 py-1 text-xs font-medium text-red-500">Sync Error</span>
+                    )}
                   </div>
                   <div className="mt-4 grid grid-cols-3 gap-3 border-t border-border pt-4">
                     <div><div className="text-[10px] text-muted-foreground uppercase">Accuracy</div><div className="mt-1 text-lg font-semibold text-emerald-500">{m.accuracy?.toFixed(1) || 0}%</div></div>
                     <div><div className="text-[10px] text-muted-foreground uppercase">Epochs</div><div className="mt-1 text-lg font-semibold">{m.epochs || 5}</div></div>
                     <div><div className="text-[10px] text-muted-foreground uppercase">Loss</div><div className="mt-1 text-lg font-semibold">{(m.loss || 0).toFixed(3)}</div></div>
                   </div>
+                  {m.next_sync_at && (
+                    <div className="mt-2 text-[10px] text-muted-foreground">Next sync: {new Date(m.next_sync_at).toLocaleString()}</div>
+                  )}
+                  {m.last_sync_at && (
+                    <div className="text-[10px] text-muted-foreground">Last sync: {new Date(m.last_sync_at).toLocaleString()}</div>
+                  )}
                   {getSourceNames(m).length > 0 && (
                     <div className="mt-4 border-t border-border pt-4">
                       <div className="text-xs text-muted-foreground mb-2">DATA SOURCES ({getSourceNames(m).length})</div>
@@ -408,6 +479,90 @@ export default function ModelsPage() {
             <button className="rounded-md bg-red-500 px-4 py-2 text-sm text-white hover:bg-red-600" onClick={deleteModel}>Delete</button>
           </div>
         </DialogContent>
-      </Dialog>    </div>
+      </Dialog>    
+      {/* Sync Settings Modal */}
+      <Dialog open={syncModalOpen} onOpenChange={setSyncModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Sync Settings - {syncModel?.name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-xs font-medium">Sync Mode</label>
+              <div className="grid grid-cols-3 gap-2">
+                {["manual", "scheduled", "real-time"].map(mode => (
+                  <button key={mode} onClick={() => setSyncMode(mode)}
+                    className={`rounded-lg border px-3 py-2.5 text-xs font-medium transition-all ${
+                      syncMode === mode ? "border-[#0052CC] bg-[#0052CC]/10 text-[#2684FF]" : "border-border text-muted-foreground hover:border-border/80"
+                    }`}>
+                    {mode === "manual" ? "Manual" : mode === "scheduled" ? "Scheduled" : "Real-time"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {syncMode !== "manual" && (
+              <div className="space-y-2">
+                <label className="text-xs font-medium">Connections</label>
+                {syncConnections.length > 0 ? (
+                  <div className="space-y-1 max-h-40 overflow-y-auto">
+                    {syncConnections.map((c: any) => {
+                      const sel = syncSelectedConns.includes(c.id)
+                      return (
+                        <button key={c.id} onClick={() => setSyncSelectedConns(prev => sel ? prev.filter(id => id !== c.id) : [...prev, c.id])}
+                          className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left transition-all ${sel ? "border-[#0052CC] bg-[#0052CC]/10" : "border-border hover:bg-muted/30"}`}>
+                          <div className={`h-4 w-4 rounded border flex items-center justify-center ${sel ? "border-[#0052CC] bg-[#0052CC]" : "border-muted-foreground/30"}`}>
+                            {sel && <span className="text-white text-[8px]">✓</span>}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-medium truncate">{c.name}</div>
+                            <div className="text-[10px] text-muted-foreground">{(c.sub_type || "").toUpperCase()} · {c.host || c.endpoint || ""}</div>
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">No connections. Add from Database page.</p>
+                )}
+              </div>
+            )}
+
+            {syncMode === "scheduled" && (
+              <div className="space-y-2">
+                <label className="text-xs font-medium">Schedule</label>
+                <div className="flex gap-2">
+                  <input type="date" value={syncStartDate} onChange={e => setSyncStartDate(e.target.value)} className="rounded-md border border-border bg-background px-2 py-1.5 text-xs flex-1" />
+                  <input type="time" value={syncStartTime} onChange={e => setSyncStartTime(e.target.value)} className="rounded-md border border-border bg-background px-2 py-1.5 text-xs w-24" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">Every</span>
+                  <input type="number" min={1} value={syncIntervalValue} onChange={e => setSyncIntervalValue(parseInt(e.target.value) || 1)} className="rounded-md border border-border bg-background px-2 py-1.5 text-xs w-16" />
+                  <select value={syncIntervalUnit} onChange={e => setSyncIntervalUnit(e.target.value)} className="rounded-md border border-border bg-background px-2 py-1.5 text-xs">
+                    <option value="hours">Hours</option>
+                    <option value="days">Days</option>
+                    <option value="weeks">Weeks</option>
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {syncMode === "real-time" && syncSelectedConns.length > 0 && (
+              <div className="rounded-md bg-purple-500/10 px-3 py-2 text-xs text-purple-400">
+                {syncSelectedConns.length} connection(s) monitored every 60s
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-2">
+              <button onClick={() => setSyncModalOpen(false)} className="flex-1 rounded-md border border-border px-3 py-2 text-xs text-muted-foreground hover:bg-muted/50">Cancel</button>
+              <button onClick={saveSyncSettings} disabled={syncSaving} className="flex-1 rounded-md bg-[#0052CC] px-3 py-2 text-xs text-white hover:bg-[#003D99] disabled:opacity-50">
+                {syncSaving ? "Saving..." : "Save"}
+              </button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+</div>
   )
 }
