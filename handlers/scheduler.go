@@ -398,8 +398,10 @@ func getConnectionChecksum(conn Connection) string {
 
 	// === DATABASES ===
 	case "postgresql", "supabase":
-		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-			conn.Host, conn.Port, conn.Username, conn.Password, conn.Database)
+		sslMode := "disable"
+		if conn.SubType == "supabase" || conn.SSL { sslMode = "require" }
+		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+			conn.Host, conn.Port, conn.Username, conn.Password, conn.Database, sslMode)
 		db, err := sql.Open("postgres", dsn)
 		if err != nil { return "" }
 		defer db.Close()
@@ -470,9 +472,15 @@ func getConnectionChecksum(conn Connection) string {
 		if conn.Endpoint == "" { return "" }
 		return httpChecksum(conn.Endpoint+"/v1/table", conn.APIKey, "Bearer")
 
-	// === CLOUD STORAGE ===
+	case "rest_api", "rest":
+		if conn.Endpoint == "" { return "" }
+		return httpChecksum(conn.Endpoint, conn.APIKey, "Bearer")
+
+	case "graphql":
+		if conn.Endpoint == "" { return "" }
+		return httpPostChecksum(conn.Endpoint, `{"query":"{ __schema { types { name } } }"}`, conn.APIKey)
+
 	case "google-drive", "google_drive":
-		// Google Drive - check via API
 		if conn.APIKey == "" { return "" }
 		return httpChecksum("https://www.googleapis.com/drive/v3/files?pageSize=100&orderBy=modifiedTime+desc&fields=files(id,modifiedTime)", conn.APIKey, "Bearer")
 
@@ -489,7 +497,6 @@ func getConnectionChecksum(conn Connection) string {
 			MaxKeys: aws.Int64(1000),
 		})
 		if err != nil { return "" }
-		// Hash: object count + total size + latest modified
 		totalSize := int64(0)
 		latestMod := ""
 		for _, obj := range result.Contents {
@@ -504,16 +511,7 @@ func getConnectionChecksum(conn Connection) string {
 		url := fmt.Sprintf("https://storage.googleapis.com/storage/v1/b/%s/o?maxResults=100", conn.Bucket)
 		return httpChecksum(url, conn.APIKey, "Bearer")
 
-	// === APIs ===
-	case "rest_api", "rest":
-		if conn.Endpoint == "" { return "" }
-		return httpChecksum(conn.Endpoint, conn.APIKey, "Bearer")
 
-	case "graphql":
-		if conn.Endpoint == "" { return "" }
-		// Send introspection query
-		body := `{"query":"{ __schema { types { name } } }"}`
-		return httpPostChecksum(conn.Endpoint, body, conn.APIKey)
 
 	default:
 		return ""
@@ -598,8 +596,10 @@ func fetchConnectionData(conn Connection, userID string) []string {
 
 	switch conn.SubType {
 	case "postgresql", "supabase":
-		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-			conn.Host, conn.Port, conn.Username, conn.Password, conn.Database)
+		sslMode := "disable"
+		if conn.SubType == "supabase" || conn.SSL { sslMode = "require" }
+		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+			conn.Host, conn.Port, conn.Username, conn.Password, conn.Database, sslMode)
 		tempDB, err := gorm.Open(gormpg.Open(dsn), &gorm.Config{})
 		if err != nil { log.Printf("❌ PG connect failed: %v", err); return nil }
 		sqlDB, _ := tempDB.DB()
@@ -652,6 +652,62 @@ func fetchConnectionData(conn Connection, userID string) []string {
 		for _, coll := range collections {
 			fid := exportMongoToCSV(ctx, db, coll, conn, userID)
 			if fid != "" { fileIDs = append(fileIDs, fid) }
+		}
+
+	case "snowflake":
+		if conn.Host == "" { return nil }
+		// Snowflake uses same SQL pattern as PostgreSQL
+		sslMode := "require"
+		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+			conn.Host, conn.Port, conn.Username, conn.Password, conn.Database, sslMode)
+		tempDB, err := gorm.Open(gormpg.Open(dsn), &gorm.Config{})
+		if err != nil { return nil }
+		sqlDB, _ := tempDB.DB()
+		defer sqlDB.Close()
+		rows, _ := sqlDB.Query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
+		if rows != nil {
+			var tables []string
+			for rows.Next() { var t string; rows.Scan(&t); tables = append(tables, t) }
+			rows.Close()
+			for _, table := range tables {
+				fid := exportTableToCSV(sqlDB, table, conn, userID)
+				if fid != "" { fileIDs = append(fileIDs, fid) }
+			}
+		}
+
+	case "databricks":
+		if conn.Endpoint == "" || conn.APIKey == "" { return nil }
+		// Databricks SQL via REST API
+		fid := fetchAPIToCSV(conn, userID)
+		if fid != "" { fileIDs = append(fileIDs, fid) }
+
+	case "google-drive", "google_drive":
+		if conn.APIKey == "" { return nil }
+		// List files and download CSVs
+		client := &http.Client{Timeout: 30 * time.Second}
+		req, _ := http.NewRequest("GET", "https://www.googleapis.com/drive/v3/files?pageSize=50&q=mimeType%3D'text/csv'&fields=files(id,name)", nil)
+		req.Header.Set("Authorization", "Bearer "+conn.APIKey)
+		resp, err := client.Do(req)
+		if err != nil { return nil }
+		defer resp.Body.Close()
+		var gResult struct { Files []struct { ID string `json:"id"`; Name string `json:"name"` } `json:"files"` }
+		json.NewDecoder(resp.Body).Decode(&gResult)
+		for _, f := range gResult.Files {
+			dlReq, _ := http.NewRequest("GET", "https://www.googleapis.com/drive/v3/files/"+f.ID+"?alt=media", nil)
+			dlReq.Header.Set("Authorization", "Bearer "+conn.APIKey)
+			dlResp, err := client.Do(dlReq)
+			if err != nil { continue }
+			fileID := uuid.New().String()[:16]
+			filename := fmt.Sprintf("sync_gdrive_%s_%s", time.Now().Format("20060102"), f.Name)
+			fpath := fmt.Sprintf("./uploads/%s_%s", fileID, filename)
+			file, _ := os.Create(fpath)
+			written, _ := io.Copy(file, dlResp.Body)
+			file.Close()
+			dlResp.Body.Close()
+			if written > 0 {
+				DB.Create(&UploadedFile{ID: fileID, Filename: filename, Path: fpath, Size: written, UserID: userID, CreatedAt: time.Now()})
+				fileIDs = append(fileIDs, fileID)
+			}
 		}
 
 	case "aws-s3", "aws_s3":

@@ -576,8 +576,8 @@ func TestConnectionHandler(w http.ResponseWriter, r *http.Request) {
 
 	switch input.SubType {
 	case "postgresql", "supabase":
-		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-			input.Host, input.Port, input.Username, input.Password, input.Database)
+		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+			input.Host, input.Port, input.Username, input.Password, input.Database, func() string { if input.SubType == "supabase" || input.SSL { return "require" }; return "disable" }())
 		testDB, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 		if err != nil {
 			success = false
@@ -813,7 +813,33 @@ func TestConnectionHandler(w http.ResponseWriter, r *http.Request) {
 			message = "Access key and bucket required"
 		}
 
-	case "databricks":
+	
+case "gcs":
+if input.APIKey != "" && input.Bucket != "" {
+client := &http.Client{Timeout: 10 * time.Second}
+url := fmt.Sprintf("https://storage.googleapis.com/storage/v1/b/%s", input.Bucket)
+req, _ := http.NewRequest("GET", url, nil)
+req.Header.Set("Authorization", "Bearer "+input.APIKey)
+resp, err := client.Do(req)
+if err != nil {
+success = false
+message = "Connection failed: " + err.Error()
+} else {
+resp.Body.Close()
+if resp.StatusCode == 200 {
+success = true
+message = "GCS connection successful"
+} else {
+success = false
+message = fmt.Sprintf("GCS returned status %d", resp.StatusCode)
+}
+}
+} else {
+success = false
+message = "API key and bucket required"
+}
+
+case "databricks":
 		if input.Endpoint != "" && input.APIKey != "" {
 			client := &http.Client{Timeout: 10 * time.Second}
 			req, _ := http.NewRequest("GET", input.Endpoint+"/api/2.0/clusters/list", nil)
@@ -917,8 +943,8 @@ func ListTablesHandler(w http.ResponseWriter, r *http.Request) {
 
 	switch conn.SubType {
 	case "postgresql", "supabase":
-		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-			conn.Host, conn.Port, conn.Username, conn.Password, conn.Database)
+		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+			conn.Host, conn.Port, conn.Username, conn.Password, conn.Database, func() string { if conn.SubType == "supabase" || conn.SSL { return "require" }; return "disable" }())
 		tempDB, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 		if err != nil {
 			http.Error(w, "Connection failed: "+err.Error(), http.StatusInternalServerError)
@@ -1010,7 +1036,55 @@ func ListTablesHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		tables = collections
 
-	default:
+	case "databricks":
+if conn.Endpoint != "" && conn.APIKey != "" {
+tables = append(tables, "databricks_data")
+}
+
+case "pinecone":
+if conn.Endpoint != "" && conn.APIKey != "" {
+tables = append(tables, "pinecone_index")
+}
+
+case "weaviate":
+if conn.Endpoint != "" {
+tables = append(tables, "weaviate_objects")
+}
+
+case "chroma":
+if conn.Endpoint != "" {
+tables = append(tables, "chroma_collections")
+}
+
+case "lancedb":
+if conn.Endpoint != "" {
+tables = append(tables, "lancedb_tables")
+}
+
+case "rest_api":
+if conn.Endpoint != "" {
+tables = append(tables, "api_data")
+}
+
+case "graphql":
+if conn.Endpoint != "" {
+tables = append(tables, "graphql_data")
+}
+
+case "google_drive", "google-drive":
+tables = append(tables, "drive_files")
+
+case "aws_s3", "aws-s3":
+if conn.APIKey != "" && conn.Bucket != "" {
+tables = append(tables, "s3_objects")
+}
+
+case "gcs":
+if conn.APIKey != "" && conn.Bucket != "" {
+tables = append(tables, "gcs_objects")
+}
+
+default:
 		http.Error(w, "Unsupported database type", http.StatusBadRequest)
 		return
 	}
@@ -1057,8 +1131,8 @@ func ExportTableHandler(w http.ResponseWriter, r *http.Request) {
 
 	switch conn.SubType {
 	case "postgresql", "supabase":
-		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-			conn.Host, conn.Port, conn.Username, conn.Password, conn.Database)
+		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+			conn.Host, conn.Port, conn.Username, conn.Password, conn.Database, func() string { if conn.SubType == "supabase" || conn.SSL { return "require" }; return "disable" }())
 		tempDB, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 		if err != nil {
 			http.Error(w, "Connection failed: "+err.Error(), http.StatusInternalServerError)
