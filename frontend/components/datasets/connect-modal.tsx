@@ -143,8 +143,9 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
     } else if (databaseProviders.find(p => p.id === selectedProvider)) {
       connection.type = "database"
       connection.subType = selectedProvider || undefined
-      if (selectedProvider === "postgresql" || selectedProvider === "mysql" || selectedProvider === "supabase" || selectedProvider === "mongodb") {
-        connection.config = { host: dbHost, port: dbPort, database: dbName, username: dbUser, password: dbPassword }
+      const isRelationalDB = ["postgresql", "mysql", "supabase", "mongodb", "snowflake", "databricks"].includes(selectedProvider || "")
+      if (isRelationalDB) {
+        connection.config = { host: dbHost, port: dbPort, database: dbName, username: dbUser, password: dbPassword, ssl: selectedProvider === "supabase" }
       } else {
         connection.config = { apiKey, endpoint }
       }
@@ -171,8 +172,10 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
     const cloudProvider = cloudProviders.find(p => p.id === selectedProvider)
 
     if (dbProvider) {
+      const isRelational = ["postgresql", "mysql", "supabase", "mongodb", "snowflake", "databricks"].includes(selectedProvider || "")
+      const isVectorDB = ["pinecone", "weaviate", "chroma", "lancedb"].includes(selectedProvider || "")
       return (
-        <div className="space-y-4 animate-in fade-in-50 duration-200">
+        <div className="space-y-3 animate-in fade-in-50 duration-200">
           <div className="flex items-center gap-3 pb-3 border-b border-border">
             <Button variant="ghost" size="icon" onClick={() => setSelectedProvider(null)} className="h-8 w-8">
               <ArrowLeft className="h-4 w-4" />
@@ -184,46 +187,73 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
           </div>
           
           <div className="space-y-2">
-            <Label htmlFor="db-name" className="text-foreground">Connection Name</Label>
-            <Input
-              id="db-name"
-              value={connectionName}
-              onChange={(e) => setConnectionName(e.target.value)}
-              placeholder={`My ${dbProvider.name}`}
-              className="bg-card border-border text-foreground"
-            />
+            <Label className="text-foreground text-xs">Connection Name</Label>
+            <Input value={connectionName} onChange={(e) => setConnectionName(e.target.value)}
+              placeholder={`My ${dbProvider.name}`} className="bg-card border-border text-foreground" />
           </div>
-          
-          <div className="space-y-2">
-            <Label htmlFor="db-api-key" className="text-foreground">API Key / Connection String</Label>
-            <Input
-              id="db-api-key"
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="Enter your API key or connection string"
-              className="bg-card border-border text-foreground"
-            />
-          </div>
-          
-          <div className="space-y-2">
-            <Label htmlFor="db-endpoint" className="text-foreground">Host / Endpoint</Label>
-            <Input
-              id="db-endpoint"
-              value={endpoint}
-              onChange={(e) => setEndpoint(e.target.value)}
-              placeholder={selectedProvider === "pinecone" ? "us-east-1" : "db.example.com:5432"}
-              className="bg-card border-border text-foreground"
-            />
-          </div>
-          
-          <Button 
-            onClick={() => handleConnect("database")}
-            disabled={!connectionName || !apiKey}
-            className="w-full bg-[#0052CC] hover:bg-[#003D99] text-white"
-          >
-            Connect {dbProvider.name}
-          </Button>
+
+          {isRelational ? (
+            <>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="col-span-2 space-y-1">
+                  <Label className="text-foreground text-xs">Host</Label>
+                  <Input value={dbHost} onChange={(e) => setDbHost(e.target.value)}
+                    placeholder={selectedProvider === "supabase" ? "db.xxxx.supabase.co" : "localhost"} className="bg-card border-border text-foreground" />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-foreground text-xs">Port</Label>
+                  <Input value={dbPort} onChange={(e) => setDbPort(e.target.value)}
+                    placeholder={selectedProvider === "mongodb" ? "27017" : selectedProvider === "mysql" ? "3306" : "5432"} className="bg-card border-border text-foreground" />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-foreground text-xs">Database</Label>
+                <Input value={dbName} onChange={(e) => setDbName(e.target.value)}
+                  placeholder={selectedProvider === "supabase" ? "postgres" : "mydb"} className="bg-card border-border text-foreground" />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-foreground text-xs">Username</Label>
+                  <Input value={dbUser} onChange={(e) => setDbUser(e.target.value)}
+                    placeholder={selectedProvider === "supabase" ? "postgres" : "user"} className="bg-card border-border text-foreground" />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-foreground text-xs">Password</Label>
+                  <Input type="password" value={dbPassword} onChange={(e) => setDbPassword(e.target.value)}
+                    placeholder="••••••••" className="bg-card border-border text-foreground" />
+                </div>
+              </div>
+              {(selectedProvider === "supabase") && (
+                <div className="flex items-center gap-2">
+                  <input type="checkbox" id="ssl-toggle" checked={true} readOnly className="rounded" />
+                  <Label htmlFor="ssl-toggle" className="text-xs text-muted-foreground">SSL Required (Supabase)</Label>
+                </div>
+              )}
+              <Button onClick={() => handleConnect("database")}
+                disabled={!connectionName || !dbHost || !dbName}
+                className="w-full bg-[#0052CC] hover:bg-[#003D99] text-white">
+                Connect {dbProvider.name}
+              </Button>
+            </>
+          ) : (
+            <>
+              <div className="space-y-1">
+                <Label className="text-foreground text-xs">{isVectorDB ? "API Key" : "API Key / Token"}</Label>
+                <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)}
+                  placeholder="Enter your API key" className="bg-card border-border text-foreground" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-foreground text-xs">Endpoint URL</Label>
+                <Input value={endpoint} onChange={(e) => setEndpoint(e.target.value)}
+                  placeholder={selectedProvider === "pinecone" ? "https://index-xxx.svc.xxx.pinecone.io" : "https://your-endpoint.com"} className="bg-card border-border text-foreground" />
+              </div>
+              <Button onClick={() => handleConnect("database")}
+                disabled={!connectionName || !apiKey}
+                className="w-full bg-[#0052CC] hover:bg-[#003D99] text-white">
+                Connect {dbProvider.name}
+              </Button>
+            </>
+          )}
         </div>
       )
     }

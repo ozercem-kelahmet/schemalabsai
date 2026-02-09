@@ -392,7 +392,7 @@ export function DatasetGrid() {
             }
           } else if (connection.type === "database") {
             try {
-              const isRelationalDB = ["postgresql", "mysql", "supabase", "mongodb"].includes(connection.subType || "")
+              const isRelationalDB = ["postgresql", "mysql", "supabase", "mongodb", "snowflake", "databricks"].includes(connection.subType || "")
               toast.loading("Connecting to database...")
               await api.createConnection({
                 name: connection.name,
@@ -403,7 +403,8 @@ export function DatasetGrid() {
                   port: parseInt(connection.config.port) || 5432,
                   database: connection.config.database || "",
                   username: connection.config.username || "",
-                  password: connection.config.password || ""
+                  password: connection.config.password || "",
+                  ssl: connection.config.ssl || false
                 } : {
                   api_key: connection.config.apiKey || "",
                   endpoint: connection.config.endpoint || ""
