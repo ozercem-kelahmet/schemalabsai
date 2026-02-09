@@ -80,6 +80,7 @@ export default function ConfigurationPage() {
   const [creatingKey, setCreatingKey] = useState(false)
 
   const [createEndpointModalOpen, setCreateEndpointModalOpen] = useState(false)
+  const [deleteNotification, setDeleteNotification] = useState<{type: "key" | "endpoint", name: string} | null>(null)
   const [newEndpointName, setNewEndpointName] = useState("")
   const [newEndpointPath, setNewEndpointPath] = useState("")
   const [newEndpointModel, setNewEndpointModel] = useState("")
