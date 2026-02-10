@@ -16,7 +16,7 @@ git push origin main || true
 
 # 2. SSHD restart (SCP sorunlarını önlemek için)
 echo "🔄 Restarting SSHD..."
-ssh $SERVER "sudo systemctl restart sshd"
+ssh $SERVER "sudo systemctl restart sshd 2>/dev/null || sudo systemctl restart ssh 2>/dev/null || true"
 sleep 2
 
 # 3. Dosyaları yolla (scp dene, başarısız olursa rsync)
