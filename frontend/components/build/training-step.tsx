@@ -12,7 +12,7 @@ interface TrainingStepProps {
   currentMetrics: TrainingMetrics | null
   history: TrainingMetrics[]
   logs: string[]
-  status: "initializing" | "training" | "paused" | "completing"
+  status: "idle" | "initializing" | "training" | "paused" | "completing"
   elapsedTime: number
 }
 

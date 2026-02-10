@@ -11,7 +11,7 @@ import type { Dataset, SyncMode, TrainingMetrics, EvaluationMetrics, Model } fro
 import { Check } from "lucide-react"
 
 type Step = "config" | "training" | "evaluate"
-type TrainingStatus = "initializing" | "training" | "paused" | "completing"
+type TrainingStatus = "idle" | "initializing" | "training" | "paused" | "completing"
 
 const steps = [
   { id: "config", label: "Configure" },
