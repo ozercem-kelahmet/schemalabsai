@@ -53,25 +53,13 @@ export default function RegisterPage() {
       return
     }
 
-
     setIsLoading(true)
-    try {
-      const res = await fetch("/api/auth/send-verification", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        setError(data.error || "Failed to send verification code")
-        setIsLoading(false)
-        return
-      }
+    // Simulate sending verification email
+    setTimeout(() => {
+      setIsLoading(false)
       setStep("verify")
-    } catch {
-      setError("Something went wrong")
-    }
-    setIsLoading(false)  }
+    }, 1500)
+  }
 
   const handleVerificationInput = (index: number, value: string) => {
     if (value.length > 1) return
@@ -102,46 +90,30 @@ export default function RegisterPage() {
     }
 
     setIsLoading(true)
-    try {
-      const res = await fetch("/api/auth/verify-signup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, code, name, password }),
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        setError(data.error || "Verification failed")
-        setIsLoading(false)
-        return
-      }
-      if (data.token) {
-        document.cookie = `session=${data.token}; path=/; max-age=${7 * 24 * 60 * 60}`
-      }
-      window.location.href = "/"
-    } catch {
-      setError("Something went wrong")
-    }
-    setIsLoading(false)
+    // Simulate verification
+    setTimeout(() => {
+      setIsLoading(false)
+      router.push("/")
+    }, 1500)
   }
 
   const handleGoogleSignUp = () => {
     setIsLoading(true)
-    window.location.href = "/api/google/login"
+    // Simulate Google sign up
+    setTimeout(() => {
+      setIsLoading(false)
+      router.push("/")
+    }, 1500)
   }
-  const handleResendCode = async () => {
+
+  const handleResendCode = () => {
     setIsLoading(true)
-    try {
-      await fetch("/api/auth/send-verification", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      })
+    setTimeout(() => {
+      setIsLoading(false)
       setVerificationCode(["", "", "", "", "", ""])
-    } catch {
-      setError("Failed to resend code")
-    }
-    setIsLoading(false)
+    }, 1000)
   }
+
   return (
     <div className="relative min-h-screen w-full overflow-hidden bg-background">
       {/* Grid Background */}
@@ -154,7 +126,7 @@ export default function RegisterPage() {
       <div className="relative flex min-h-screen flex-col items-center justify-center px-4 py-8">
         {/* Logo */}
         <Link href="/" className="mb-8">
-          <Image unoptimized
+          <Image
             src={isDark ? "/images/schemalabs-light.png" : "/images/schemalabs-dark.png"}
             alt="SchemaLabs"
             width={180}
@@ -362,7 +334,6 @@ export default function RegisterPage() {
                   We've sent a verification code to
                 </p>
                 <p className="mt-1 text-sm font-medium text-foreground">{email}</p>
-                <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">If you don't see it, please check your spam or junk folder</p>
               </div>
 
               {error && (
@@ -430,9 +401,9 @@ export default function RegisterPage() {
         {/* Terms */}
         <p className="mt-4 max-w-sm text-center text-xs text-muted-foreground">
           By creating an account, you agree to our{" "}
-          <Link href="https://www.schemalabs.ai/terms" target="_blank" className="underline hover:text-foreground">Terms of Service</Link>
+          <Link href="/terms" className="underline hover:text-foreground">Terms of Service</Link>
           {" "}and{" "}
-          <Link href="https://www.schemalabs.ai/privacy" target="_blank" className="underline hover:text-foreground">Privacy Policy</Link>
+          <Link href="/privacy" className="underline hover:text-foreground">Privacy Policy</Link>
         </p>
       </div>
     </div>
