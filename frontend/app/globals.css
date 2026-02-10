@@ -167,3 +167,17 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Recharts Tooltip Dark Theme */
+.recharts-tooltip-wrapper .recharts-default-tooltip {
+  background-color: hsl(var(--card)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  border-radius: 8px !important;
+}
+.recharts-tooltip-wrapper .recharts-default-tooltip .recharts-tooltip-label {
+  color: hsl(var(--foreground)) !important;
+}
+.recharts-tooltip-wrapper .recharts-default-tooltip .recharts-tooltip-item {
+  color: hsl(var(--foreground)) !important;
+}
+

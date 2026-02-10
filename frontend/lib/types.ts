@@ -1,7 +1,7 @@
 // Core types for SchemaLabs
 
-export type DataSource = "databricks" | "supabase" | "api" | "google-drive" | "postgresql" | "mongodb" | "snowflake" | "pinecone" | "gcs" | "aws-s3" | "upload"
-export type Vertical = "finance" | "healthcare" | "e-commerce" | "marketing" | "hr" | "operations" | "sports"
+export type DataSource = "uploaded-files" | "databricks" | "supabase" | "api" | "google-drive" | "postgresql" | "mysql" | "mongodb" | "snowflake" | "pinecone" | "weaviate" | "chroma" | "lancedb" | "gcs" | "aws-s3" | "graphql" | "rest" | "upload" | "generated"
+export type Vertical = "finance" | "healthcare" | "e-commerce" | "marketing" | "hr" | "operations"
 export type Complexity = "simple" | "medium" | "advanced"
 export type RowCount = "small" | "medium" | "large"
 
@@ -128,7 +128,7 @@ export interface EvaluationMetrics {
 }
 
 // Playground types
-export type LLMProvider = "gpt-5" | "claude" | "gemini"
+export type LLMProvider = "claude" | "gpt-4" | "gemini" | "llama"
 
 export interface LLMOption {
   id: LLMProvider

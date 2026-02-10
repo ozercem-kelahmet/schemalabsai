@@ -135,27 +135,38 @@ export function EvaluateStep({ metrics, model, trainingTime, onTrainAgain, onOpe
   const handleExport = async () => {
     setIsExporting(true)
     
-    // Simulate export process
-    await new Promise(resolve => setTimeout(resolve, 2000))
-    
-    setIsExporting(false)
-    setExportSuccess(true)
-    
-    // If download, trigger a fake download
-    if (selectedDestination === "download") {
-      const format = exportFormats.find(f => f.id === selectedFormat)
-      const fileName = `${model.name.toLowerCase().replace(/\s+/g, '-')}${format?.extension || '.bin'}`
-      
-      // Create a dummy file for demo purposes
-      const blob = new Blob([JSON.stringify({ model: model.name, format: selectedFormat }, null, 2)], { type: 'application/octet-stream' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = fileName
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
+    try {
+      if (selectedDestination === "download") {
+        // Real download from backend
+const response = await fetch(`/api/models/finetuned/download?id=${model.id}`, {
+            credentials: 'include'
+        })
+        
+        if (!response.ok) {
+          throw new Error('Download failed')
+        }
+        
+        const blob = await response.blob()
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `${model.name.toLowerCase().replace(/\s+/g, '-')}.pt`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+        
+        setExportSuccess(true)
+      } else {
+        // Other destinations not implemented yet
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        setExportSuccess(true)
+      }
+    } catch (error) {
+      console.error('Export failed:', error)
+      alert('Export failed. Please try again.')
+    } finally {
+      setIsExporting(false)
     }
     
     // Reset after showing success
@@ -229,7 +240,7 @@ export function EvaluateStep({ metrics, model, trainingTime, onTrainAgain, onOpe
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground">Accuracy</p>
             <p className="mt-1 font-mono text-2xl font-semibold text-emerald-500">
-              {(metrics.accuracy * 100).toFixed(1)}%
+              {(metrics.accuracy > 1 ? metrics.accuracy.toFixed(1) : (metrics.accuracy * 100).toFixed(1))}%
             </p>
           </CardContent>
         </Card>
@@ -237,21 +248,21 @@ export function EvaluateStep({ metrics, model, trainingTime, onTrainAgain, onOpe
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground">Precision</p>
             <p className="mt-1 font-mono text-2xl font-semibold text-[#2684FF]">
-              {(metrics.precision * 100).toFixed(1)}%
+              {(metrics.precision > 1 ? metrics.precision.toFixed(1) : (metrics.precision * 100).toFixed(1))}%
             </p>
           </CardContent>
         </Card>
         <Card className="border-border bg-card">
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground">Recall</p>
-            <p className="mt-1 font-mono text-2xl font-semibold text-[#2684FF]">{(metrics.recall * 100).toFixed(1)}%</p>
+            <p className="mt-1 font-mono text-2xl font-semibold text-[#2684FF]">{(metrics.recall > 1 ? metrics.recall.toFixed(1) : (metrics.recall * 100).toFixed(1))}%</p>
           </CardContent>
         </Card>
         <Card className="border-border bg-card">
           <CardContent className="p-4">
             <p className="text-xs text-muted-foreground">F1 Score</p>
             <p className="mt-1 font-mono text-2xl font-semibold text-[#2684FF]">
-              {(metrics.f1Score * 100).toFixed(1)}%
+              {(metrics.f1Score > 1 ? metrics.f1Score.toFixed(1) : (metrics.f1Score * 100).toFixed(1))}%
             </p>
           </CardContent>
         </Card>

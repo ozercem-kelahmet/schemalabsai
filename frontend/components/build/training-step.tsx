@@ -14,9 +14,6 @@ interface TrainingStepProps {
   logs: string[]
   status: "initializing" | "training" | "paused" | "completing"
   elapsedTime: number
-  onPause: () => void
-  onResume: () => void
-  onStop: () => void
 }
 
 export function TrainingStep({
@@ -25,9 +22,9 @@ export function TrainingStep({
   logs,
   status,
   elapsedTime,
-  onPause,
-  onResume,
-  onStop,
+  
+  
+  
 }: TrainingStepProps) {
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60)
@@ -75,39 +72,6 @@ export function TrainingStep({
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
-              {status === "training" && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={onPause}
-                  className="border-border bg-transparent text-foreground hover:bg-accent hover:text-accent-foreground"
-                >
-                  <Pause className="mr-2 h-4 w-4" />
-                  Pause
-                </Button>
-              )}
-              {status === "paused" && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={onResume}
-                  className="border-border bg-transparent text-foreground hover:bg-accent hover:text-accent-foreground"
-                >
-                  <Play className="mr-2 h-4 w-4" />
-                  Resume
-                </Button>
-              )}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={onStop}
-                className="border-red-500/30 bg-transparent text-red-500 hover:bg-red-500/10 hover:text-red-400"
-              >
-                <Square className="mr-2 h-4 w-4" />
-                Stop
-              </Button>
-            </div>
           </div>
 
           <div className="mt-6">

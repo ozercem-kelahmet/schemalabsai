@@ -1,49 +1,27 @@
-import type { Metadata, Viewport } from "next"
 import type React from "react"
-import { Analytics } from "@vercel/analytics/next"
+import type { Metadata, Viewport } from "next"
+import { Geist, Geist_Mono } from "next/font/google"
+import { ThemeProvider } from "@/components/theme-provider"
+import { QueryStoreProvider } from "@/lib/query-store"
+import { Providers } from "@/components/providers"
+import { AuthProvider } from "@/lib/auth"
 import "./globals.css"
 
-import { Geist, Geist_Mono, Geist as V0_Font_Geist, Geist_Mono as V0_Font_Geist_Mono } from 'next/font/google'
-
-// Initialize fonts
-const _geist = V0_Font_Geist({ subsets: ['latin'], weight: ["100","200","300","400","500","600","700","800","900"] })
-const _geistMono = V0_Font_Geist_Mono({ subsets: ['latin'], weight: ["100","200","300","400","500","600","700","800","900"] })
-
-const geistSans = Geist({ subsets: ["latin"] })
-export const viewport: Viewport = {
-  width: "device-width",
-  initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
-  themeColor: [
-    { media: "(prefers-color-scheme: dark)", color: "#0A0A0B" },
-    { media: "(prefers-color-scheme: light)", color: "#f8f9fa" },
-  ],
-}
+const geist = Geist({ subsets: ["latin"] })
+const geistMono = Geist_Mono({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: "SchemaLabs - Build AI on Tabular Data",
-  description: "Build AI models directly on tabular data without brittle preprocessing",
+  title: "Schema Console",
+  description: "End-to-end transformer based neural network that brings table-native understanding to AI development.",
+  generator: "Schema Labs",
   icons: {
-    icon: [
-      {
-        url: "/icon-darkbracket-32x32.svg",
-        type: "image/svg+xml",
-        media: "(prefers-color-scheme: light)",
-      },
-      {
-        url: "/icon-lightbracket-32x32.svg",
-        type: "image/svg+xml",
-        media: "(prefers-color-scheme: dark)",
-      },
-      {
-        url: "/icon.svg",
-        type: "image/svg+xml",
-      },
-    ],
-    apple: "/icon.svg",
+    icon: "/favicon.svg",
+    apple: "/favicon.svg",
   },
-    generator: 'v0.app'
+}
+
+export const viewport: Viewport = {
+  themeColor: "#0A0A0B",
 }
 
 export default function RootLayout({
@@ -52,13 +30,17 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" className="dark" suppressHydrationWarning>
-      <body
-        className={`font-sans antialiased bg-[#0A0A0B] text-white ${geistSans.className}`}
-        suppressHydrationWarning
-      >
-        {children}
-        <Analytics />
+    <html lang="en" suppressHydrationWarning>
+      <body className={`font-sans antialiased ${geist.className}`}>
+        <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
+          <Providers>
+            <AuthProvider>
+              <QueryStoreProvider>
+                {children}
+              </QueryStoreProvider>
+            </AuthProvider>
+          </Providers>
+        </ThemeProvider>
       </body>
     </html>
   )
