@@ -357,8 +357,8 @@ export default function UsagePage() {
   // Chart data from real models
   const modelUsageData = models.slice(0, 3).map(m => ({
     name: m.name.length > 20 ? m.name.slice(0, 20) + "..." : m.name,
-    queries: queries.filter(q => q.model_id === m.id).length * 100 + Math.floor(Math.random() * 500),
-    apiCalls: queries.filter(q => q.model_id === m.id).length * 200 + Math.floor(Math.random() * 1000),
+    queries: queries.filter(q => q.model_id === m.id).length,
+    apiCalls: queries.filter(q => q.model_id === m.id).length,
     credits: ((m.epochs || 5) * 0.5 + queries.filter(q => q.model_id === m.id).length * 0.12).toFixed(1)
   }))
 
@@ -370,8 +370,8 @@ export default function UsagePage() {
     const dayEvents = usageEvents.filter(e => e.date === dateStr)
     return {
       date: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-      credits: dayEvents.reduce((s, e) => s + e.credits, 0) || Math.random() * 5 + 8,
-      tokens: dayEvents.reduce((s, e) => s + e.baseTokens, 0) || Math.floor(Math.random() * 30000) + 40000
+      credits: dayEvents.reduce((s, e) => s + e.credits, 0),
+      tokens: dayEvents.reduce((s, e) => s + e.baseTokens, 0)
     }
   })
 
@@ -384,11 +384,11 @@ export default function UsagePage() {
   const total = queryCount + modelCount + apiCount + endpointCount + dataGenCount || 1
 
   const usageByKind = [
-    { name: "Queries", value: Math.round(queryCount / total * 100) || 35, color: "#0052CC" },
-    { name: "Model Building", value: Math.round(modelCount / total * 100) || 25, color: "#2684FF" },
-    { name: "API Calls", value: Math.round(apiCount / total * 100) || 18, color: "#4C9AFF" },
-    { name: "Endpoints", value: Math.round(endpointCount / total * 100) || 10, color: "#B3D4FF" },
-    { name: "Data Generation", value: Math.round(dataGenCount / total * 100) || 12, color: "#7C3AED" },
+    { name: "Queries", value: Math.round(queryCount / total * 100), color: "#0052CC" },
+    { name: "Model Building", value: Math.round(modelCount / total * 100), color: "#2684FF" },
+    { name: "API Calls", value: Math.round(apiCount / total * 100), color: "#4C9AFF" },
+    { name: "Endpoints", value: Math.round(endpointCount / total * 100), color: "#B3D4FF" },
+    { name: "Data Generation", value: Math.round(dataGenCount / total * 100), color: "#7C3AED" },
   ]
 
   const getEventBadge = (kind: string) => {
