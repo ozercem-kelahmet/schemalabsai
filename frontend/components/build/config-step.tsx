@@ -125,20 +125,33 @@ export function ConfigStep({
         }
       })
       
-      const connDatasets: Dataset[] = connections.map((c: any) => ({
-        id: c.id,
-        name: c.name,
-        description: `${c.sub_type || c.type} connection`,
-        source: (c.sub_type === "postgresql" ? "postgresql" : c.sub_type === "mongodb" ? "mongodb" : c.sub_type || "api") as DataSource,
-        vertical: "" as Vertical,
-        complexity: "medium" as Complexity,
-        rowCount: "medium" as RowCount,
-        rows: 0,
-        columns: 0,
-        schema: [],
-        sampleData: [],
-        syncStatus: "synced" as const,
-      }))
+      const connDatasets: Dataset[] = []
+      for (const c of connections) {
+        let totalRows = 0
+        let totalCols = 0
+        let schemaItems: any[] = []
+        try {
+          const tablesResp = await api.listTables(c.id)
+          const tables = tablesResp.table_details || tablesResp.tables || []
+          totalRows = tables.reduce((sum: number, t: any) => sum + (t.rows || 0), 0)
+          totalCols = tables.length > 0 ? (tables[0].columns || 0) : 0
+          schemaItems = tables.map((t: any) => ({ name: t.name, type: "string" as const, description: `${t.rows} rows, ${t.columns} cols` }))
+        } catch {}
+        connDatasets.push({
+          id: c.id,
+          name: c.name,
+          description: `${c.sub_type || c.type} connection`,
+          source: (c.sub_type === "postgresql" ? "postgresql" : c.sub_type === "mongodb" ? "mongodb" : c.sub_type || "api") as DataSource,
+          vertical: "" as Vertical,
+          complexity: (totalCols > 25 ? "advanced" : totalCols > 10 ? "medium" : "simple") as Complexity,
+          rowCount: (totalRows > 10000 ? "large" : totalRows > 1000 ? "medium" : "small") as RowCount,
+          rows: totalRows,
+          columns: totalCols,
+          schema: schemaItems,
+          sampleData: [],
+          syncStatus: "synced" as const,
+        })
+      }
       
       const datasets = [...fileDatasets, ...connDatasets]
       setAllDatasets(datasets)
