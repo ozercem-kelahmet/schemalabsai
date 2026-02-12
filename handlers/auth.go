@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+"net"
 	"bytes"
 	"io"
 	"net/http"
@@ -954,13 +955,18 @@ func ListTablesHandler(w http.ResponseWriter, r *http.Request) {
 
 	switch conn.SubType {
 	case "postgresql", "supabase":
-		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-			conn.Host, conn.Port, conn.Username, conn.Password, conn.Database, func() string {
-				if conn.SubType == "supabase" || conn.SSL {
-					return "require"
-				}
-				return "disable"
-			}())
+connHost := conn.Host
+if conn.SubType == "supabase" {
+if ips, err := net.LookupIP(conn.Host); err == nil {
+for _, ip := range ips {
+if ip.To4() != nil { connHost = ip.String(); break }
+}
+}
+}
+sslmode := "disable"
+if conn.SubType == "supabase" || conn.SSL { sslmode = "require" }
+dsn := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=%s",
+conn.Username, conn.Password, connHost, conn.Port, conn.Database, sslmode)
 		tempDB, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 		if err != nil {
 			http.Error(w, "Connection failed: "+err.Error(), http.StatusInternalServerError)
@@ -3172,7 +3178,7 @@ func UploadAvatarHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := r.ParseMultipartForm(5 << 20)
+	err := r.ParseMultipartForm(1 << 30)
 	if err != nil {
 		http.Error(w, "File too large (max 5MB)", http.StatusBadRequest)
 		return

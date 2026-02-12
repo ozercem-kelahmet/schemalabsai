@@ -81,20 +81,35 @@ export function DatasetGrid() {
     syncStatus: "outdated",
   }
         })
-        const connDatasets: Dataset[] = connections.map((c: any) => ({
-          id: c.id,
-          name: c.name,
-          description: `${c.sub_type || c.type} connection`,
-          source: (c.sub_type === "postgresql" ? "postgresql" : c.sub_type === "mongodb" ? "mongodb" : c.sub_type || "api") as DataSource,
-          vertical: "" as Vertical,
-          complexity: "medium" as Complexity,
-          rowCount: "medium" as RowCount,
-          rows: 0,
-          columns: 0,
-          schema: [],
-          sampleData: [],
+        const connDatasets: Dataset[] = []
+        for (const c of connections) {
+          let totalRows = 0
+          let totalCols = 0
+          let schemaDetails: any[] = []
+          try {
+            const tablesData = await api.listTables(c.id)
+            const details = tablesData.table_details || []
+            totalRows = details.reduce((sum: number, t: any) => sum + (t.rows || 0), 0)
+            totalCols = details.length > 0 ? details[0].columns || 0 : 0
+            schemaDetails = details.map((t: any) => ({ name: t.name, type: "string" as const, description: `${t.rows} rows, ${t.columns} cols` }))
+          } catch (e) {
+            console.log("listTables failed for", c.id, e)
+          }
+          connDatasets.push({
+            id: c.id,
+            name: c.name,
+            description: `${c.sub_type || c.type} connection`,
+            source: (c.sub_type === "postgresql" ? "postgresql" : c.sub_type === "mongodb" ? "mongodb" : c.sub_type || "api") as DataSource,
+            vertical: "" as Vertical,
+            complexity: "medium" as Complexity,
+            rowCount: totalRows > 10000 ? "large" as RowCount : totalRows > 1000 ? "medium" as RowCount : "small" as RowCount,
+            rows: totalRows,
+            columns: totalCols,
+            schema: schemaDetails,
+            sampleData: [],
             syncStatus: "synced",
-        }))
+          })
+        }
         setDatasets([...fileDatasets, ...connDatasets])
       } catch (e) {
         console.error("Load error:", e)
@@ -186,7 +201,12 @@ export function DatasetGrid() {
   const confirmDelete = async () => {
     if (!deleteTarget) return
     try {
-      await api.deleteFile(deleteTarget.id)
+      const isConnection = deleteTarget.syncStatus === "synced" || deleteTarget.syncStatus === "syncing"
+      if (isConnection) {
+        await api.deleteConnection(deleteTarget.id)
+      } else {
+        await api.deleteFile(deleteTarget.id)
+      }
       toast.success("Dataset deleted successfully")
       setDeleteTarget(null)
       window.location.reload()

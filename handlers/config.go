@@ -76,12 +76,20 @@ func GetBaseURL() string {
 
 // GetUploadLimitsHandler returns upload configuration
 func GetUploadLimitsHandler(w http.ResponseWriter, r *http.Request) {
-	maxFileSizeMB := getEnvInt("MAX_FILE_SIZE_MB", 50)
-	maxTotalStorageMB := getEnvInt("MAX_TOTAL_STORAGE_MB", 1024)
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"max_file_size_mb":     maxFileSizeMB,
-		"max_total_storage_mb": maxTotalStorageMB,
-	})
+userID := r.Header.Get("X-User-ID")
+maxFileSizeMB := getEnvInt("MAX_FILE_SIZE_MB", 50)
+maxTotalStorageMB := getEnvInt("MAX_TOTAL_STORAGE_MB", 1024)
+if userID != "" && DB != nil {
+if quota, err := GetOrCreateQuota(userID); err == nil && quota != nil {
+if quota.Plan == "alpha_unlimited" || quota.Plan == "limitless" || quota.Plan == "unlimited" {
+maxFileSizeMB = getEnvInt("MAX_FILE_SIZE_MB_UNLIMITED", 100)
+maxTotalStorageMB = int64(quota.StorageLimitMB)
+}
+}
+}
+w.Header().Set("Content-Type", "application/json")
+json.NewEncoder(w).Encode(map[string]interface{}{
+"max_file_size_mb":     maxFileSizeMB,
+"max_total_storage_mb": maxTotalStorageMB,
+})
 }

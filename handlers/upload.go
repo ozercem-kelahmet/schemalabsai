@@ -78,7 +78,14 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 
 	maxFileSizeMB := getEnvInt("MAX_FILE_SIZE_MB", 50)
-	maxFileSize := maxFileSizeMB * 1024 * 1024
+if userID != "" && DB != nil {
+if quota, err := GetOrCreateQuota(userID); err == nil && quota != nil {
+if quota.Plan == "alpha_unlimited" || quota.Plan == "limitless" || quota.Plan == "unlimited" {
+maxFileSizeMB = getEnvInt("MAX_FILE_SIZE_MB_UNLIMITED", 100)
+}
+}
+}
+maxFileSize := int64(maxFileSizeMB) * 1024 * 1024
 	if header.Size > maxFileSize {
 		http.Error(w, fmt.Sprintf("File too large. Max size: %dMB", maxFileSizeMB), http.StatusBadRequest)
 		return

@@ -132,8 +132,15 @@ return
 	responseBody, _ := io.ReadAll(resp.Body)
 	log.Printf("Flask response body: %s", string(responseBody))
 
+// Fix NaN/Infinity in JSON (invalid JSON values from Python)
+cleanBody := strings.ReplaceAll(string(responseBody), ": NaN", ": 0")
+cleanBody = strings.ReplaceAll(cleanBody, ":NaN", ":0")
+cleanBody = strings.ReplaceAll(cleanBody, "NaN", "0")
+cleanBody = strings.ReplaceAll(cleanBody, "Infinity", "0")
+cleanBody = strings.ReplaceAll(cleanBody, "-Infinity", "0")
+
 	var flaskResp map[string]interface{}
-	json.Unmarshal(responseBody, &flaskResp)
+json.Unmarshal([]byte(cleanBody), &flaskResp)
 	log.Printf("Flask parsed response: %+v", flaskResp)
 
 	now := time.Now()
