@@ -427,8 +427,8 @@ export function Sidebar() {
                 <button suppressHydrationWarning className="flex items-center gap-3 w-full rounded-lg p-1 -m-1 transition-colors hover:bg-white/5">
                   <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-[#2684FF] to-[#0052CC] text-sm font-medium text-white shrink-0">{getUserInitials()}</div>
                   <div className="flex-1 text-left min-w-0">
-                    <p className={cn("text-sm font-medium truncate", theme === "dark" ? "text-white" : "text-gray-900")}>{user?.name || "User"}</p>
-                    <p className={cn("text-xs truncate", theme === "dark" ? "text-gray-500" : "text-gray-500")}>{user?.email || "user@schemalabs.ai"}</p>
+                    <p className={cn("text-sm font-medium truncate", theme === "dark" ? "text-white" : "text-gray-900")}>{user?.name || ""}</p>
+                    <p className={cn("text-xs truncate", theme === "dark" ? "text-gray-500" : "text-gray-500")}>{user?.email || ""}</p>
                   </div>
                 </button>
               </DropdownMenuTrigger>
@@ -450,7 +450,7 @@ export function Sidebar() {
                 <button className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-[#2684FF] to-[#0052CC] text-sm font-medium text-white transition-opacity hover:opacity-80">{getUserInitials()}</button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="center" side="top" className="w-56 mb-2">
-                <div className="px-2 py-1.5 text-xs text-muted-foreground">{user?.email || "user@schemalabs.ai"}</div>
+                <div className="px-2 py-1.5 text-xs text-muted-foreground">{user?.email || ""}</div>
                 <Link href="/account"><DropdownMenuItem className="gap-3 cursor-pointer"><User className="h-4 w-4" />Account</DropdownMenuItem></Link>
                 <Link href="/billing"><DropdownMenuItem className="gap-3 cursor-pointer"><CreditCard className="h-4 w-4" />Billing</DropdownMenuItem></Link>
                 <Link href="/usage"><DropdownMenuItem className="gap-3 cursor-pointer"><BarChart3 className="h-4 w-4" />Usage</DropdownMenuItem></Link>
