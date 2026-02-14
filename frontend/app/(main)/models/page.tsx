@@ -3,10 +3,11 @@ import { toast } from "sonner"
 import { useState, useEffect, useMemo } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Search, Layers, Play, MoreHorizontal, Calendar, Hash, Activity, Zap, ChevronLeft, ChevronRight, Database, FileText, MessageSquare, Trash2 } from "lucide-react"
+import { Search, Layers, Play, MoreHorizontal, Calendar, Hash, Activity, Zap, ChevronLeft, ChevronRight, Database, FileText, MessageSquare, Trash2, CheckCircle2, TrendingUp } from "lucide-react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { SourceBadge } from "@/components/datasets/source-badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 
 interface FineTunedModel {
@@ -186,6 +187,7 @@ export default function ModelsPage() {
 
   useEffect(() => {
     fetchModels()
+    fetch("/api/connections", { credentials: "include" }).then(r => r.json()).then(d => setSyncConnections(d.connections || [])).catch(() => {})
   }, [])
 
   const fetchModels = async () => {
@@ -239,12 +241,28 @@ export default function ModelsPage() {
     } catch { return d }
   }
 
-  const cleanName = (s: string) => s.replace(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}[_.]?/, "").replace(/^\.csv_?/, "").replace(/_\d{8}_\d{6}/, "").replace(/\.csv$/, "")
+  const cleanName = (s: string) => s.replace(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}[_.]?/, "").replace(/^\.csv_?/, "").replace(/_\d{8}_\d{6}/, "").replace(/\.(csv|json|jsonl)$/, "")
   const getSourceNames = (m: FineTunedModel): string[] => {
-    if (m.source_file_names) return m.source_file_names.split(",").map(s => cleanName(s.trim())).filter(Boolean)
-    if (m.source_name) return [cleanName(m.source_name)]
-    if (m.source_files) return m.source_files.split(",").filter(Boolean).map((_, i) => "Dataset " + (i + 1))
-    return []
+    const names: string[] = []
+    // Add connection names
+    if (m.connection_ids) {
+      const connIds = m.connection_ids.split(",").filter(Boolean)
+      connIds.forEach(cid => {
+        const conn = syncConnections.find((c: any) => c.id === cid.trim())
+        names.push(conn ? conn.name || conn.sub_type : "Connection")
+      })
+    }
+    // Add file names
+    if (m.source_file_names) {
+      const fileNames = m.source_file_names.split(",").map(s => cleanName(s.trim())).filter(Boolean)
+      // Skip merged file entries that look like IDs
+      fileNames.forEach(n => { if (n && !n.match(/^[0-9]+$/) && n !== "0 files merged") names.push(n) })
+    } else if (m.source_name) {
+      names.push(cleanName(m.source_name))
+    } else if (m.source_files && !m.connection_ids) {
+      m.source_files.split(",").filter(Boolean).forEach((_, i) => names.push("Dataset " + (i + 1)))
+    }
+    return names.length > 0 ? names : ["Unknown source"]
   }
 
   const handleClick = async (m: FineTunedModel) => {
@@ -338,7 +356,7 @@ export default function ModelsPage() {
                   </div>
                   <div className="mt-3 flex items-center gap-2">
                     <span className="inline-flex items-center rounded-md bg-[#0052CC]/10 px-2 py-1 text-xs font-medium text-[#0052CC] dark:text-[#2684FF]">schema-v0</span>
-                    <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/10 px-2 py-1 text-xs font-medium text-emerald-500"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />Active</span>
+                    <span className="flex items-center gap-1.5 rounded-md bg-emerald-500/10 px-2 py-1 text-xs text-emerald-500"><CheckCircle2 className="h-3 w-3" />Active</span>
                     {m.sync_mode && m.sync_mode !== "manual" && (
                       <span className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium ${
                         m.sync_mode === "real-time" ? "bg-purple-500/10 text-purple-500" : "bg-amber-500/10 text-amber-500"
@@ -353,10 +371,28 @@ export default function ModelsPage() {
                       <span className="inline-flex items-center gap-1 rounded-md bg-red-500/10 px-2 py-1 text-xs font-medium text-red-500">Sync Error</span>
                     )}
                   </div>
-                  <div className="mt-4 grid grid-cols-3 gap-3 border-t border-border pt-4">
-                    <div><div className="text-[10px] text-muted-foreground uppercase">Accuracy</div><div className="mt-1 text-lg font-semibold text-emerald-500">{m.accuracy?.toFixed(1) || 0}%</div></div>
-                    <div><div className="text-[10px] text-muted-foreground uppercase">Epochs</div><div className="mt-1 text-lg font-semibold">{m.epochs || 5}</div></div>
-                    <div><div className="text-[10px] text-muted-foreground uppercase">Loss</div><div className="mt-1 text-lg font-semibold">{(m.loss || 0).toFixed(3)}</div></div>
+                  <div className="mt-4 grid grid-cols-3 gap-3 rounded-lg bg-muted/50 p-3">
+                    <div className="text-center">
+                      <div className="flex items-center justify-center gap-1 text-muted-foreground">
+                        <TrendingUp className="h-3 w-3" />
+                        <span className="text-[10px] uppercase tracking-wider">Accuracy</span>
+                      </div>
+                      <p className="mt-1 font-mono text-sm font-medium text-emerald-500">{m.accuracy?.toFixed(1) || 0}%</p>
+                    </div>
+                    <div className="text-center border-x border-border">
+                      <div className="flex items-center justify-center gap-1 text-muted-foreground">
+                        <Activity className="h-3 w-3" />
+                        <span className="text-[10px] uppercase tracking-wider">Epochs</span>
+                      </div>
+                      <p className="mt-1 font-mono text-sm font-medium text-foreground">{m.epochs || 5}</p>
+                    </div>
+                    <div className="text-center">
+                      <div className="flex items-center justify-center gap-1 text-muted-foreground">
+                        <Zap className="h-3 w-3" />
+                        <span className="text-[10px] uppercase tracking-wider">Loss</span>
+                      </div>
+                      <p className="mt-1 font-mono text-sm font-medium text-foreground">{(m.loss || 0).toFixed(3)}</p>
+                    </div>
                   </div>
                   {m.next_sync_at && (
                     <div className="mt-2 text-[10px] text-muted-foreground">Next sync: {new Date(m.next_sync_at).toLocaleString()}</div>
@@ -365,11 +401,24 @@ export default function ModelsPage() {
                     <div className="text-[10px] text-muted-foreground">Last sync: {new Date(m.last_sync_at).toLocaleString()}</div>
                   )}
                   {getSourceNames(m).length > 0 && (
-                    <div className="mt-4 border-t border-border pt-4">
-                      <div className="text-xs text-muted-foreground mb-2">DATA SOURCES ({getSourceNames(m).length})</div>
-                      <div className="flex flex-wrap gap-1">
-                        {getSourceNames(m).slice(0, 2).map((n, i) => (<span key={i} className="inline-flex items-center gap-1 rounded bg-emerald-500/10 px-2 py-1 text-xs text-emerald-600 dark:text-emerald-400"><Database className="h-3 w-3" />{n.length > 15 ? n.slice(0, 15) + "..." : n}</span>))}
-                        {getSourceNames(m).length > 2 && <span className="text-xs text-muted-foreground">+{getSourceNames(m).length - 2} more</span>}
+                    <div className="mt-4 rounded-lg bg-muted/50 p-3">
+                      <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                        Connected Data Sources ({getSourceNames(m).length})
+                      </p>
+                      <div className="space-y-2">
+                        {getSourceNames(m).slice(0, 2).map((n, i) => (
+                          <div key={i} className="flex items-center justify-between rounded bg-background px-2 py-1.5">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <Database className="h-3 w-3 text-muted-foreground shrink-0" />
+                              <span className="text-xs text-foreground truncate">{n}</span>
+                            </div>
+                          </div>
+                        ))}
+                        {getSourceNames(m).length > 2 && (
+                          <p className="text-xs text-muted-foreground text-center">
+                            +{getSourceNames(m).length - 2} more sources
+                          </p>
+                        )}
                       </div>
                     </div>
                   )}

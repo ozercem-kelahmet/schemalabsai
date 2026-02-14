@@ -10,7 +10,7 @@ export default function DatabasePage() {
             <Database className="h-5 w-5 text-[#0052CC] dark:text-[#2684FF]" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold text-foreground">Database</h1>
+            <h1 className="text-xl font-semibold text-foreground">Data</h1>
             <p className="text-sm text-muted-foreground">Explore connected data sources across your infrastructure</p>
           </div>
         </div>

@@ -112,6 +112,11 @@ func InitAuth() error {
 	// AutoMigrate in background to not block startup
 	go func() {
 		DB.AutoMigrate(&User{}, &UploadedFile{}, &Query{}, &Message{}, &QueryFile{}, &FineTunedModel{}, &Folder{}, &Connection{}, &APIKey{}, &VerificationCode{}, &PasswordResetToken{}, &UserQuota{})
+		// Create indexes for performance
+		DB.Exec("CREATE INDEX IF NOT EXISTS idx_queries_user_updated ON queries(user_id, updated_at DESC)")
+		DB.Exec("CREATE INDEX IF NOT EXISTS idx_uploaded_files_user ON uploaded_files(user_id, created_at DESC)")
+		DB.Exec("CREATE INDEX IF NOT EXISTS idx_fine_tuned_models_user ON fine_tuned_models(user_id, created_at DESC)")
+		DB.Exec("CREATE INDEX IF NOT EXISTS idx_connections_user ON connections(user_id)")
 	}()
 
 	// Redis

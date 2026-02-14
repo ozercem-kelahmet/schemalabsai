@@ -424,7 +424,7 @@ export function Sidebar() {
           <div className={cn("border-t p-4", theme === "dark" ? "border-white/10" : "border-gray-200")}>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <button className="flex items-center gap-3 w-full rounded-lg p-1 -m-1 transition-colors hover:bg-white/5">
+                <button suppressHydrationWarning className="flex items-center gap-3 w-full rounded-lg p-1 -m-1 transition-colors hover:bg-white/5">
                   <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-[#2684FF] to-[#0052CC] text-sm font-medium text-white shrink-0">{getUserInitials()}</div>
                   <div className="flex-1 text-left min-w-0">
                     <p className={cn("text-sm font-medium truncate", theme === "dark" ? "text-white" : "text-gray-900")}>{user?.name || "User"}</p>

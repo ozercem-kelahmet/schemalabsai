@@ -35,7 +35,11 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Search,
+  Settings2,
+  Sparkles,
 } from "lucide-react"
+import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import { ContentRenderer, type ResponseBlock } from "./response-renderer"
 import { api } from "@/lib/api"
@@ -106,7 +110,7 @@ function adaptBackendModel(m: BackendModel): AdaptedModel {
   }
 }
 
-const MODELS_PER_PAGE = 4
+const MODELS_PER_PAGE = 12
 
 interface PlaygroundContentProps {
   sessionId?: string
@@ -154,6 +158,7 @@ export function PlaygroundContent({ sessionId: propSessionId }: PlaygroundConten
   // UI state
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false)
   const [llmDropdownOpen, setLlmDropdownOpen] = useState(false)
+  const [modelSearchQuery, setModelSearchQuery] = useState("")
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Fetch models from backend
@@ -722,135 +727,179 @@ api.getMessages(sessionId)
     )
   }
 
+  // Filter models by search query
+  const filteredModels = modelSearchQuery
+    ? backendModels.filter((m) =>
+        m.name.toLowerCase().includes(modelSearchQuery.toLowerCase()) ||
+        m.datasets.some((d) => d.datasetName.toLowerCase().includes(modelSearchQuery.toLowerCase()))
+      )
+    : backendModels
+
+  // Model click handler for new chat screen
+  const handleModelSelect = async (model: AdaptedModel) => {
+    setSelectedModel(model)
+    setModelSearchQuery("")
+    setIsLoading(true)
+    const modelFiles = model.datasets && model.datasets.length > 0
+      ? model.datasets.map(ds => ({
+          file_id: ds.datasetId,
+          filename: ds.datasetName,
+          source: ds.source
+        }))
+      : []
+    setSelectedFiles(modelFiles)
+    
+    try {
+      if (!model.id) {
+        console.error("Model ID is empty!")
+        setMessages([])
+        setHasInitializedChat(true)
+        return
+      }
+      if (new URLSearchParams(window.location.search).get("new")) {
+        setMessages([])
+        setCurrentQueryId(null)
+        setHasInitializedChat(true)
+        setIsLoading(false)
+        return
+      }
+      const msgData = await api.getMessages("", model.id)
+      if (msgData.messages && Array.isArray(msgData.messages) && msgData.messages.length > 0) {
+        const rawMessages = msgData.messages.map((m: any) => ({
+          id: m.id,
+          role: m.role as "user" | "assistant",
+          content: m.content,
+          model: m.model,
+          tokens: m.tokens,
+          timestamp: new Date(m.created_at),
+          query_id: m.query_id,
+        }))
+        
+        const loadedMessages: DisplayMessage[] = []
+        let currentGroupId: string | null = null
+        
+        rawMessages.forEach((m: any, idx: number) => {
+          if (m.role === "user") {
+            currentGroupId = `group-${m.id || idx}`
+            loadedMessages.push({ ...m, groupId: currentGroupId })
+          } else {
+            loadedMessages.push({ ...m, groupId: currentGroupId || `group-${idx}` })
+          }
+        })
+        setMessages(loadedMessages)
+        
+        const lastMsg = msgData.messages[msgData.messages.length - 1]
+        if (lastMsg?.query_id) {
+          setCurrentQueryId(lastMsg.query_id)
+          window.history.pushState({}, "", `/playground/${lastMsg.query_id}`)
+        }
+      } else {
+        setMessages([])
+        setCurrentQueryId(null)
+      }
+    } catch (err) {
+      console.error("Failed to load model messages:", err)
+      setMessages([])
+    }
+    setHasInitializedChat(true)
+    setIsLoading(false)
+  }
+
   // No model selected - show model selection screen
   if (!selectedModel && !sessionId && !modelsLoading) {
     return (
-      <div className="flex h-[calc(100vh-6rem)] flex-col items-center justify-center px-4">
-        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-[#0052CC]/20 to-[#003D99]/20">
-          <Box className="h-8 w-8 text-[#0052CC] dark:text-[#2684FF]" />
-        </div>
-        <h3 className="mt-4 text-lg font-medium text-foreground">Select a Model to Start</h3>
-        <p className="mt-2 max-w-md text-center text-sm text-muted-foreground">
-          Choose one of your built models to start chatting with your data
-        </p>
-
-        <div className="mt-8 w-full max-w-md space-y-3">
-          {backendModels.length === 0 ? (
-            <div className="text-center">
-              <p className="text-sm text-muted-foreground">No models built yet.</p>
-              <Button className="mt-4 bg-[#0052CC] hover:bg-[#003D99] text-white" onClick={() => router.push("/build")}>
-                Build Your First Model
-              </Button>
+      <div className="flex h-[calc(100vh-4rem)] md:h-[calc(100vh-6rem)] flex-col">
+        <div className="flex-1 flex items-center justify-center px-4">
+          <div className="w-full max-w-2xl">
+            <div className="text-center mb-6">
+              <h3 className="text-lg font-medium text-foreground">New Chat</h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Select a model to start querying your data
+              </p>
             </div>
-          ) : (
-            <>
-              {paginatedModels.map((model) => (
-                <button
-                  key={model.id}
-                  onClick={async (e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    
-                    // Set the model immediately for UI feedback
-                    setSelectedModel(model)
-                    setIsLoading(true)
-                    const modelFiles = model.datasets && model.datasets.length > 0
-                      ? model.datasets.map(ds => ({
-                          file_id: ds.datasetId,
-                          filename: ds.datasetName,
-                          source: ds.source
-                        }))
-                      : []
-                    setSelectedFiles(modelFiles)
-                    
-                    // Load messages for this model directly (single API call)
-                    try {
-                      if (!model.id) {
-                        console.error("Model ID is empty!")
-                        setMessages([])
-                        setHasInitializedChat(true)
-                        return
-                      }
-                      // If new chat trigger, don't load old messages
-                      if (new URLSearchParams(window.location.search).get("new")) {
-                        setMessages([])
-                        setCurrentQueryId(null)
-                        setHasInitializedChat(true)
-                        setIsLoading(false)
-                        return
-                      }
-                      const msgData = await api.getMessages("", model.id)
-                      if (msgData.messages && Array.isArray(msgData.messages) && msgData.messages.length > 0) {
-                        const rawMessages = msgData.messages.map((m: any) => ({
-                          id: m.id,
-                          role: m.role as "user" | "assistant",
-                          content: m.content,
-                          model: m.model,
-                          tokens: m.tokens,
-                          timestamp: new Date(m.created_at),
-                          query_id: m.query_id,
-                        }))
-                        
-                        // Assign groupIds - all assistants after a user get same groupId until next user
-                        const loadedMessages: DisplayMessage[] = []
-                        let currentGroupId: string | null = null
-                        
-                        rawMessages.forEach((m: any, idx: number) => {
-                          if (m.role === "user") {
-                            currentGroupId = `group-${m.id || idx}`
-                            loadedMessages.push({ ...m, groupId: currentGroupId })
-                          } else {
-                            loadedMessages.push({ ...m, groupId: currentGroupId || `group-${idx}` })
-                          }
-                        })
-                        setMessages(loadedMessages)
-                        
-                        // Set query ID from last message
-                        const lastMsg = msgData.messages[msgData.messages.length - 1]
-                        if (lastMsg?.query_id) {
-                          setCurrentQueryId(lastMsg.query_id)
-                          window.history.pushState({}, '', `/playground/${lastMsg.query_id}`)
-                        }
-                      } else {
-                        setMessages([])
-                        setCurrentQueryId(null)
-                      }
-                    } catch (err) {
-                      console.error("Failed to load model messages:", err)
-                      setMessages([])
-                    }
-                    setHasInitializedChat(true)
-                    setIsLoading(false)
-                  }}
-                  className="w-full flex items-center gap-4 rounded-xl border border-border bg-card p-4 text-left transition-all hover:border-[#0052CC]/30 hover:bg-[#0052CC]/5"
-                >
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#0052CC]/10">
-                    <Box className="h-5 w-5 text-[#0052CC] dark:text-[#2684FF]" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <h4 className="font-medium text-foreground truncate">{model.name}</h4>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      {model.datasets.length > 0 ? `${model.datasets.length} data source${model.datasets.length !== 1 ? "s" : ""}` : "No data sources"}
-                    </p>
-                  </div>
-                  <div className="text-xs text-muted-foreground">{formatAccuracy(model.accuracy)}</div>
-                </button>
-              ))}
 
-              {totalPages > 1 && (
-                <div className="flex items-center justify-center gap-2 pt-4">
-                  <Button variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.max(0, p - 1))} disabled={currentPage === 0} className="h-8 w-8 p-0">
-                    <ChevronLeft className="h-4 w-4" />
-                  </Button>
-                  <span className="text-sm text-muted-foreground">{currentPage + 1} / {totalPages}</span>
-                  <Button variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.min(totalPages - 1, p + 1))} disabled={currentPage === totalPages - 1} className="h-8 w-8 p-0">
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
+            {/* Search */}
+            <div className="relative mb-4">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                value={modelSearchQuery}
+                onChange={(e) => setModelSearchQuery(e.target.value)}
+                placeholder="Search models..."
+                className="pl-10 bg-card border-border"
+              />
+            </div>
+
+            {backendModels.length === 0 ? (
+              <div className="rounded-xl border border-border bg-card p-8 text-center">
+                <div className="flex h-12 w-12 mx-auto items-center justify-center rounded-xl bg-muted">
+                  <Box className="h-6 w-6 text-muted-foreground" />
                 </div>
-              )}
-              <p className="text-center text-xs text-muted-foreground pt-2">{backendModels.length} model{backendModels.length !== 1 ? "s" : ""} available</p>
-            </>
-          )}
+                <p className="mt-4 text-sm text-muted-foreground">No models built yet.</p>
+                <Button
+                  className="mt-4 bg-[#0052CC] hover:bg-[#003D99] text-white"
+                  onClick={() => router.push("/build")}
+                >
+                  Build Your First Model
+                </Button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {(modelSearchQuery ? filteredModels : paginatedModels).map((model) => (
+                  <button
+                    key={model.id}
+                    onClick={() => handleModelSelect(model)}
+                    className="flex flex-col rounded-xl border border-border bg-card p-4 text-left transition-all hover:border-[#0052CC]/40 hover:bg-[#0052CC]/5 dark:hover:border-[#2684FF]/40 dark:hover:bg-[#2684FF]/5"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#0052CC]/10 dark:bg-[#2684FF]/20">
+                        <Box className="h-4 w-4 text-[#0052CC] dark:text-[#2684FF]" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-sm font-medium text-foreground truncate">{model.name}</h4>
+                        <p className="text-xs text-muted-foreground">
+                          {formatAccuracy(model.accuracy)}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {model.datasets.slice(0, 2).map((ds) => (
+                        <span key={ds.datasetId} className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                          <Database className="h-2.5 w-2.5" />
+                          {ds.datasetName}
+                        </span>
+                      ))}
+                      {model.datasets.length > 2 && (
+                        <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                          +{model.datasets.length - 2} more
+                        </span>
+                      )}
+                      {model.datasets.length === 0 && (
+                        <span className="text-[10px] text-muted-foreground">No data sources</span>
+                      )}
+                    </div>
+                  </button>
+                ))}
+                {filteredModels.length === 0 && (
+                  <div className="col-span-2 py-8 text-center text-sm text-muted-foreground">
+                    No models match your search
+                  </div>
+                )}
+              </div>
+            )}
+
+            {modelSearchQuery === "" && totalPages > 1 && (
+              <div className="flex items-center justify-center gap-2 pt-4">
+                <Button variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.max(0, p - 1))} disabled={currentPage === 0} className="h-8 w-8 p-0">
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="text-sm text-muted-foreground">{currentPage + 1} / {totalPages}</span>
+                <Button variant="outline" size="sm" onClick={() => setCurrentPage(p => Math.min(totalPages - 1, p + 1))} disabled={currentPage === totalPages - 1} className="h-8 w-8 p-0">
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
+            <p className="text-center text-xs text-muted-foreground mt-4">{backendModels.length} model{backendModels.length !== 1 ? "s" : ""} available</p>
+          </div>
         </div>
       </div>
     )
@@ -988,14 +1037,14 @@ api.getMessages(sessionId)
                           <div className="rounded-2xl rounded-tr-md bg-[#0052CC] px-4 py-2.5 text-white">
                             <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
                           </div>
-                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted">
-                            <User className="h-4 w-4 text-muted-foreground" />
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-gray-600 to-gray-700">
+                            <User className="h-4 w-4 text-white" />
                           </div>
                         </div>
                       ) : (
                         <div className="flex items-start gap-3 max-w-[90%]">
-                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted">
-                            <Box className="h-4 w-4 text-muted-foreground" />
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-[#2684FF] to-[#0052CC]">
+                            <Sparkles className="h-4 w-4 text-white" />
                           </div>
                           <div className="flex-1 space-y-2">
                             {msg.model && (
@@ -1062,13 +1111,12 @@ api.getMessages(sessionId)
               <div className="mt-2 flex items-center justify-between">
                 <DropdownMenu open={llmDropdownOpen} onOpenChange={setLlmDropdownOpen}>
                   <DropdownMenuTrigger asChild>
-                    <Button type="button" variant="ghost" size="sm" className="h-8 gap-1.5 px-2 text-muted-foreground">
-                      <span className="text-xs">{selectedLLMs.length === 1 ? llmOptions.find(l => l.id === selectedLLMs[0])?.name : `${selectedLLMs.length} LLMs`}</span>
-                      <ChevronDown className="h-3 w-3" />
+                    <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground">
+                      <Settings2 className="h-4 w-4" />
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-56">
-                    <DropdownMenuLabel className="text-xs text-muted-foreground">Select up to 2 LLMs</DropdownMenuLabel>
+                  <DropdownMenuContent align="start" className="w-60">
+                    <DropdownMenuLabel className="text-xs text-muted-foreground uppercase tracking-wider">LLM Provider</DropdownMenuLabel>
                     <DropdownMenuSeparator />
                     {llmOptions.map((llm) => {
                       const isSelected = selectedLLMs.includes(llm.id)
@@ -1100,7 +1148,7 @@ api.getMessages(sessionId)
               </div>
             </div>
           </form>
-          <p className="text-center text-xs text-muted-foreground mt-2">v.Alpha: Outputs may be incorrect, verify important information.</p>
+          <p className="text-center text-[11px] text-muted-foreground mt-1 mb-0">v.Alpha: Outputs may be incorrect, verify important information.</p>
         </div>
       </div>
     </TooltipProvider>

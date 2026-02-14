@@ -29,7 +29,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
-import { Plus, Search, FolderOpen, ChevronDown, ChevronRight } from "lucide-react"
+import { Plus, Search, FolderOpen, ChevronDown, ChevronRight, SlidersHorizontal } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Sparkles } from "lucide-react" // Import Sparkles component
 
@@ -49,17 +49,22 @@ export function DatasetGrid() {
   const [isConnectModalOpen, setIsConnectModalOpen] = useState(false)
   const [isGenerateModalOpen, setIsGenerateModalOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
+  const [showMobileFilters, setShowMobileFilters] = useState(false)
   const [folders, setFolders] = useState<DataFolder[]>([])
   const [datasets, setDatasets] = useState<Dataset[]>([])
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     const loadData = async () => {
+      const t0 = performance.now()
       try {
-        const [filesData, modelsData, connectionsData] = await Promise.all([
-          api.getUploadedFiles(),
-          api.getFineTunedModels(),
-          api.getConnections().catch(() => ({ connections: [] }))
-        ])
+        // Progressive loading - show data as each API completes
+        const filesPromise = api.getUploadedFiles()
+        const modelsPromise = api.getFineTunedModels()
+        const connectionsPromise = api.getConnections().catch(() => ({ connections: [] }))
+        
+        // Show files as soon as they arrive (fastest path)
+        const [filesData, modelsData, connectionsData] = await Promise.all([filesPromise, modelsPromise, connectionsPromise])
         const files = (filesData.files || []).filter((f: any) => !f.is_merged && !f.filename?.includes("_merged_all"))
         const models = modelsData.models || []
         const connections = connectionsData.connections || []
@@ -82,19 +87,12 @@ export function DatasetGrid() {
   }
         })
         const connDatasets: Dataset[] = []
-        for (const c of connections) {
-          let totalRows = 0
-          let totalCols = 0
-          let schemaDetails: any[] = []
-          try {
-            const tablesData = await api.listTables(c.id)
-            const details = tablesData.table_details || []
-            totalRows = details.reduce((sum: number, t: any) => sum + (t.rows || 0), 0)
-            totalCols = details.length > 0 ? details[0].columns || 0 : 0
-            schemaDetails = details.map((t: any) => ({ name: t.name, type: "string" as const, description: `${t.rows} rows, ${t.columns} cols` }))
-          } catch (e) {
-            console.log("listTables failed for", c.id, e)
-          }
+        // Show connections immediately with cached/basic info, load table details in background
+        for (let ci = 0; ci < connections.length; ci++) {
+          const c = connections[ci]
+          let totalRows = c.cached_rows || 0
+          let totalCols = c.cached_cols || 0
+          let schemaDetails: any[] = c.cached_schema ? [{ name: c.cached_schema, type: "string" as const, description: "" }] : []
           connDatasets.push({
             id: c.id,
             name: c.name,
@@ -111,11 +109,39 @@ export function DatasetGrid() {
           })
         }
         setDatasets([...fileDatasets, ...connDatasets])
+        setLoading(false)
+        
+        
+        // Background: fetch table details for connections and update
+        if (connections.length > 0) {
+          Promise.allSettled(
+            connections.map((c: any) => api.listTables(c.id).catch(() => ({ table_details: [] })))
+          ).then(tableResults => {
+            setDatasets(prev => {
+              const updated = [...prev]
+              for (let ci = 0; ci < connections.length; ci++) {
+                const result = tableResults[ci]
+                if (result.status === "fulfilled") {
+                  const details = result.value.table_details || []
+                  const totalRows = details.reduce((sum: number, t: any) => sum + (t.rows || 0), 0)
+                  const totalCols = details.length > 0 ? details[0].columns || 0 : 0
+                  const schemaDetails = details.map((t: any) => ({ name: t.name, type: "string" as const, description: `${t.rows} rows, ${t.columns} cols` }))
+                  const idx = updated.findIndex(d => d.id === connections[ci].id)
+                  if (idx >= 0) {
+                    updated[idx] = { ...updated[idx], rows: totalRows, columns: totalCols, schema: schemaDetails,
+                      rowCount: totalRows > 10000 ? "large" : totalRows > 1000 ? "medium" : "small" as any }
+                  }
+                }
+              }
+              return updated
+            })
+          })
+        }
       } catch (e) {
         console.error("Load error:", e)
       }
     }
-    loadData()
+    loadData().finally(() => setLoading(false))
   }, [])
 
   // Generate modal form state
@@ -201,15 +227,15 @@ export function DatasetGrid() {
   const confirmDelete = async () => {
     if (!deleteTarget) return
     try {
-      const isConnection = deleteTarget.syncStatus === "synced" || deleteTarget.syncStatus === "syncing"
+      const isConnection = deleteTarget.syncStatus === "synced" || deleteTarget.syncStatus === "pending"
       if (isConnection) {
         await api.deleteConnection(deleteTarget.id)
       } else {
         await api.deleteFile(deleteTarget.id)
       }
       toast.success("Dataset deleted successfully")
+      setDatasets(prev => prev.filter(d => d.id !== deleteTarget.id))
       setDeleteTarget(null)
-      window.location.reload()
     } catch (error) {
       console.error("Delete failed:", error)
       toast.error("Failed to delete dataset")
@@ -285,7 +311,9 @@ export function DatasetGrid() {
 
   return (
     <>
-      <div className="flex gap-6">
+      <div className="flex flex-col md:flex-row gap-6">
+        {/* Mobile filter toggle */}
+        <div className={cn("md:block", showMobileFilters ? "block" : "hidden")}>
         <DatasetFilters
           selectedSources={selectedSources}
           selectedVerticals={selectedVerticals}
@@ -300,11 +328,18 @@ export function DatasetGrid() {
           availableComplexity={availableComplexity}
           availableRowCount={availableRowCount}
         />
-
+        </div>
         <div className="flex-1">
           {/* Search and Actions Header */}
           <div className="mb-4 flex items-center gap-3">
-            <div className="relative flex-1">
+            <Button
+              variant="outline"
+              size="icon"
+              className="md:hidden bg-transparent shrink-0"
+              onClick={() => setShowMobileFilters(!showMobileFilters)}
+            >
+              <SlidersHorizontal className="h-4 w-4" />
+            </Button>            <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={searchQuery}
@@ -377,7 +412,7 @@ export function DatasetGrid() {
           ) : (
             <div className="flex h-64 items-center justify-center rounded-xl border border-border bg-card">
               <div className="text-center">
-                <p className="text-muted-foreground">No datasets match your search</p>
+                <p className="text-muted-foreground">{loading ? "Loading datasets..." : "No datasets match your search"}</p>
                 <p className="mt-1 text-sm text-muted-foreground">Try adjusting your search or filter criteria</p>
               </div>
             </div>

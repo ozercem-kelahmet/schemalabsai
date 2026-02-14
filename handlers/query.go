@@ -142,7 +142,7 @@ var queries []Query
 	if modelID != "" {
 	DB.Where("user_id = ? AND training_model_id = ?", userID, modelID).Order("updated_at desc").Find(&queries)
 } else {
-	DB.Where("user_id = ?", userID).Order("updated_at desc").Find(&queries)
+	DB.Where("user_id = ?", userID).Order("updated_at desc").Limit(50).Find(&queries)
 }
 
 var response []QueryResponse

@@ -94,7 +94,8 @@ export function BuildWizard() {
     const checkOngoingTraining = async () => {
       try {
         const progress = await api.getTrainingProgress()
-        if (progress.status === "training") {
+        // Skip if training already completed (epoch >= epochs means done)
+        if (progress.status === "training" && progress.epoch < progress.epochs) {
           setCurrentStep("training")
           setTrainingStatus("training")
           trainingStartedRef.current = true
@@ -120,11 +121,13 @@ export function BuildWizard() {
     trainingStartedRef.current = false
 
     try {
-      const fileIds = selectedDatasets.map((ds) => ds.id)
+      // Separate files from connections (connections have syncStatus "synced")
+      const fileDatasets = selectedDatasets.filter(d => d.syncStatus !== "synced")
+      const connDatasets = selectedDatasets.filter(d => d.syncStatus === "synced")
+      const fileIds = fileDatasets.map((ds) => ds.id)
       
-      const connectionIds = connectionIDs || selectedDatasets
-        .filter(d => d.connectionId)
-        .map(d => d.connectionId)
+      const connectionIds = connectionIDs || connDatasets
+        .map(d => d.id)
         .join(",")
 
       // Start training - show UI immediately, handle result async
@@ -186,7 +189,7 @@ export function BuildWizard() {
     }
   }
 
-  const handleTrainResult = (result: any) => {
+  const handleTrainResult = async (result: any) => {
       if (result.queued || result.status === "queued") {
         addLog(`⏳ Server busy - Training queued at position ${result.queue_position || 0}`)
         addLog(`Active trainings: ${result.active_trainings || 0}/${result.max_concurrent || 1}`)
@@ -206,6 +209,8 @@ export function BuildWizard() {
         if (result.training_duration) setElapsedTime(result.training_duration)
         setTrainingStatus("completing")
         addLog("Build complete!")
+        // Ensure training screen is visible for at least 3 seconds
+        await new Promise(resolve => setTimeout(resolve, 3000))
         addLog(`Final Accuracy: ${result.accuracy?.toFixed(2)}%`)
         addLog(`Final Loss: ${result.loss?.toFixed(4) || "N/A"}`)
         addLog("Evaluating model performance...")

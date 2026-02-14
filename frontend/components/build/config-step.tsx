@@ -130,13 +130,6 @@ export function ConfigStep({
         let totalRows = 0
         let totalCols = 0
         let schemaItems: any[] = []
-        try {
-          const tablesResp = await api.listTables(c.id)
-          const tables = tablesResp.table_details || tablesResp.tables || []
-          totalRows = tables.reduce((sum: number, t: any) => sum + (t.rows || 0), 0)
-          totalCols = tables.length > 0 ? (tables[0].columns || 0) : 0
-          schemaItems = tables.map((t: any) => ({ name: t.name, type: "string" as const, description: `${t.rows} rows, ${t.columns} cols` }))
-        } catch {}
         connDatasets.push({
           id: c.id,
           name: c.name,
@@ -160,6 +153,32 @@ export function ConfigStep({
       const expanded: Record<string, boolean> = {}
       sources.forEach(s => { expanded[s] = true })
       setExpandedSources(expanded)
+      
+      // Background: fetch table details for connections
+      if (connections.length > 0) {
+        Promise.allSettled(
+          connections.map((c: any) => api.listTables(c.id).catch(() => ({ table_details: [] })))
+        ).then(tableResults => {
+          setAllDatasets(prev => {
+            const updated = [...prev]
+            for (let ci = 0; ci < connections.length; ci++) {
+              const result = tableResults[ci]
+              if (result.status === "fulfilled") {
+                const tables = result.value.table_details || result.value.tables || []
+                const totalRows = tables.reduce((sum: number, t: any) => sum + (t.rows || 0), 0)
+                const totalCols = tables.length > 0 ? (tables[0].columns || 0) : 0
+                const schemaItems = tables.map((t: any) => ({ name: t.name, type: "string" as const, description: `${t.rows} rows, ${t.columns} cols` }))
+                const idx = updated.findIndex(d => d.id === connections[ci].id)
+                if (idx >= 0) {
+                  updated[idx] = { ...updated[idx], rows: totalRows, columns: totalCols, schema: schemaItems,
+                    rowCount: (totalRows > 10000 ? "large" : totalRows > 1000 ? "medium" : "small") as any }
+                }
+              }
+            }
+            return updated
+          })
+        })
+      }
       
     } catch (e) {
       console.error("Load error:", e)
@@ -228,27 +247,26 @@ export function ConfigStep({
             />
           </div>
 
-          {/* Selected datasets summary */}
+          {/* Selected datasets compact summary bar */}
           {selectedDatasets.length > 0 && (
-            <div className="shrink-0 rounded-lg border border-[#0052CC]/30 bg-[#0052CC]/10 p-3">
-              <p className="text-xs font-medium text-[#2684FF] mb-2">
-                {selectedDatasets.length} Dataset{selectedDatasets.length > 1 ? "s" : ""} Selected
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {selectedDatasets.map(ds => (
-                  <div key={ds.id} className="flex items-center gap-2 rounded bg-background/50 px-2 py-1">
-                    <SourceBadge source={ds.source} size="sm" />
-                    <span className="text-xs text-foreground">{ds.name}</span>
-                    <button onClick={() => onDatasetToggle(ds)} className="text-muted-foreground hover:text-foreground">
-                      <X className="h-3 w-3" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-2 pt-2 border-t border-border flex gap-4 text-xs text-muted-foreground">
-                <span><span className="font-mono text-foreground">{selectedDatasets.reduce((a, d) => a + d.rows, 0).toLocaleString()}</span> total rows</span>
-                <span><span className="font-mono text-foreground">{selectedDatasets.reduce((a, d) => a + d.columns, 0)}</span> total columns</span>
-              </div>
+            <div className="shrink-0 flex items-center gap-2 rounded-lg border border-[#0052CC]/30 bg-[#0052CC]/10 px-3 py-2">
+              <span className="text-xs font-medium text-[#2684FF] whitespace-nowrap">
+                {selectedDatasets.length} selected
+              </span>
+              <div className="h-3 w-px bg-[#0052CC]/30" />
+              <span className="text-[11px] text-muted-foreground whitespace-nowrap">
+                {selectedDatasets.reduce((a, d) => a + d.rows, 0).toLocaleString()} rows
+              </span>
+              <span className="text-[11px] text-muted-foreground whitespace-nowrap">
+                {selectedDatasets.reduce((a, d) => a + d.columns, 0)} cols
+              </span>
+              <div className="flex-1" />
+              <button
+                onClick={() => selectedDatasets.forEach((ds) => onDatasetToggle(ds))}
+                className="text-[11px] text-[#2684FF] hover:underline whitespace-nowrap"
+              >
+                Clear all
+              </button>
             </div>
           )}
 
@@ -269,80 +287,82 @@ export function ConfigStep({
 
                 return (
                   <div key={source} className="rounded-lg border border-border overflow-hidden">
-                    <button
-                      onClick={() => toggleSource(source)}
-                      className="w-full flex items-center justify-between gap-2 px-3 py-2.5 bg-muted/50 hover:bg-muted transition-colors"
-                    >
-                      <div className="flex items-center gap-2">
-                        <SourceBadge source={source as DataSource} />
-                        <span className="text-xs text-muted-foreground">({sourceDatasets.length} available)</span>
-                        {selectedCount > 0 && (
-                          <span className="text-xs text-[#2684FF] bg-[#0052CC]/20 px-1.5 py-0.5 rounded">{selectedCount} selected</span>
-                        )}
-                      </div>
-                      {isExpanded ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
-                    </button>
+                    <div className="flex items-center gap-2 px-3 py-2.5 bg-muted/50">
+                      <Checkbox
+                        checked={sourceDatasets.every((ds) => selectedDatasets.some((s) => s.id === ds.id))}
+                        onCheckedChange={() => {
+                          const allSelected = sourceDatasets.every((ds) => selectedDatasets.some((s) => s.id === ds.id))
+                          if (allSelected) {
+                            sourceDatasets.forEach((ds) => {
+                              if (selectedDatasets.some((s) => s.id === ds.id)) {
+                                onDatasetToggle(ds)
+                              }
+                            })
+                          } else {
+                            sourceDatasets.forEach((ds) => {
+                              if (!selectedDatasets.some((s) => s.id === ds.id)) {
+                                onDatasetToggle(ds)
+                              }
+                            })
+                          }
+                        }}
+                        className="border-border data-[state=checked]:bg-[#0052CC] data-[state=checked]:border-[#0052CC]"
+                      />
+                      <button
+                        onClick={() => toggleSource(source)}
+                        className="flex-1 flex items-center justify-between"
+                      >
+                        <div className="flex items-center gap-2">
+                          <SourceBadge source={source as DataSource} />
+                          <span className="text-xs text-muted-foreground">({sourceDatasets.length})</span>
+                          {selectedCount > 0 && (
+                            <span className="text-[10px] text-[#2684FF] bg-[#0052CC]/20 px-1.5 py-0.5 rounded">{selectedCount} selected</span>
+                          )}
+                        </div>
+                        {isExpanded ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
+                      </button>
+                    </div>
 
                     {isExpanded && (
-                      <div className="p-3 space-y-3 bg-background/50">
+                      <div className="divide-y divide-border">
                         {sourceDatasets.map(ds => {
                           const isSelected = selectedDatasets.some(s => s.id === ds.id)
                           return (
                             <div
                               key={ds.id}
-                              className={`rounded-lg border transition-all ${isSelected ? "border-[#0052CC] ring-1 ring-[#0052CC]/50" : "border-border hover:border-border/80"}`}
+                              onClick={() => onDatasetToggle(ds)}
+                              className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors ${
+                                isSelected
+                                  ? "bg-[#0052CC]/5 dark:bg-[#2684FF]/5"
+                                  : "hover:bg-muted/50"
+                              }`}
                             >
-                              <div className="p-4">
-                                <div className="flex items-start gap-3">
-                                  <Checkbox
-                                    checked={isSelected}
-                                    onCheckedChange={() => onDatasetToggle(ds)}
-                                    className="mt-1 border-border data-[state=checked]:bg-[#0052CC] data-[state=checked]:border-[#0052CC]"
-                                  />
-                                  <div className="flex-1 min-w-0">
-                                    <h4 className="font-medium text-foreground">{ds.name}</h4>
-                                    <p className="mt-0.5 text-xs text-muted-foreground line-clamp-2">{ds.description}</p>
-                                    
-                                    <div className="mt-2 flex flex-wrap gap-1.5">
-                                      {ds.vertical && (
-                                        <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground capitalize">{ds.vertical}</span>
-                                      )}
-                                      <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground capitalize">{ds.complexity}</span>
-                                      <span className={`rounded px-1.5 py-0.5 text-xs ${
-                                        ds.syncStatus === "synced" ? "bg-emerald-500/10 text-emerald-500" :
-                                        ds.syncStatus === "pending" ? "bg-yellow-500/10 text-yellow-500" :
-                                        "bg-orange-500/10 text-orange-500"
-                                      }`}>
-                                        {ds.syncStatus === "synced" ? "Synced" : ds.syncStatus === "pending" ? "Pending" : "Outdated"}
-                                      </span>
-                                    </div>
-
-                                    <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
-                                      <span className="flex items-center gap-1">
-                                        <Table className="h-3 w-3" />
-                                        <span className="font-mono text-foreground">{ds.rows.toLocaleString()}</span> rows
-                                      </span>
-                                      <span className="flex items-center gap-1">
-                                        <Columns className="h-3 w-3" />
-                                        <span className="font-mono text-foreground">{ds.columns}</span> cols
-                                      </span>
-                                    </div>
-
-                                    {ds.schema.length > 0 && (
-                                      <div className="mt-3 rounded bg-muted/50 p-2">
-                                        <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Schema</p>
-                                        <div className="flex flex-wrap gap-1">
-                                          {ds.schema.slice(0, 4).map((col, i) => (
-                                            <span key={i} className="rounded bg-background px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{col.name}</span>
-                                          ))}
-                                          {ds.schema.length > 4 && (
-                                            <span className="rounded bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground">+{ds.schema.length - 4} more</span>
-                                          )}
-                                        </div>
-                                      </div>
-                                    )}
-                                  </div>
+                              <Checkbox
+                                checked={isSelected}
+                                className="pointer-events-none shrink-0 border-border data-[state=checked]:bg-[#0052CC] data-[state=checked]:border-[#0052CC]"
+                              />
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-foreground truncate">{ds.name}</p>
+                                <div className="flex items-center gap-3 mt-0.5 text-[11px] text-muted-foreground">
+                                  {ds.vertical && <span className="capitalize">{ds.vertical}</span>}
+                                  <span>{ds.rows.toLocaleString()} rows</span>
+                                  <span>{ds.columns} cols</span>
                                 </div>
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                {ds.schema.slice(0, 2).map((col, i) => (
+                                  <span
+                                    key={i}
+                                    className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground hidden lg:inline-block"
+                                  >
+                                    {col.name}
+                                  </span>
+                                ))}
+                                {ds.schema.length > 2 && (
+                                  <span className="text-[10px] text-muted-foreground hidden lg:inline-block">
+                                    +{ds.schema.length - 2}
+                                  </span>
+                                )}
                               </div>
                             </div>
                           )

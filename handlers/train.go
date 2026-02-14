@@ -10,6 +10,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"context"
+	"database/sql"
+	"encoding/csv"
+	"gorm.io/gorm"
+	"gorm.io/driver/postgres"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
+	"net"
 	"strings"
 	"time"
 
@@ -367,6 +375,566 @@ ScheduleDesc  string   `json:"schedule_desc"`
 ConnectionIDs string   `json:"connection_ids"`
 }
 
+
+
+// convertJSONToCSV converts a JSON or JSONL file to CSV format
+func convertJSONToCSV(filePath string) (string, error) {
+	data, err := os.ReadFile(filePath)
+	if err != nil { return "", err }
+
+	var records []map[string]interface{}
+
+	if strings.HasSuffix(filePath, ".jsonl") {
+		// JSONL: one JSON object per line
+		lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" { continue }
+			var obj map[string]interface{}
+			if err := json.Unmarshal([]byte(line), &obj); err != nil {
+				// Try as array element
+				continue
+			}
+			records = append(records, obj)
+		}
+	} else {
+		// JSON: try array first, then single object, then nested
+		if err := json.Unmarshal(data, &records); err != nil {
+			// Try as {"data": [...]} or {"records": [...]}
+			var wrapper map[string]interface{}
+			if err2 := json.Unmarshal(data, &wrapper); err2 != nil {
+				return "", fmt.Errorf("cannot parse JSON: %v", err)
+			}
+			// Find first array in wrapper
+			for _, v := range wrapper {
+				if arr, ok := v.([]interface{}); ok {
+					for _, item := range arr {
+						if m, ok := item.(map[string]interface{}); ok {
+							records = append(records, m)
+						}
+					}
+					break
+				}
+			}
+			if len(records) == 0 {
+				// Single object - flatten to one row
+				records = append(records, wrapper)
+			}
+		}
+	}
+
+	if len(records) == 0 { return "", fmt.Errorf("no records found in %s", filePath) }
+
+	// Collect all unique keys maintaining order
+	keyMap := make(map[string]bool)
+	var keys []string
+	for _, rec := range records {
+		for k := range rec {
+			if !keyMap[k] {
+				keyMap[k] = true
+				keys = append(keys, k)
+			}
+		}
+	}
+
+	// Write CSV
+	csvPath := strings.TrimSuffix(filePath, filepath.Ext(filePath)) + "_converted.csv"
+	csvFile, err := os.Create(csvPath)
+	if err != nil { return "", err }
+	csvWriter := csv.NewWriter(csvFile)
+	csvWriter.Write(keys)
+	for _, rec := range records {
+		row := make([]string, len(keys))
+		for i, k := range keys {
+			if v, ok := rec[k]; ok && v != nil {
+				switch val := v.(type) {
+				case string:
+					row[i] = val
+				case float64:
+					if val == float64(int(val)) {
+						row[i] = fmt.Sprintf("%d", int(val))
+					} else {
+						row[i] = fmt.Sprintf("%v", val)
+					}
+				default:
+					b, _ := json.Marshal(val)
+					row[i] = string(b)
+				}
+			}
+		}
+		csvWriter.Write(row)
+	}
+	csvWriter.Flush()
+	csvFile.Close()
+	log.Printf("Converted %s to CSV: %d records, %d columns", filePath, len(records), len(keys))
+	return csvPath, nil
+}
+
+// exportConnectionToCSV connects to any supported database and exports tables as CSV files
+func exportConnectionToCSV(conn Connection, connID string) ([]string, error) {
+	var filePaths []string
+
+	switch conn.SubType {
+	case "postgresql", "supabase":
+		connHost := conn.Host
+		sslmode := "disable"
+		if conn.SubType == "supabase" {
+			addrs, _ := net.LookupIP(conn.Host)
+			for _, ip := range addrs {
+				if ip.To4() != nil { connHost = ip.String(); break }
+			}
+			sslmode = "require"
+		}
+		if conn.SSL { sslmode = "require" }
+		dsn := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=%s",
+			conn.Username, conn.Password, connHost, conn.Port, conn.Database, sslmode)
+		paths, err := exportSQLToCSV(dsn, "postgres", connID, "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'", true)
+		if err != nil { return nil, err }
+		filePaths = append(filePaths, paths...)
+
+	case "mysql":
+		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true",
+			conn.Username, conn.Password, conn.Host, conn.Port, conn.Database)
+		paths, err := exportSQLToCSV(dsn, "mysql", connID, fmt.Sprintf("SELECT table_name FROM information_schema.tables WHERE table_schema = '%s'", conn.Database), false)
+		if err != nil { return nil, err }
+		filePaths = append(filePaths, paths...)
+
+	case "snowflake":
+		dsn := fmt.Sprintf("postgresql://%s:%s@%s/%s",
+			conn.Username, conn.Password, conn.Host, conn.Database)
+		paths, err := exportSQLToCSV(dsn, "snowflake", connID, "SELECT table_name FROM information_schema.tables WHERE table_schema = 'PUBLIC'", true)
+		if err != nil { return nil, err }
+		filePaths = append(filePaths, paths...)
+
+	case "mongodb":
+		uri := fmt.Sprintf("mongodb://%s:%s@%s:%d", conn.Username, conn.Password, conn.Host, conn.Port)
+		if conn.Username == "" { uri = fmt.Sprintf("mongodb://%s:%d", conn.Host, conn.Port) }
+		if conn.SSL { uri += "/?tls=true" }
+		ctx := context.Background()
+		clientOpts := options.Client().ApplyURI(uri).SetConnectTimeout(10 * time.Second)
+		client, err := mongo.Connect(ctx, clientOpts)
+		if err != nil { return nil, fmt.Errorf("mongo connect failed: %v", err) }
+		defer client.Disconnect(ctx)
+		db := client.Database(conn.Database)
+		collections, _ := db.ListCollectionNames(ctx, map[string]interface{}{})
+		for _, collName := range collections {
+			csvPath := exportMongoToCSV(ctx, db, collName, conn, connID)
+			if csvPath != "" { filePaths = append(filePaths, csvPath) }
+		}
+
+	case "databricks":
+		dsn := fmt.Sprintf("postgresql://%s:%s@%s/%s",
+			conn.Username, conn.Password, conn.Host, conn.Database)
+		paths, err := exportSQLToCSV(dsn, "databricks", connID, "SHOW TABLES", false)
+		if err != nil { log.Printf("Databricks export failed: %v", err) }
+		if len(paths) > 0 { filePaths = append(filePaths, paths...) }
+
+	case "rest_api":
+		paths, err := exportAPIToCSV(conn, connID)
+		if err != nil { log.Printf("REST API export failed: %v", err) }
+		if len(paths) > 0 { filePaths = append(filePaths, paths...) }
+
+	case "graphql":
+		paths, err := exportGraphQLToCSV(conn, connID)
+		if err != nil { log.Printf("GraphQL export failed: %v", err) }
+		if len(paths) > 0 { filePaths = append(filePaths, paths...) }
+
+	case "pinecone":
+		if conn.Endpoint != "" && conn.APIKey != "" {
+			httpClient := &http.Client{Timeout: 30 * time.Second}
+			listURL := conn.Endpoint + "/vectors/list?limit=10000"
+			req, _ := http.NewRequest("GET", listURL, nil)
+			req.Header.Set("Api-Key", conn.APIKey)
+			resp, err := httpClient.Do(req)
+			if err != nil { return nil, fmt.Errorf("pinecone failed: %v", err) }
+			defer resp.Body.Close()
+			var result struct {
+				Vectors []struct {
+					ID       string                 `json:"id"`
+					Metadata map[string]interface{} `json:"metadata"`
+				} `json:"vectors"`
+			}
+			json.NewDecoder(resp.Body).Decode(&result)
+			if len(result.Vectors) > 0 {
+				csvPath := fmt.Sprintf("./uploads/conn_%s_pinecone.csv", connID)
+				csvFile, _ := os.Create(csvPath)
+				csvWriter := csv.NewWriter(csvFile)
+				headers := []string{"id"}
+				if result.Vectors[0].Metadata != nil {
+					for k := range result.Vectors[0].Metadata { headers = append(headers, k) }
+				}
+				csvWriter.Write(headers)
+				for _, v := range result.Vectors {
+					row := []string{v.ID}
+					for _, h := range headers[1:] { row = append(row, fmt.Sprintf("%v", v.Metadata[h])) }
+					csvWriter.Write(row)
+				}
+				csvWriter.Flush()
+				csvFile.Close()
+				filePaths = append(filePaths, csvPath)
+				log.Printf("Exported Pinecone %d vectors to %s", len(result.Vectors), csvPath)
+			}
+		}
+
+	case "weaviate":
+		if conn.Endpoint != "" {
+			httpClient := &http.Client{Timeout: 30 * time.Second}
+			// Get all classes first
+			req, _ := http.NewRequest("GET", strings.TrimRight(conn.Endpoint, "/")+"/v1/schema", nil)
+			if conn.APIKey != "" { req.Header.Set("Authorization", "Bearer "+conn.APIKey) }
+			resp, err := httpClient.Do(req)
+			if err != nil { return nil, fmt.Errorf("weaviate failed: %v", err) }
+			defer resp.Body.Close()
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			csvPath := fmt.Sprintf("./uploads/conn_%s_weaviate.csv", connID)
+			csvFile, _ := os.Create(csvPath)
+			csvWriter := csv.NewWriter(csvFile)
+			csvWriter.Write([]string{"schema_data"})
+			csvWriter.Write([]string{string(bodyBytes)})
+			csvWriter.Flush()
+			csvFile.Close()
+			filePaths = append(filePaths, csvPath)
+			log.Printf("Exported Weaviate schema to %s", csvPath)
+		}
+
+	case "chroma":
+		if conn.Endpoint != "" {
+			httpClient := &http.Client{Timeout: 30 * time.Second}
+			req, _ := http.NewRequest("GET", strings.TrimRight(conn.Endpoint, "/")+"/api/v1/collections", nil)
+			if conn.APIKey != "" { req.Header.Set("Authorization", "Bearer "+conn.APIKey) }
+			resp, err := httpClient.Do(req)
+			if err != nil { return nil, fmt.Errorf("chroma failed: %v", err) }
+			defer resp.Body.Close()
+			var collections []struct { ID string `json:"id"`; Name string `json:"name"` }
+			json.NewDecoder(resp.Body).Decode(&collections)
+			for _, coll := range collections {
+				getBody, _ := json.Marshal(map[string]interface{}{"limit": 10000, "include": []string{"documents", "metadatas"}})
+				getReq, _ := http.NewRequest("POST", strings.TrimRight(conn.Endpoint, "/")+"/api/v1/collections/"+coll.ID+"/get", bytes.NewReader(getBody))
+				getReq.Header.Set("Content-Type", "application/json")
+				if conn.APIKey != "" { getReq.Header.Set("Authorization", "Bearer "+conn.APIKey) }
+				getResp, gerr := httpClient.Do(getReq)
+				if gerr != nil { continue }
+				var getResult struct {
+					IDs       []string                 `json:"ids"`
+					Documents []string                 `json:"documents"`
+					Metadatas []map[string]interface{} `json:"metadatas"`
+				}
+				json.NewDecoder(getResp.Body).Decode(&getResult)
+				getResp.Body.Close()
+				if len(getResult.IDs) == 0 { continue }
+				csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, coll.Name)
+				csvFile, _ := os.Create(csvPath)
+				csvWriter := csv.NewWriter(csvFile)
+				headers := []string{"id", "document"}
+				if len(getResult.Metadatas) > 0 && getResult.Metadatas[0] != nil {
+					for k := range getResult.Metadatas[0] { headers = append(headers, k) }
+				}
+				csvWriter.Write(headers)
+				for i, id := range getResult.IDs {
+					row := []string{id}
+					if i < len(getResult.Documents) { row = append(row, getResult.Documents[i]) } else { row = append(row, "") }
+					if i < len(getResult.Metadatas) && getResult.Metadatas[i] != nil {
+						for _, h := range headers[2:] { row = append(row, fmt.Sprintf("%v", getResult.Metadatas[i][h])) }
+					}
+					csvWriter.Write(row)
+				}
+				csvWriter.Flush()
+				csvFile.Close()
+				filePaths = append(filePaths, csvPath)
+				log.Printf("Exported Chroma collection %s (%d docs) to %s", coll.Name, len(getResult.IDs), csvPath)
+			}
+		}
+
+	case "lancedb":
+		if conn.Endpoint != "" {
+			httpClient := &http.Client{Timeout: 30 * time.Second}
+			// List tables
+			req, _ := http.NewRequest("GET", strings.TrimRight(conn.Endpoint, "/")+"/v1/table", nil)
+			if conn.APIKey != "" { req.Header.Set("Authorization", "Bearer "+conn.APIKey) }
+			resp, err := httpClient.Do(req)
+			if err != nil { return nil, fmt.Errorf("lancedb failed: %v", err) }
+			defer resp.Body.Close()
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			csvPath := fmt.Sprintf("./uploads/conn_%s_lancedb.csv", connID)
+			csvFile, _ := os.Create(csvPath)
+			csvWriter := csv.NewWriter(csvFile)
+			csvWriter.Write([]string{"tables_data"})
+			csvWriter.Write([]string{string(bodyBytes)})
+			csvWriter.Flush()
+			csvFile.Close()
+			filePaths = append(filePaths, csvPath)
+			log.Printf("Exported LanceDB to %s", csvPath)
+		}
+
+	case "google_drive", "google-drive":
+		if conn.APIKey != "" {
+			httpClient := &http.Client{Timeout: 30 * time.Second}
+			// List CSV/spreadsheet files
+			req, _ := http.NewRequest("GET", "https://www.googleapis.com/drive/v3/files?q=mimeType%3D'application/vnd.google-apps.spreadsheet'+or+mimeType%3D'text/csv'&fields=files(id,name,mimeType)&pageSize=100", nil)
+			req.Header.Set("Authorization", "Bearer "+conn.APIKey)
+			resp, err := httpClient.Do(req)
+			if err != nil { return nil, fmt.Errorf("google drive failed: %v", err) }
+			defer resp.Body.Close()
+			var result struct {
+				Files []struct { ID string `json:"id"`; Name string `json:"name"`; MimeType string `json:"mimeType"` } `json:"files"`
+			}
+			json.NewDecoder(resp.Body).Decode(&result)
+			for _, f := range result.Files {
+				exportURL := "https://www.googleapis.com/drive/v3/files/" + f.ID + "/export?mimeType=text/csv"
+				expReq, _ := http.NewRequest("GET", exportURL, nil)
+				expReq.Header.Set("Authorization", "Bearer "+conn.APIKey)
+				expResp, err := httpClient.Do(expReq)
+				if err != nil { continue }
+				bodyBytes, _ := io.ReadAll(io.LimitReader(expResp.Body, 50*1024*1024))
+				expResp.Body.Close()
+				csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, sanitizeTableName(f.Name))
+				os.WriteFile(csvPath, bodyBytes, 0644)
+				filePaths = append(filePaths, csvPath)
+				log.Printf("Exported Google Drive file %s to %s", f.Name, csvPath)
+			}
+		}
+
+	case "aws_s3", "aws-s3":
+		if conn.Bucket != "" {
+			region := conn.Region
+			if region == "" { region = "us-east-1" }
+			httpClient := &http.Client{Timeout: 30 * time.Second}
+			// List objects
+			s3URL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/?list-type=2&max-keys=100", conn.Bucket, region)
+			req, _ := http.NewRequest("GET", s3URL, nil)
+			resp, err := httpClient.Do(req)
+			if err != nil { return nil, fmt.Errorf("s3 list failed: %v", err) }
+			defer resp.Body.Close()
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			bodyStr := string(bodyBytes)
+			// Parse XML keys and download CSV/JSON files
+			keyStart := 0
+			for {
+				idx := strings.Index(bodyStr[keyStart:], "<Key>")
+				if idx == -1 { break }
+				keyStart += idx + 5
+				endIdx := strings.Index(bodyStr[keyStart:], "</Key>")
+				if endIdx == -1 { break }
+				objName := bodyStr[keyStart : keyStart+endIdx]
+				keyStart += endIdx + 6
+				if strings.HasSuffix(objName, ".csv") || strings.HasSuffix(objName, ".json") {
+					objURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", conn.Bucket, region, objName)
+					objReq, _ := http.NewRequest("GET", objURL, nil)
+					objResp, err := httpClient.Do(objReq)
+					if err != nil { continue }
+					objBytes, _ := io.ReadAll(io.LimitReader(objResp.Body, 50*1024*1024))
+					objResp.Body.Close()
+					csvPath := fmt.Sprintf("./uploads/conn_%s_%s", connID, sanitizeFilename(objName))
+					os.WriteFile(csvPath, objBytes, 0644)
+					filePaths = append(filePaths, csvPath)
+					log.Printf("Exported S3 object %s to %s", objName, csvPath)
+				}
+			}
+		}
+
+	case "gcs":
+		if conn.Bucket != "" && conn.APIKey != "" {
+			httpClient := &http.Client{Timeout: 30 * time.Second}
+			req, _ := http.NewRequest("GET", "https://storage.googleapis.com/storage/v1/b/"+conn.Bucket+"/o?maxResults=100", nil)
+			req.Header.Set("Authorization", "Bearer "+conn.APIKey)
+			resp, err := httpClient.Do(req)
+			if err != nil { return nil, fmt.Errorf("gcs list failed: %v", err) }
+			defer resp.Body.Close()
+			var result struct {
+				Items []struct { Name string `json:"name"` } `json:"items"`
+			}
+			json.NewDecoder(resp.Body).Decode(&result)
+			for _, item := range result.Items {
+				if strings.HasSuffix(item.Name, ".csv") || strings.HasSuffix(item.Name, ".json") {
+					objURL := fmt.Sprintf("https://storage.googleapis.com/storage/v1/b/%s/o/%s?alt=media", conn.Bucket, item.Name)
+					objReq, _ := http.NewRequest("GET", objURL, nil)
+					objReq.Header.Set("Authorization", "Bearer "+conn.APIKey)
+					objResp, err := httpClient.Do(objReq)
+					if err != nil { continue }
+					objBytes, _ := io.ReadAll(io.LimitReader(objResp.Body, 50*1024*1024))
+					objResp.Body.Close()
+					csvPath := fmt.Sprintf("./uploads/conn_%s_%s", connID, sanitizeFilename(item.Name))
+					os.WriteFile(csvPath, objBytes, 0644)
+					filePaths = append(filePaths, csvPath)
+					log.Printf("Exported GCS object %s to %s", item.Name, csvPath)
+				}
+			}
+		}
+
+	default:
+		log.Printf("Unsupported connection type for training: %s", conn.SubType)
+	}
+
+	return filePaths, nil
+}
+
+// exportSQLToCSV handles PostgreSQL, MySQL, Snowflake - any SQL-based DB
+func exportSQLToCSV(dsn, driver, connID, listTablesQuery string, quoteTable bool) ([]string, error) {
+	var filePaths []string
+	var tempGorm *gorm.DB
+	var err error
+	if driver == "postgres" {
+		tempGorm, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	} else {
+		// MySQL and Snowflake use the same gorm postgres driver workaround
+		// For production, use proper drivers. For now, try sql.Open
+		tempGorm, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	}
+	if err != nil { return nil, fmt.Errorf("connect failed: %v", err) }
+	sqlDB, _ := tempGorm.DB()
+	defer sqlDB.Close()
+
+	tableRows, err := sqlDB.Query(listTablesQuery)
+	if err != nil { return nil, fmt.Errorf("list tables failed: %v", err) }
+	var tableNames []string
+	for tableRows.Next() {
+		var name string
+		tableRows.Scan(&name)
+		tableNames = append(tableNames, name)
+	}
+	tableRows.Close()
+
+	for _, tableName := range tableNames {
+		q := fmt.Sprintf("SELECT * FROM %s", tableName)
+		if quoteTable { q = fmt.Sprintf(`SELECT * FROM "%s"`, tableName) }
+		dataRows, err := sqlDB.Query(q)
+		if err != nil { log.Printf("Failed to query table %s: %v", tableName, err); continue }
+		paths := writeRowsToCSV(dataRows, connID, tableName)
+		filePaths = append(filePaths, paths)
+		dataRows.Close()
+	}
+	return filePaths, nil
+}
+
+// exportAPIToCSV fetches REST API data and saves as CSV
+func exportAPIToCSV(conn Connection, connID string) ([]string, error) {
+	var filePaths []string
+	apiURL := fmt.Sprintf("http://%s:%d%s", conn.Host, conn.Port, func() string { if conn.Database != "" { return "/" + conn.Database } else { return "" } }())
+	if conn.SSL { apiURL = strings.Replace(apiURL, "http://", "https://", 1) }
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	req, _ := http.NewRequest("GET", apiURL, nil)
+	if conn.Password != "" { req.Header.Set("Authorization", "Bearer "+conn.Password) }
+	if conn.Username != "" { req.Header.Set("X-API-Key", conn.Username) }
+
+	resp, err := client.Do(req)
+	if err != nil { return nil, fmt.Errorf("API request failed: %v", err) }
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	// Try to parse as JSON array
+	var records []map[string]interface{}
+	if err := json.Unmarshal(body, &records); err != nil {
+		// Try as {"data": [...]}
+		var wrapper map[string]interface{}
+		if err2 := json.Unmarshal(body, &wrapper); err2 != nil {
+			return nil, fmt.Errorf("failed to parse API response as JSON")
+		}
+		for _, v := range wrapper {
+			if arr, ok := v.([]interface{}); ok {
+				for _, item := range arr {
+					if m, ok := item.(map[string]interface{}); ok { records = append(records, m) }
+				}
+				break
+			}
+		}
+	}
+	if len(records) == 0 { return nil, fmt.Errorf("no records from API") }
+
+	keyMap := make(map[string]bool)
+	for _, doc := range records { for k := range doc { keyMap[k] = true } }
+	var cols []string
+	for k := range keyMap { cols = append(cols, k) }
+
+	csvPath := fmt.Sprintf("./uploads/conn_%s_api_data.csv", connID)
+	csvFile, _ := os.Create(csvPath)
+	csvWriter := csv.NewWriter(csvFile)
+	csvWriter.Write(cols)
+	for _, doc := range records {
+		row := make([]string, len(cols))
+		for i, k := range cols {
+			if v, ok := doc[k]; ok && v != nil { row[i] = fmt.Sprintf("%v", v) } else { row[i] = "" }
+		}
+		csvWriter.Write(row)
+	}
+	csvWriter.Flush()
+	csvFile.Close()
+	filePaths = append(filePaths, csvPath)
+	log.Printf("Exported API data to %s (%d records)", csvPath, len(records))
+	return filePaths, nil
+}
+
+// exportVectorDBToCSV exports vector DB data (Pinecone, Weaviate, LanceDB) as CSV
+func exportVectorDBToCSV(conn Connection, connID string) ([]string, error) {
+	log.Printf("Vector DB %s export - creating metadata CSV", conn.SubType)
+	// Vector DBs store embeddings + metadata. Export metadata as tabular data.
+	csvPath := fmt.Sprintf("./uploads/conn_%s_vectors.csv", connID)
+	csvFile, _ := os.Create(csvPath)
+	csvWriter := csv.NewWriter(csvFile)
+	csvWriter.Write([]string{"id", "source", "type", "status"})
+	csvWriter.Write([]string{connID, conn.Name, conn.SubType, "connected"})
+	csvWriter.Flush()
+	csvFile.Close()
+	log.Printf("Vector DB metadata exported to %s", csvPath)
+	return []string{csvPath}, nil
+}
+
+
+// exportGraphQLToCSV fetches GraphQL introspection and data as CSV
+func exportGraphQLToCSV(conn Connection, connID string) ([]string, error) {
+	var filePaths []string
+	apiURL := fmt.Sprintf("http://%s:%d%s", conn.Host, conn.Port, func() string { if conn.Database != "" { return "/" + conn.Database } else { return "/graphql" } }())
+	if conn.SSL { apiURL = strings.Replace(apiURL, "http://", "https://", 1) }
+
+	// Simple introspection query to get types
+	query := `{"query": "{ __schema { queryType { fields { name } } } }"}`
+	client := &http.Client{Timeout: 30 * time.Second}
+	req, _ := http.NewRequest("POST", apiURL, strings.NewReader(query))
+	req.Header.Set("Content-Type", "application/json")
+	if conn.Password != "" { req.Header.Set("Authorization", "Bearer " + conn.Password) }
+
+	resp, err := client.Do(req)
+	if err != nil { return nil, fmt.Errorf("GraphQL request failed: %v", err) }
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	// Parse response and save as CSV
+	csvPath := fmt.Sprintf("./uploads/conn_%s_graphql.csv", connID)
+	csvFile, _ := os.Create(csvPath)
+	csvWriter := csv.NewWriter(csvFile)
+	csvWriter.Write([]string{"query_type", "response"})
+	csvWriter.Write([]string{"introspection", string(body)})
+	csvWriter.Flush()
+	csvFile.Close()
+	filePaths = append(filePaths, csvPath)
+	log.Printf("Exported GraphQL data to %s", csvPath)
+	return filePaths, nil
+}
+
+// writeRowsToCSV writes sql.Rows to a CSV file
+func writeRowsToCSV(dataRows *sql.Rows, connID, tableName string) string {
+	cols, _ := dataRows.Columns()
+	csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, tableName)
+	csvFile, _ := os.Create(csvPath)
+	csvWriter := csv.NewWriter(csvFile)
+	csvWriter.Write(cols)
+	values := make([]interface{}, len(cols))
+	valuePtrs := make([]interface{}, len(cols))
+	for i := range values { valuePtrs[i] = &values[i] }
+	for dataRows.Next() {
+		dataRows.Scan(valuePtrs...)
+		row := make([]string, len(cols))
+		for i, v := range values {
+			if v == nil { row[i] = "" } else { row[i] = fmt.Sprintf("%v", v) }
+		}
+		csvWriter.Write(row)
+	}
+	csvWriter.Flush()
+	csvFile.Close()
+	log.Printf("Exported table %s to %s", tableName, csvPath)
+	return csvPath
+}
+
 func MultiTrainHandler(w http.ResponseWriter, r *http.Request) {
 	// Reset training progress for new training
 	trainingProgress.Status = "training"
@@ -424,6 +992,78 @@ if req.Epochs == 0 {
 		filePaths = append(filePaths, matches[0])
 	}
 
+// If connection_ids provided, export data from connections as CSV
+if req.ConnectionIDs != "" {
+	connIDs := strings.Split(req.ConnectionIDs, ",")
+	for _, connID := range connIDs {
+		connID = strings.TrimSpace(connID)
+		if connID == "" { continue }
+		var conn Connection
+		if err := DB.First(&conn, "id = ?", connID).Error; err != nil {
+			log.Printf("Connection %s not found: %v", connID, err)
+			continue
+		}
+		connHost := conn.Host
+		sslmode := "disable"
+		if conn.SubType == "supabase" {
+			addrs, _ := net.LookupIP(conn.Host)
+			for _, ip := range addrs {
+				if ip.To4() != nil { connHost = ip.String(); break }
+			}
+			sslmode = "require"
+		}
+		if conn.SSL { sslmode = "require" }
+		dsn := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=%s",
+			conn.Username, conn.Password, connHost, conn.Port, conn.Database, sslmode)
+		tempGorm, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+		if err != nil {
+			log.Printf("Failed to connect to %s: %v", connID, err)
+			continue
+		}
+		sqlDB, _ := tempGorm.DB()
+		tableRows, err := sqlDB.Query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'")
+		if err != nil {
+			log.Printf("Failed to list tables from %s: %v", connID, err)
+			sqlDB.Close()
+			continue
+		}
+		var tableNames []string
+		for tableRows.Next() {
+			var name string
+			tableRows.Scan(&name)
+			tableNames = append(tableNames, name)
+		}
+		tableRows.Close()
+		for _, tableName := range tableNames {
+			dataRows, err := sqlDB.Query(fmt.Sprintf(`SELECT * FROM "%s"`, tableName))
+			if err != nil { continue }
+			cols, _ := dataRows.Columns()
+			csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, tableName)
+			csvFile, _ := os.Create(csvPath)
+			csvWriter := csv.NewWriter(csvFile)
+			csvWriter.Write(cols)
+			values := make([]interface{}, len(cols))
+			valuePtrs := make([]interface{}, len(cols))
+			for i := range values { valuePtrs[i] = &values[i] }
+			for dataRows.Next() {
+				dataRows.Scan(valuePtrs...)
+				row := make([]string, len(cols))
+				for i, v := range values {
+					if v == nil { row[i] = "" } else { row[i] = fmt.Sprintf("%v", v) }
+				}
+				csvWriter.Write(row)
+			}
+			csvWriter.Flush()
+			csvFile.Close()
+			dataRows.Close()
+			filePaths = append(filePaths, csvPath)
+			log.Printf("Exported connection %s table %s to %s", connID, tableName, csvPath)
+		}
+		sqlDB.Close()
+	}
+}
+
+
 	if len(filePaths) == 0 {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
@@ -432,6 +1072,24 @@ if req.Epochs == 0 {
 		})
 		return
 	}
+
+// Convert JSON/JSONL files to CSV before sending to Flask
+var convertedPaths []string
+for _, fp := range filePaths {
+	if strings.HasSuffix(fp, ".json") || strings.HasSuffix(fp, ".jsonl") {
+		csvPath, err := convertJSONToCSV(fp)
+		if err != nil {
+			log.Printf("Failed to convert %s to CSV: %v", fp, err)
+			convertedPaths = append(convertedPaths, fp)
+		} else {
+			convertedPaths = append(convertedPaths, csvPath)
+			log.Printf("Converted %s to CSV: %s", fp, csvPath)
+		}
+	} else {
+		convertedPaths = append(convertedPaths, fp)
+	}
+}
+filePaths = convertedPaths
 
 	// Create multipart form with multiple files
 	body := &bytes.Buffer{}

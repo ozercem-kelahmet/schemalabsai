@@ -384,14 +384,14 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="border-border bg-card sm:max-w-[600px] max-h-[85vh] overflow-y-auto">
+      <DialogContent className="border-border bg-card sm:max-w-[600px] flex flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle className="text-foreground">Connect Data Source</DialogTitle>
           <DialogDescription className="text-muted-foreground">
             Choose a data source to connect to your workspace
           </DialogDescription>
         </DialogHeader>
-
+        <div className="overflow-y-auto max-h-[60vh]">
         {selectedProvider ? (
           renderProviderForm()
         ) : (
@@ -589,6 +589,7 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
             </TabsContent>
           </Tabs>
         )}
+        </div>
       </DialogContent>
     </Dialog>
   )

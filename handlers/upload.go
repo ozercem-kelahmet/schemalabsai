@@ -288,7 +288,7 @@ func GetUploadedFilesHandler(w http.ResponseWriter, r *http.Request) {
 
 	if userID != "" && DB != nil {
 		var files []UploadedFile
-		DB.Where("user_id = ?", userID).Order("created_at desc").Find(&files)
+		DB.Select("id, filename, path, size, folder_id, created_at, columns, row_count, vertical, source, is_merged").Where("user_id = ?", userID).Order("created_at desc").Find(&files)
 
 		// Get all folders for this user
 		var folders []Folder

@@ -2562,13 +2562,27 @@ def finetune(bypass_queue=False):
             max_samples_per_epoch = 10000
         else:
             max_samples_per_epoch = len(X)
+        # === MEMORY GUARD ===
+        import psutil
+        mem = psutil.virtual_memory()
+        if mem.percent > 80:
+            import gc; gc.collect()
+            if torch.cuda.is_available(): torch.cuda.empty_cache()
+            mem = psutil.virtual_memory()
+            if mem.percent > 85:
+                raise MemoryError(f'Insufficient memory: {mem.percent}% used')
+        if len(X) > 1000000:
+            print(f'[MEMORY GUARD] Sampling from {len(X)} to 1000000 rows')
+            idx = np.random.choice(len(X), 1000000, replace=False)
+            X = X[idx]; y = y[idx]
         print(f"Starting training loop: X.shape={X.shape}, epochs={epochs}, batch_size={batch_size}, samples_per_epoch={max_samples_per_epoch}")
         
         best_acc = 0
         best_state = None
         patience = dyn_cfg['patience']
         no_improve = 0
-        max_epochs = 500  # Maksimum epoch limiti
+        max_epochs = 200  # Maksimum epoch limiti
+        training_timeout = time.time() + 1800  # 30 min max
         current_epoch = 0
         
         # DataLoader ile paralel data loading
@@ -2580,7 +2594,7 @@ def finetune(bypass_queue=False):
         dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=pin_mem, prefetch_factor=prefetch)
         
         print(f"📊 Training loop starting: max_epochs={max_epochs}, best_acc={best_acc}")
-        while current_epoch < max_epochs:
+        while current_epoch < max_epochs and time.time() < training_timeout:
             ft_model.train()
             total_loss = 0
             correct = 0
@@ -2695,6 +2709,7 @@ def finetune(bypass_queue=False):
             session["eta"] = eta
             training_progress.update(session); save_session(query_id, session) if "query_id" in dir() and query_id else training_progress
             
+            if current_epoch % 10 == 0 and torch.cuda.is_available(): torch.cuda.empty_cache()
             print(f"Epoch {current_epoch}: Acc={acc:.1f}% (best={best_acc:.1f}%)")
             
             if best_acc >= 99.0:
@@ -2705,12 +2720,15 @@ def finetune(bypass_queue=False):
                 print(f"✅ Early stop at {best_acc:.1f}% (no improve for {patience} epochs)")
                 break
             
-            if best_acc < 95.0 and no_improve >= patience * 3:
+            if best_acc < 95.0 and no_improve >= patience * 2:
                 print(f"⚠️ Early stop at {best_acc:.1f}% (no improve for {patience * 3} epochs, < 95%)")
                 break
             
             if current_epoch >= max_epochs:
                 print(f"⚠️ Max epoch ({max_epochs}) - best: {best_acc:.1f}%")
+                break
+            if time.time() >= training_timeout:
+                print(f"⏰ Training timeout (30min) at epoch {current_epoch} - best: {best_acc:.1f}%")
                 break
         
         if best_state:
