@@ -54,8 +54,7 @@ export function DatasetGrid() {
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    const loadData = async () => {
+  const loadData = async () => {
       const t0 = performance.now()
       try {
         // Progressive loading - show data as each API completes
@@ -140,7 +139,9 @@ export function DatasetGrid() {
       } catch (e) {
         console.error("Load error:", e)
       }
-    }
+  }
+
+  useEffect(() => {
     loadData().finally(() => setLoading(false))
   }, [])
 
@@ -283,7 +284,7 @@ export function DatasetGrid() {
         setGeneratePrompt("")
         setUsePythonScript(false)
         setPythonScript("")
-        window.location.reload()
+        loadData()
       } else {
         toast.error("Generation failed")
       }
@@ -437,9 +438,8 @@ export function DatasetGrid() {
                   return
                 }
               }
-              for (const file of connection.files) {
-                await api.upload(file, undefined)
-              }
+              // Upload all files in parallel
+              await Promise.all(connection.files.map((file: File) => api.upload(file, undefined)))
               toast.dismiss()
               toast.success("Files uploaded successfully!")
             } catch (error) {
@@ -501,7 +501,7 @@ export function DatasetGrid() {
             }
           }
           // Reload datasets
-          window.location.reload()
+          loadData()
         }}
       />
 

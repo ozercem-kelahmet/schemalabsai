@@ -565,7 +565,7 @@ func callClaudeAPI(messages []ChatMessage, systemPrompt, model string, stream bo
 		return "", 0, fmt.Errorf("no response from Claude")
 	}
 
-	return claudeResp.Content[0].Text, claudeResp.Usage.InputTokens + claudeResp.Usage.OutputTokens, nil
+	return claudeResp.Content[0].Text, claudeResp.Usage.OutputTokens, nil
 }
 
 // Split large analysis into chunks for token management

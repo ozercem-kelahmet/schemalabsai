@@ -48,7 +48,7 @@ export function DatasetCard({ dataset, onViewSchema, onEdit, onDelete }: Dataset
 
   return (
     <Card
-      className="group relative border-border bg-card transition-all hover:border-[#0052CC]/30 hover:bg-accent/50 cursor-pointer"
+      className="group relative border-border bg-card transition-all hover:border-[#0052CC]/30 hover:bg-accent/50 cursor-pointer overflow-hidden"
       onClick={() => !isEditing && onViewSchema(dataset)}
     >
       <CardContent className="p-5">
@@ -161,7 +161,8 @@ export function DatasetCard({ dataset, onViewSchema, onEdit, onDelete }: Dataset
             {dataset.schema.slice(0, 4).map((col, i) => (
               <span
                 key={`${col.name}-${i}`}
-                className="rounded bg-background px-1.5 py-0.5 font-mono text-xs text-muted-foreground border border-border"
+                className="rounded bg-background px-1.5 py-0.5 font-mono text-xs text-muted-foreground border border-border max-w-[140px] truncate"
+                title={col.name}
               >
                 {col.name}
               </span>

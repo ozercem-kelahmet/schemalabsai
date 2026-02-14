@@ -28,6 +28,7 @@ import {
   User,
   Database,
   ChevronDown,
+  Clock,
   ArrowUp,
   ArrowDown,
   Box,
@@ -36,6 +37,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Search,
+  GitCompare,
+  Plus,
   Settings2,
   Sparkles,
 } from "lucide-react"
@@ -263,6 +266,9 @@ export function PlaygroundContent({ sessionId: propSessionId }: PlaygroundConten
   // Set selected files when currentQuery changes
   useEffect(() => {
     if (!currentQuery || uploadedFiles.length === 0) return
+    
+    // Skip if model already set files from datasets
+    if (selectedModel && selectedModel.datasets && selectedModel.datasets.length > 0) return
     
     let files: any[] = []
     
@@ -918,50 +924,56 @@ api.getMessages(sessionId)
   return (
     <TooltipProvider>
       <div className="flex h-[calc(100vh-6rem)] flex-col relative">
-        {/* Header */}
-        <div className="shrink-0 border-b border-border px-4 py-3">
-          <div className="flex items-center gap-3">
-            {/* Model Name */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted transition-colors">
-                  <Box className="h-4 w-4 text-[#0052CC]" />
-                  <span className="text-sm font-medium truncate max-w-[200px]">{selectedModel?.name || currentQuery?.name || "Model"}</span>
-                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                </button>
-              </TooltipTrigger>
-              {selectedModel && (
-                <TooltipContent side="bottom" className="max-w-xs p-3">
-                  <p className="text-xs font-medium">{selectedModel.name}</p>
-                  <p className="text-xs text-muted-foreground mt-1">Accuracy: {selectedModel.accuracy > 1 ? selectedModel.accuracy.toFixed(2) : (selectedModel.accuracy * 100).toFixed(2)}%</p>
-                </TooltipContent>
-              )}
-            </Tooltip>
-
-            {/* Source Badge */}
-            {selectedFiles.length > 0 && (
+        {/* Header Controls */}
+        <div className="shrink-0 border-b border-border px-3 md:px-4 py-2 md:py-3">
+          <div className="flex items-center justify-between gap-2 md:gap-4">
+            {/* Left: Model selection + data sources */}
+            <div className="flex items-center gap-3">
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <button className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-border bg-card text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
-                    <Database className="h-3.5 w-3.5" />
-                    <span>{selectedFiles.length} source{selectedFiles.length !== 1 ? "s" : ""}</span>
+                  <button className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted transition-colors">
+                    <Box className="h-4 w-4 text-[#0052CC] dark:text-[#2684FF]" />
+                    <span className="text-sm font-medium truncate max-w-[150px]">{selectedModel?.name || currentQuery?.name || "Model"}</span>
                   </button>
                 </TooltipTrigger>
-                <TooltipContent side="bottom" className="max-w-md p-3 bg-popover border border-border">
-                  <p className="text-xs font-medium mb-2 text-foreground">Connected Data Sources</p>
-                  <div className="space-y-1.5">
-                    {selectedFiles.map((file: any) => (
-                      <div key={file.file_id} className="flex items-center gap-2 text-xs">
-                        <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 shrink-0">
-                          <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
-                          <span className="text-[10px] font-medium">File</span>
-                        </div>
-                        <span className="text-foreground">{file.filename}</span>
-                      </div>
-                    ))}
-                  </div>
-                </TooltipContent>
+                {selectedModel && (
+                  <TooltipContent side="bottom" className="max-w-xs p-3">
+                    <p className="text-xs font-medium">{selectedModel.name}</p>
+                    <p className="text-xs text-muted-foreground mt-1">Accuracy: {formatAccuracy(selectedModel.accuracy)}</p>
+                  </TooltipContent>
+                )}
               </Tooltip>
+
+              {/* Connected data tooltip */}
+              {selectedFiles.length > 0 && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                      <Database className="h-3.5 w-3.5" />
+                      <span>{selectedFiles.length} source{selectedFiles.length !== 1 ? "s" : ""}</span>
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="max-w-xs p-3 bg-popover border border-border">
+                    <p className="text-xs font-medium mb-2 text-foreground">Connected Data Sources</p>
+                    <div className="space-y-1.5">
+                      {selectedFiles.map((file: any) => (
+                        <div key={file.file_id} className="flex items-center gap-2 text-xs">
+                          <Database className="h-3 w-3 text-muted-foreground" />
+                          <span className="text-foreground">{file.filename}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
+              )}
+            </div>
+
+            {/* Right: Compare mode info */}
+            {selectedLLMs.length === 2 && (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#0052CC]/10 text-xs text-[#0052CC] dark:text-[#2684FF]">
+                <GitCompare className="h-3.5 w-3.5" />
+                <span>Compare ({selectedLLMs.length} LLMs)</span>
+              </div>
             )}
           </div>
         </div>
@@ -992,16 +1004,13 @@ api.getMessages(sessionId)
                   if (isCompareGroup && msg.role === "assistant") {
                     renderedGroups.add(msg.groupId!)
                     return (
-                      <div key={msg.groupId} className="grid grid-cols-2 gap-4">
+                      <div key={msg.groupId} className={cn("grid gap-4 grid-cols-1", groupMessages.length === 2 && "sm:grid-cols-2", groupMessages.length >= 3 && "sm:grid-cols-2 lg:grid-cols-3")}>
                         {groupMessages.map((compareMsg) => (
-                          <div key={compareMsg.id} className="flex flex-col">
-                            <div className="flex items-center gap-2 mb-2">
-                              <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted">
-                                <Box className="h-3 w-3 text-muted-foreground" />
-                              </div>
-                              <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">{compareMsg.model}</span>
-                            </div>
-                            <div className="rounded-2xl border border-border bg-card p-4 flex-1">
+                          <div key={compareMsg.id} className="space-y-1">
+                            <span className="text-xs font-medium px-1 text-muted-foreground">
+                              {compareMsg.model}
+                            </span>
+                            <div className="rounded-2xl rounded-tl-md border border-border bg-card p-4">
                               {compareMsg.isLoading && !compareMsg.content ? (
                                 <div className="flex gap-1">
                                   <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" />
@@ -1068,7 +1077,9 @@ api.getMessages(sessionId)
                                     </span>
                                   )}
                                   {msg.time && (
-                                    <span className="text-xs text-muted-foreground">{msg.time}</span>
+                                    <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                                      <Clock className="h-3 w-3" /> {msg.time}
+                                    </span>
                                   )}
                                 </div>
                               )}
@@ -1109,6 +1120,18 @@ api.getMessages(sessionId)
                 rows={1}
               />
               <div className="mt-2 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground">
+                        <Plus className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">
+                      <p>Custom script</p>
+                    </TooltipContent>
+                  </Tooltip>
+
                 <DropdownMenu open={llmDropdownOpen} onOpenChange={setLlmDropdownOpen}>
                   <DropdownMenuTrigger asChild>
                     <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground">
@@ -1136,6 +1159,7 @@ api.getMessages(sessionId)
                     })}
                   </DropdownMenuContent>
                 </DropdownMenu>
+                </div>
 
                 <Button
                   type="submit"

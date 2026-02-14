@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/csv"
+	"log"
 	"encoding/json"
 	"github.com/xuri/excelize/v2"
 	"fmt"
@@ -59,6 +60,27 @@ type UploadResponse struct {
 	FileID   string `json:"file_id"`
 	Filename string `json:"filename"`
 	Size     int64  `json:"size"`
+}
+
+
+func flattenJSON(prefix string, m map[string]interface{}) map[string]interface{} {
+	result := make(map[string]interface{})
+	for k, v := range m {
+		key := k
+		if prefix != "" {
+			key = prefix + "." + k
+		}
+		switch val := v.(type) {
+		case map[string]interface{}:
+			for fk, fv := range flattenJSON(key, val) {
+				result[fk] = fv
+			}
+		default:
+			result[key] = v
+			_ = val
+		}
+	}
+	return result
 }
 
 func UploadHandler(w http.ResponseWriter, r *http.Request) {
@@ -255,6 +277,71 @@ maxFileSize := int64(maxFileSizeMB) * 1024 * 1024
 			}
 		}
 		
+
+// Parse JSON/JSONL files
+log.Printf("Checking file extension: %s", strings.ToLower(finalFilename))
+if strings.HasSuffix(strings.ToLower(finalFilename), ".json") || strings.HasSuffix(strings.ToLower(finalFilename), ".jsonl") {
+	if jsonData, err := os.ReadFile(destPath); err == nil {
+		log.Printf("JSON file read: %d bytes from %s", len(jsonData), destPath)
+		var records []map[string]interface{}
+		if strings.HasSuffix(strings.ToLower(finalFilename), ".jsonl") {
+			for _, line := range strings.Split(strings.TrimSpace(string(jsonData)), "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" { continue }
+				var obj map[string]interface{}
+				if json.Unmarshal([]byte(line), &obj) == nil { records = append(records, obj) }
+			}
+		} else {
+			if json.Unmarshal(jsonData, &records) != nil {
+				var wrapper map[string]interface{}
+				if json.Unmarshal(jsonData, &wrapper) == nil {
+					// Try to find nested array first
+					foundArray := false
+					for _, v := range wrapper {
+						if arr, ok := v.([]interface{}); ok {
+							for _, item := range arr {
+								if m, ok := item.(map[string]interface{}); ok { records = append(records, m) }
+							}
+							foundArray = true
+							break
+						}
+					}
+					// If no nested array, flatten nested object into leaf keys
+					if !foundArray {
+						flat := flattenJSON("", wrapper)
+						records = append(records, flat)
+						log.Printf("JSON single object flattened: %d keys", len(flat))
+					}
+				}
+			}
+		}
+		if len(records) > 0 {
+			rowCount = len(records)
+			keyMap := make(map[string]bool)
+			var keys []string
+			for _, rec := range records {
+				for k := range rec { if !keyMap[k] { keyMap[k] = true; keys = append(keys, k) } }
+			}
+			columns = strings.Join(keys, ",")
+			targetKey := ""
+			for _, k := range keys {
+				kl := strings.ToLower(k)
+				if kl == "sector" || kl == "subsector" || kl == "category" || kl == "class" || kl == "target" || kl == "label" {
+					targetKey = k; break
+				}
+			}
+			if targetKey == "" && len(keys) > 0 { targetKey = keys[len(keys)-1] }
+			uniqueMap := make(map[string]bool)
+			for _, rec := range records {
+				if v, ok := rec[targetKey]; ok && v != nil { uniqueMap[fmt.Sprintf("%v", v)] = true }
+			}
+			uniqueList := make([]string, 0, len(uniqueMap))
+			for k := range uniqueMap { uniqueList = append(uniqueList, k) }
+			uniqueValues = strings.Join(uniqueList, ",")
+		}
+	}
+}
+
 		uploadedFile := UploadedFile{
 			ID:           fileID,
 			Filename:     finalFilename,

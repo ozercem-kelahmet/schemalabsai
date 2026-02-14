@@ -353,7 +353,8 @@ export function ConfigStep({
                                 {ds.schema.slice(0, 2).map((col, i) => (
                                   <span
                                     key={i}
-                                    className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground hidden lg:inline-block"
+                                    className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground hidden lg:inline-block max-w-[120px] truncate"
+                                    title={col.name}
                                   >
                                     {col.name}
                                   </span>
