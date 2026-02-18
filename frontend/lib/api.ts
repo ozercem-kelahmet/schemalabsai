@@ -70,7 +70,7 @@ export const api = {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fileId: fileId, filename, epochs, batch_size: batchSize, target_column: targetColumn })
+      body: JSON.stringify({ file_id: fileId, filename, epochs, batch_size: batchSize, target_column: targetColumn })
     })
     return res.json()
   },

@@ -55,7 +55,7 @@ import type { PlaygroundSession } from "@/lib/types"
 const navigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Data", href: "/datasets", icon: Database },
-  { name: "Model Builder", href: "/build", icon: Cpu },
+  { name: "Model Builder", href: "/build", icon: Cpu, dynamic: true },
   { name: "Models", href: "/models", icon: Layers },
 ]
 
@@ -345,7 +345,7 @@ export function Sidebar() {
           {navigation.map((item) => {
             const isActive = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href))
             return (
-              <Link key={item.name} href={item.href}
+              <Link key={item.name} href={item.href} onClick={(e) => { if (item.dynamic && pathname === item.href) { e.preventDefault(); router.push(item.href + "?t=" + Date.now()) } }}
                 className={cn(
                   "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
                   isActive ? "bg-[#0052CC]/15 text-[#2684FF]" : theme === "dark" ? "text-gray-400 hover:bg-white/5 hover:text-white" : "text-gray-600 hover:bg-gray-100 hover:text-gray-900",

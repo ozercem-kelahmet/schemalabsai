@@ -20,7 +20,7 @@ type UserQuota struct {
 	ModelsUsed     int       `gorm:"default:0" json:"models_used"`
 	QueriesDaily   int       `gorm:"default:10" json:"queries_daily"`
 	QueriesUsed    int       `gorm:"default:0" json:"queries_used"`
-	StorageLimitMB float64   `gorm:"default:10240" json:"storage_limit_mb"`
+	StorageLimitMB float64   `gorm:"default:1024" json:"storage_limit_mb"`
 	StorageUsedMB  float64   `gorm:"default:0" json:"storage_used_mb"`
 	ResetDate      time.Time `json:"reset_date"`
 	CreatedAt      time.Time `json:"created_at"`

@@ -131,14 +131,16 @@ return
 		writer.FormDataContentType(),
 		body,
 	)
-	if err != nil {
-		http.Error(w, "Flask server error", http.StatusInternalServerError)
-		return
-	}
-	defer resp.Body.Close()
+		if err != nil {
+			log.Printf("Flask goroutine error: %v", err)
+			trainingProgress.Status = "error"
+			trainingProgress.Loss = 0
+			return
+		}
+		defer resp.Body.Close()
 
-	responseBody, _ := io.ReadAll(resp.Body)
-	log.Printf("Flask response body: %s", string(responseBody))
+		responseBody, _ := io.ReadAll(resp.Body)
+		log.Printf("Flask response body: %s", string(responseBody))
 
 // Fix NaN/Infinity in JSON (invalid JSON values from Python)
 cleanBody := strings.ReplaceAll(string(responseBody), ": NaN", ": 0")
@@ -939,7 +941,7 @@ func MultiTrainHandler(w http.ResponseWriter, r *http.Request) {
 	// Reset training progress for new training
 	trainingProgress.Status = "training"
 	trainingProgress.Epoch = 0
-	trainingProgress.Epochs = 0
+	// Epochs Flask tarafindan set edilecek
 	trainingProgress.Accuracy = 0
 	trainingProgress.Loss = 0
 	trainingProgress.ModelID = ""
@@ -1268,6 +1270,32 @@ emailService.SendTrainingComplete(user.Email, modelName, accuracy)
 	}
 	
 
+	if errMsg, ok := flaskResp["error"].(string); ok && errMsg != "" {
+		trainingProgress.Status = "failed"
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": "failed",
+			"error": errMsg,
+		})
+		return
+	}
+
+	trainingProgress.Status = "completed"
+	trainingProgress.Accuracy = accuracy
+	trainingProgress.Epoch = epochs
+	// trainingProgress.Epochs degismez
+	trainingProgress.Loss = loss
+	trainingProgress.ModelID = dbModelID
+	trainingProgress.ModelName = modelName
+
+	// Reset progress after delay so polling can catch "completed"
+	defer func() {
+		time.Sleep(5 * time.Second)
+		trainingProgress.Status = "idle"
+		trainingProgress.Epoch = 0
+		trainingProgress.Accuracy = 0
+	}()
+
 	json.NewEncoder(w).Encode(TrainResponse{
 		JobID:     uuid.New().String(),
 		Status:    "success",
@@ -1394,6 +1422,28 @@ var trainingProgress = struct {
 
 func TrainingProgressHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+
+	queryID := r.URL.Query().Get("query_id")
+	flaskURL := GetFlaskURL() + "/training/progress"
+	if queryID != "" {
+		flaskURL += "?query_id=" + queryID
+	}
+
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(flaskURL)
+	if err == nil {
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		var flaskProgress map[string]interface{}
+		if json.Unmarshal(body, &flaskProgress) == nil {
+			status, _ := flaskProgress["status"].(string)
+			if status == "training" || status == "starting" {
+				w.Write(body)
+				return
+			}
+		}
+	}
+
 	json.NewEncoder(w).Encode(trainingProgress)
 }
 

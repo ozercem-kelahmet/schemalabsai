@@ -15,8 +15,8 @@ export const metadata: Metadata = {
   description: "End-to-end transformer based neural network that brings table-native understanding to AI development.",
   generator: "Schema Labs",
   icons: {
-    icon: "/favicon.svg",
-    apple: "/favicon.svg",
+    icon: "/icon.svg",
+    apple: "/apple-icon.png",
   },
 }
 

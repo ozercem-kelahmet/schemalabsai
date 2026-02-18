@@ -1,10 +1,9 @@
 package main
 
 import (
-	"io"
+	"fmt"
 	"log"
 	"net"
-	"fmt"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -87,6 +86,8 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
+var BuildVersion = fmt.Sprintf("%d", time.Now().Unix())
+
 func main() {
 	start := time.Now()
 	godotenv.Load()
@@ -115,11 +116,12 @@ func main() {
 
 	// Only start services if not already running
 	if !isPortInUse(flaskPort) {
-		log.Println("Starting Flask server..."); go startFlaskServer(pythonPath)
+		log.Println("Starting Flask server...")
+		go startFlaskServer(pythonPath)
 	} else {
 		log.Println("Flask already running on port", flaskPort)
 	}
-	
+
 	if !isPortInUse(frontendPort) {
 		go startNextJsServer()
 	} else {
@@ -133,6 +135,11 @@ func main() {
 	http.HandleFunc("/api/auth/signup", enableCORS(handlers.SignupHandler))
 	http.HandleFunc("/api/auth/login", enableCORS(handlers.LoginHandler))
 	http.HandleFunc("/api/auth/logout", enableCORS(handlers.LogoutHandler))
+	http.HandleFunc("/api/version", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"version":"%s"}`, BuildVersion)
+	})
 	http.HandleFunc("/api/auth/me", enableCORS(handlers.MeHandler))
 	http.HandleFunc("/api/auth/update-profile", enableCORS(handlers.AuthMiddleware(handlers.UpdateProfileHandler)))
 	http.HandleFunc("/api/auth/delete-account", enableCORS(handlers.AuthMiddleware(handlers.DeleteAccountHandler)))
@@ -150,26 +157,13 @@ func main() {
 	http.HandleFunc("/api/train/async", enableCORS(handlers.AuthMiddleware(handlers.AsyncTrainHandler)))
 	http.HandleFunc("/api/train/status", enableCORS(handlers.TrainingStatusHandler))
 	http.HandleFunc("/api/train/analyze", enableCORS(handlers.AuthMiddleware(handlers.AnalyzeFilesHandler)))
-	http.HandleFunc("/api/train/progress", enableCORS(func(w http.ResponseWriter, r *http.Request) {
-		queryID := r.URL.Query().Get("query_id")
-		flaskURL := "http://localhost:6000/training/progress"
-		if queryID != "" {
-			flaskURL = flaskURL + "?query_id=" + queryID
-		}
-		resp, err := http.Get(flaskURL)
-		if err != nil {
-			http.Error(w, "Flask error", 500)
-			return
-		}
-		defer resp.Body.Close()
-		w.Header().Set("Content-Type", "application/json")
-		io.Copy(w, resp.Body)
-	}))
+	http.HandleFunc("/api/train/progress", enableCORS(handlers.TrainingProgressHandler))
 	http.HandleFunc("/api/config/limits", enableCORS(handlers.GetUploadLimitsHandler))
 	http.HandleFunc("/api/files", enableCORS(handlers.AuthMiddleware(handlers.GetUploadedFilesHandler)))
 	http.HandleFunc("/api/files/delete", enableCORS(handlers.AuthMiddleware(handlers.DeleteFileHandler)))
 	http.HandleFunc("/api/files/update", enableCORS(handlers.AuthMiddleware(handlers.UpdateFileHandler)))
 	http.HandleFunc("/api/generate", enableCORS(handlers.AuthMiddleware(handlers.GenerateDatasetHandler)))
+	http.HandleFunc("/api/download/", enableCORS(handlers.AuthMiddleware(handlers.DownloadFileHandler)))
 	http.HandleFunc("/api/folders", enableCORS(handlers.AuthMiddleware(handlers.ListFoldersHandler)))
 	http.HandleFunc("/api/folders/create", enableCORS(handlers.AuthMiddleware(handlers.CreateFolderHandler)))
 	http.HandleFunc("/api/folders/update", enableCORS(handlers.AuthMiddleware(handlers.UpdateFolderHandler)))
@@ -192,8 +186,8 @@ func main() {
 	http.HandleFunc("/api/models/finetuned", enableCORS(handlers.AuthMiddleware(handlers.ListFineTunedModelsHandler)))
 	http.HandleFunc("/api/models/finetuned/delete", enableCORS(handlers.AuthMiddleware(handlers.DeleteFineTunedModelHandler)))
 	http.HandleFunc("/api/models/finetuned/update", enableCORS(handlers.AuthMiddleware(handlers.UpdateFineTunedModelHandler)))
- http.HandleFunc("/api/models/sync", enableCORS(handlers.AuthMiddleware(handlers.UpdateModelSyncHandler)))
- http.HandleFunc("/api/scheduler/status", enableCORS(handlers.AuthMiddleware(handlers.GetSchedulerStatusHandler)))
+	http.HandleFunc("/api/models/sync", enableCORS(handlers.AuthMiddleware(handlers.UpdateModelSyncHandler)))
+	http.HandleFunc("/api/scheduler/status", enableCORS(handlers.AuthMiddleware(handlers.GetSchedulerStatusHandler)))
 	http.HandleFunc("/api/models/finetuned/download", enableCORS(handlers.AuthMiddleware(handlers.DownloadModelHandler)))
 	http.HandleFunc("/api/models/finetuned/", enableCORS(handlers.AuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -301,8 +295,8 @@ func main() {
 	})
 
 	// Start scheduler for scheduled/real-time sync
- handlers.GlobalScheduler.Start()
- log.Println("SCHEMALABS AI running on http://localhost:" + apiPort)
+	handlers.GlobalScheduler.Start()
+	log.Println("SCHEMALABS AI running on http://localhost:" + apiPort)
 	server := &http.Server{Addr: ":" + apiPort, Handler: nil, MaxHeaderBytes: 1 << 20}
 	log.Fatal(server.ListenAndServe())
 }

@@ -353,6 +353,8 @@ type Message struct {
 	QueryID   string    `json:"query_id"`
 	UserID    string    `json:"user_id"`
 	CreatedAt time.Time `json:"created_at"`
+FineTunedModelID string `json:"finetuned_model_id"`
+	CompareGroup     string `json:"compare_group"`
 }
 
 // QueryFile - many to many

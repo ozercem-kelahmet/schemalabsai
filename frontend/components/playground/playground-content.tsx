@@ -63,6 +63,8 @@ interface BackendModel {
   source_files?: string
   source_csv_name?: string
   source_file_names?: string
+  source_file_id?: string
+  sourceFileId?: string
   model_path?: string
   modelPath?: string
 }
@@ -81,27 +83,35 @@ interface DisplayMessage {
   role: "user" | "assistant"
   content: string
   model?: string
+  modelId?: string
+  llmId?: string
   tokens?: number
   time?: string
   timestamp: Date
   isLoading?: boolean
+  groupId?: string
 }
 
 function adaptBackendModel(m: BackendModel): AdaptedModel {
-  console.log("DEBUG adaptBackendModel input:", m.name, "source_files:", m.source_files, "sourceFiles:", m.sourceFiles)
   const sourceFilesStr = m.sourceFiles || m.source_files || ""
   const sourceCsvName = m.sourceCsvName || m.source_csv_name || ""
+  const sourceFileId = m.source_file_id || m.sourceFileId || ""
   const sourceFileNames = (m.source_file_names || "").split(",").filter(Boolean)
   const sourceFiles = sourceFilesStr ? sourceFilesStr.split(",").filter(Boolean) : []
-  const datasets = sourceFiles.length > 0 
-    ? sourceFiles.map((file, idx) => ({
-        datasetId: `ds-${m.id}-${idx}`,
-        datasetName: (sourceFileNames[idx] || file).trim().replace(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}[_.]?/, "").replace(/_\d{8}_\d{6}/, "").replace(/\.csv$/, ""),
-        source: "upload" as DataSource,
-      }))
-    : sourceCsvName 
-    ? [{ datasetId: `ds-${m.id}`, datasetName: sourceCsvName, source: "upload" as DataSource }]
-    : []
+  
+  let datasets: { datasetId: string; datasetName: string; source: DataSource }[] = []
+  
+  if (sourceFiles.length > 0) {
+    datasets = sourceFiles.map((file, idx) => ({
+      datasetId: file.trim(),
+      datasetName: (sourceFileNames[idx] || file).trim().replace(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}[_.]?/, "").replace(/_\d{8}_\d{6}/, "").replace(/\.csv$/, ""),
+      source: "upload" as DataSource,
+    }))
+  } else if (sourceFileId) {
+    datasets = [{ datasetId: sourceFileId, datasetName: sourceCsvName || sourceFileId, source: "upload" as DataSource }]
+  } else if (sourceCsvName) {
+    datasets = [{ datasetId: m.id, datasetName: sourceCsvName, source: "upload" as DataSource }]
+  }
 
   return {
     id: m.id,
@@ -130,7 +140,6 @@ export function PlaygroundContent({ sessionId: propSessionId }: PlaygroundConten
   const { queries, getQuery } = useQueryStore()
   const currentQuery = useMemo(() => {
     const q = sessionId ? getQuery(sessionId) : null
-    console.log("DEBUG currentQuery:", q, "trainingModelId:", q?.trainingModelId)
     return q
   }, [sessionId, getQuery, queries])
 
@@ -140,7 +149,9 @@ export function PlaygroundContent({ sessionId: propSessionId }: PlaygroundConten
   const [uploadedFiles, setUploadedFiles] = useState<any[]>([])
   const [selectedFiles, setSelectedFiles] = useState<any[]>([])
   const [currentPage, setCurrentPage] = useState(0)
-  const [selectedModel, setSelectedModel] = useState<AdaptedModel | null>(null)
+  const [selectedModels, setSelectedModels] = useState<AdaptedModel[]>([])
+  const [compareMode, setCompareMode] = useState(false)
+  const selectedModel = compareMode ? selectedModels[0] || null : selectedModels[0] || null
 
   // Chat state
   const [messages, setMessages] = useState<DisplayMessage[]>([])
@@ -154,6 +165,10 @@ export function PlaygroundContent({ sessionId: propSessionId }: PlaygroundConten
   const [hasInitializedChat, setHasInitializedChat] = useState(false)
   const [refreshCount, setRefreshCount] = useState(0)
 
+  // Client mount state
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
+
   // Scroll state
   const [showScrollButton, setShowScrollButton] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -164,39 +179,98 @@ export function PlaygroundContent({ sessionId: propSessionId }: PlaygroundConten
   const [modelSearchQuery, setModelSearchQuery] = useState("")
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  // Fetch models from backend
+  // Fetch models from backend (with cache for instant display)
   useEffect(() => {
-    const fetchModels = async () => {
-      try {
-        const data = await api.getFineTunedModels()
-        console.log("DEBUG backend models raw:", data.models?.map((m: any) => ({ id: m.id, name: m.name })))
-        if (data.models && Array.isArray(data.models)) {
-          const adapted = data.models.map(adaptBackendModel)
-          console.log("DEBUG adapted models:", adapted.map(m => ({ id: m.id, name: m.name })))
-          setBackendModels(adapted)
+    // Load from cache immediately + restore last selected model
+    try {
+      const cached = localStorage.getItem("schemalabs_models_cache")
+      if (cached) {
+        const parsed = JSON.parse(cached)
+        if (parsed.models?.length > 0) {
+          const cachedModels = parsed.models.map(adaptBackendModel)
+          setBackendModels(cachedModels)
+          setModelsLoading(false)
+          // Restore last model for this session from cache
+          const lastModelId = sessionId ? localStorage.getItem(`schemalabs_session_model_${sessionId}`) : null
+          if (lastModelId) {
+            const model = cachedModels.find((m: any) => m.id === lastModelId)
+            if (model) {
+              setSelectedModels([model])
+              if (model.datasets?.length > 0) {
+                setSelectedFiles(model.datasets.map((ds: any) => ({ file_id: ds.datasetId, filename: ds.datasetName, source: ds.source })))
+              }
+            }
+          }
         }
-      } catch (e) {
-        console.error("Failed to fetch models:", e)
+      }
+    } catch {}
+    
+    const loadAll = async () => {
+      const [modelsRes, filesRes, messagesRes] = await Promise.all([
+        api.getFineTunedModels().catch(() => ({ models: [] })),
+        api.getUploadedFiles().catch(() => ({ files: [] })),
+        sessionId ? api.getMessages(sessionId).catch(() => ({ messages: [] })) : Promise.resolve(null),
+      ])
+      const allModels = modelsRes.models && Array.isArray(modelsRes.models) ? modelsRes.models.map(adaptBackendModel) : []
+      setBackendModels(allModels)
+      try { localStorage.setItem("schemalabs_models_cache", JSON.stringify({ models: modelsRes.models })) } catch {}
+      if (filesRes.files) {
+        setUploadedFiles(filesRes.files)
+      }
+      // Set model immediately from messages
+      if (messagesRes?.messages?.length > 0 && allModels.length > 0) {
+        const modelIds = [...new Set(messagesRes.messages.filter((m: any) => m.role === "assistant" && m.finetuned_model_id).map((m: any) => m.finetuned_model_id))]
+        if (modelIds.length > 0) {
+          const models = modelIds.map((id: string) => allModels.find(m => m.id === id)).filter(Boolean)
+          if (models.length > 0) {
+            setSelectedModels(models as any)
+            if ((models[0] as any)?.datasets?.length > 0) {
+              setSelectedFiles((models[0] as any).datasets.map((ds: any) => ({ file_id: ds.datasetId, filename: ds.datasetName, source: ds.source })))
+            }
+          }
+        }
+        const llmMsg = messagesRes.messages.find((m: any) => m.role === "assistant" && m.model)
+        if (llmMsg?.model) {
+          const ml = llmMsg.model.toLowerCase()
+          if (ml.includes("gpt")) setSelectedLLMs(["gpt-4o"])
+          else if (ml.includes("claude")) setSelectedLLMs(["claude-sonnet-4-5"])
+        }
       }
       setModelsLoading(false)
     }
-    fetchModels()
+    loadAll()
   }, [])
 
-  // Load uploaded files
+  // When backendModels load, set model and LLM from existing messages
   useEffect(() => {
-    const loadFiles = async () => {
-      try {
-        const data = await api.getUploadedFiles()
-        if (data.files) {
-          setUploadedFiles(data.files)
+    if (backendModels.length === 0 || selectedModels.length > 0) return
+    const assistantMsgs = messages.filter(m => m.role === "assistant" && m.modelId)
+    const modelIds = [...new Set(assistantMsgs.map(m => m.modelId))]
+    if (modelIds.length > 0) {
+      const models = modelIds.map(id => backendModels.find(m => m.id === id)).filter(Boolean) as typeof backendModels
+      if (models.length > 0) {
+        setSelectedModels(models)
+        if (models[0].datasets?.length > 0) {
+          setSelectedFiles(models[0].datasets.map(ds => ({
+            file_id: ds.datasetId,
+            filename: ds.datasetName,
+            source: ds.source
+          })))
         }
-      } catch (e) {
-        console.error("Failed to load files:", e)
+        // Cache model for this session
+        if (sessionId) {
+          try { localStorage.setItem(`schemalabs_session_model_${sessionId}`, models[0].id) } catch {}
+        }
       }
     }
-    loadFiles()
-  }, [])
+    // Also set LLM
+    const llmMsg = messages.find(m => m.role === "assistant" && m.model)
+    if (llmMsg?.model) {
+      const ml = llmMsg.model.toLowerCase()
+      if (ml.includes("gpt")) setSelectedLLMs(["gpt-4o"])
+      else if (ml.includes("claude")) setSelectedLLMs(["claude-sonnet-4-5"])
+    }
+  }, [backendModels, messages])
 
   // Select model from URL parameter
   useEffect(() => {
@@ -204,7 +278,7 @@ export function PlaygroundContent({ sessionId: propSessionId }: PlaygroundConten
     const model = backendModels.find(m => m.id === modelIdFromUrl)
     if (model) {
       setHasInitializedChat(true)
-      setSelectedModel(model)
+      setSelectedModels([model])
       if (model.datasets && model.datasets.length > 0) {
         setSelectedFiles(model.datasets.map(ds => ({
           file_id: ds.datasetId,
@@ -233,7 +307,7 @@ export function PlaygroundContent({ sessionId: propSessionId }: PlaygroundConten
       }
       if (model) {
       setHasInitializedChat(true)
-        setSelectedModel(model)
+        setSelectedModels([model])
         // Also set files
         if (model.datasets && model.datasets.length > 0) {
           setSelectedFiles(model.datasets.map(ds => ({
@@ -251,7 +325,7 @@ export function PlaygroundContent({ sessionId: propSessionId }: PlaygroundConten
       const model = backendModels.find(m => m.name === currentQuery.name)
       if (model) {
       setHasInitializedChat(true)
-        setSelectedModel(model)
+        setSelectedModels([model])
         if (model.datasets && model.datasets.length > 0) {
           setSelectedFiles(model.datasets.map(ds => ({
             file_id: ds.datasetId,
@@ -311,7 +385,7 @@ export function PlaygroundContent({ sessionId: propSessionId }: PlaygroundConten
       const session = chatSessions.find(s => s.id === sessionId)
       if (session && session.modelIds?.length > 0) {
         const model = backendModels.find(m => m.id === session.modelIds[0])
-        if (model) setSelectedModel(model)
+        if (model) setSelectedModels([model])
       }
       setCurrentQueryId(sessionId)
       // setMessagesLoading(true) - disabled for silent refresh
@@ -325,37 +399,83 @@ api.getMessages(sessionId)
               role: m.role,
               content: m.content,
               model: m.model,
+              modelId: m.finetuned_model_id || "",
+              compareGroup: m.compare_group || "",
               tokens: m.tokens,
               timestamp: new Date(m.created_at),
             }))
             
-            // Assign groupIds - all assistants after a user get same groupId until next user
+            console.log("RAW MESSAGES:", rawMessages.map((m: any, i: number) => `${i}:${m.role}|${m.model||""}|${m.modelId?.slice(0,8)||""}|${m.content?.slice(0,30)}`))
+            
+            // Assign groupIds - use compare_group if available, else pattern matching
             const loadedMessages: DisplayMessage[] = []
-            let currentGroupId: string | null = null
+            const compareGroups = new Map<string, string>()
+            
+            // Group by compare_group when available
+            // For legacy messages (no compare_group): each user starts a new group
+            const cgMap = new Map<string, string>() // compare_group -> groupId
+            let currentLegacyGroup: string | null = null
             
             rawMessages.forEach((m: any, idx: number) => {
+              const cg = m.compareGroup || ""
+              
               if (m.role === "user") {
-                currentGroupId = `group-${m.id || idx}`
-                loadedMessages.push({ ...m, groupId: currentGroupId })
+                if (cg && cgMap.has(cg)) {
+                  // Duplicate user in same compare group - skip
+                  return
+                }
+                const groupId = cg ? `group-${cg}` : `group-${m.id || idx}`
+                if (cg) cgMap.set(cg, groupId)
+                currentLegacyGroup = groupId
+                loadedMessages.push({ ...m, groupId })
               } else {
-                loadedMessages.push({ ...m, groupId: currentGroupId || `group-${idx}` })
+                // Assistant
+                if (cg && cgMap.has(cg)) {
+                  loadedMessages.push({ ...m, groupId: cgMap.get(cg)! })
+                } else if (cg) {
+                  const groupId = `group-${cg}`
+                  cgMap.set(cg, groupId)
+                  loadedMessages.push({ ...m, groupId })
+                } else {
+                  // Legacy - attach to current group (last user)
+                  loadedMessages.push({ ...m, groupId: currentLegacyGroup || `group-${idx}` })
+                }
               }
             })
             
 
             setMessages(loadedMessages)
-            const assistantMsg = loadedMessages.find((m: DisplayMessage) => m.role === "assistant" && m.model)
-            if (assistantMsg?.model) {
-              const modelLower = assistantMsg.model.toLowerCase()
-              if (modelLower.includes("gpt")) setSelectedLLMs(["gpt-4o"])
-              else if (modelLower.includes("claude")) setSelectedLLMs(["claude-sonnet-4-5"])
-            }
+            // Model/LLM selection handled by backendModels useEffect
             
-            // Set model from currentQuery if available
-            if (currentQuery?.trainingModelId && backendModels.length > 0) {
-              const model = backendModels.find(m => m.id === currentQuery.trainingModelId || m.name === currentQuery.trainingModelId)
-              console.log("DEBUG model from currentQuery:", model?.name)
-              if (model) setSelectedModel(model)
+            // Set model from messages or currentQuery
+            if (backendModels.length > 0) {
+              const modelIds = [...new Set(loadedMessages.filter(m => m.role === "assistant" && m.modelId).map(m => m.modelId))]
+              if (modelIds.length > 0) {
+                const models = modelIds.map(id => backendModels.find(m => m.id === id)).filter(Boolean) as typeof backendModels
+                if (models.length > 0) {
+                  setSelectedModels(models)
+                  // Set source files from first model
+                  if (models[0].datasets?.length > 0) {
+                    setSelectedFiles(models[0].datasets.map(ds => ({
+                      file_id: ds.datasetId,
+                      filename: ds.datasetName,
+                      source: ds.source
+                    })))
+                  }
+                }
+              } else if (currentQuery?.trainingModelId) {
+                const model = backendModels.find(m => m.id === currentQuery.trainingModelId || m.name === currentQuery.trainingModelId)
+                if (model) {
+                  setSelectedModels([model])
+                  if (model.datasets?.length > 0) {
+                    setSelectedFiles(model.datasets.map(ds => ({
+                      file_id: ds.datasetId,
+                      filename: ds.datasetName,
+                      source: ds.source
+                    })))
+                  }
+                }
+              }
             }
             
             setRefreshCount(c => c + 1)
@@ -379,7 +499,7 @@ api.getMessages(sessionId)
       setHasInitializedChat(false)
       // Don't reset model if coming from build page with model param
       if (!modelIdFromUrl) {
-        setSelectedModel(null)
+        setSelectedModels([])
         setSelectedFiles([])
       }
     }
@@ -442,7 +562,6 @@ api.getMessages(sessionId)
   const primaryFile = selectedFiles[0]
 
   const buildDataContext = () => {
-    console.log("DEBUG buildDataContext - selectedFiles:", selectedFiles, "length:", selectedFiles.length)
     if (selectedFiles.length === 0) return ""
     let context = ""
     selectedFiles.forEach((file: any) => {
@@ -455,9 +574,69 @@ api.getMessages(sessionId)
     return context
   }
 
+
+  const toggleModelSelection = (model: AdaptedModel) => {
+    if (compareMode) {
+      const isSelected = selectedModels.some(m => m.id === model.id)
+      if (isSelected) {
+        if (selectedModels.length > 1) setSelectedModels(selectedModels.filter(m => m.id !== model.id))
+      } else if (selectedModels.length < 4) {
+        setSelectedModels([...selectedModels, model])
+      }
+    } else {
+      setSelectedModels([model])
+      const modelFiles = model.datasets && model.datasets.length > 0
+        ? model.datasets.map(ds => ({ file_id: ds.datasetId, filename: ds.datasetName, source: ds.source }))
+        : []
+      setSelectedFiles(modelFiles)
+    }
+  }
+
+  const toggleCompareMode = () => {
+    if (!compareMode) {
+      if (selectedModel && !selectedModels.some(m => m.id === selectedModel.id)) {
+        setSelectedModels([selectedModel])
+      }
+      setSelectedLLMs([selectedLLMs[0] || "claude-sonnet-4-5"])
+    } else {
+      setSelectedModels(selectedModels.length > 0 ? [selectedModels[0]] : [])
+    }
+    setCompareMode(!compareMode)
+  }
+
+  // Restore compare mode from URL
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const compareModelIds = params.get("compare")
+    if (compareModelIds && backendModels.length > 0) {
+      const ids = compareModelIds.split(",")
+      const models = ids.map(id => backendModels.find(m => m.id === id)).filter(Boolean) as AdaptedModel[]
+      if (models.length > 1) {
+        setCompareMode(true)
+        setSelectedModels(models)
+      }
+    }
+  }, [backendModels])
+
+  // Save compare state to URL
+  useEffect(() => {
+    if (compareMode && selectedModels.length > 1) {
+      const params = new URLSearchParams(window.location.search)
+      params.set("compare", selectedModels.map(m => m.id).join(","))
+      window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`)
+    } else {
+      const params = new URLSearchParams(window.location.search)
+      if (params.has("compare")) {
+        params.delete("compare")
+        const qs = params.toString()
+        window.history.replaceState({}, "", qs ? `${window.location.pathname}?${qs}` : window.location.pathname)
+      }
+    }
+  }, [compareMode, selectedModels])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!input.trim() || isLoading || (!selectedModel && !sessionId)) return
+    if (!input.trim() || isLoading || (selectedModels.length === 0 && !sessionId)) return
 
     const userMessage = input.trim()
     let queryId = currentQueryId || sessionId
@@ -515,9 +694,103 @@ api.getMessages(sessionId)
     }
 
     const groupId = `group-${Date.now()}`
-    
+
+    // MODEL COMPARE: If compare mode with multiple models
+    if (compareMode && selectedModels.length > 1) {
+      const assistantMsgs: DisplayMessage[] = selectedModels.map((model, idx) => ({
+        id: `assistant-${Date.now()}-model-${idx}`,
+        role: "assistant" as const,
+        content: "",
+        model: model.name,
+        modelId: model.id,
+        timestamp: new Date(),
+        isLoading: true,
+        groupId,
+      }))
+      setMessages(prev => [...prev, ...assistantMsgs])
+
+      const llmId = selectedLLMs[0]
+      const isClaudeModel = llmId.startsWith("claude")
+      const compareGroupId = `cg-${Date.now()}`
+
+      const promises = selectedModels.map(async (model, idx) => {
+        let streamContent = ""
+        const primaryFile = model.datasets?.[0]
+        const modelFileId = primaryFile?.datasetId || ""
+        const modelFileName = primaryFile?.datasetName || ""
+        // Build model-specific data context
+        const modelDataContext = model.datasets?.length > 0 
+          ? model.datasets.map((ds: any) => `- File: ${ds.datasetName}`).join("\n") 
+          : ""
+        console.log(`COMPARE MODEL ${idx}: ${model.name}, fileId=${modelFileId}, fileName=${modelFileName}, dataContext=${modelDataContext}`)
+        if (isClaudeModel) {
+          const response = await api.chat({
+            message: userMessage,
+            file_id: modelFileId,
+            query_id: queryId!,
+            filename: modelFileName,
+            model: llmId,
+            data_context: modelDataContext,
+            finetuned_model: model.id,
+            model_path: model.modelPath || model.name,
+            compare_group: compareGroupId,
+          })
+          const endTime = Date.now()
+          const timeTaken = ((endTime - startTime) / 1000).toFixed(1)
+          return { modelId: model.id, content: response.response || "No response", tokens: response.tokens, time: timeTaken + "s" }
+        } else {
+          return new Promise<{ modelId: string; content: string; tokens: number; time: string }>((resolve) => {
+            api.chatStream(
+              {
+                message: userMessage,
+                file_id: modelFileId,
+                query_id: queryId!,
+                filename: modelFileName,
+                model: llmId,
+                data_context: buildDataContext(),
+                finetuned_model: model.id,
+                model_path: model.modelPath || model.name,
+                compare_group: compareGroupId || "",
+              },
+              (chunk) => {
+                streamContent += chunk
+                setMessages(prev => {
+                  const newMessages = [...prev]
+                  const msgIdx = newMessages.findIndex(m => m.modelId === model.id && m.groupId === groupId)
+                  if (msgIdx !== -1) {
+                    newMessages[msgIdx] = { ...newMessages[msgIdx], content: streamContent }
+                  }
+                  return newMessages
+                })
+              },
+              () => {
+                const endTime = Date.now()
+                const timeTaken = ((endTime - startTime) / 1000).toFixed(1)
+                resolve({ modelId: model.id, content: streamContent, tokens: Math.round(streamContent.length / 4), time: timeTaken + "s" })
+              }
+            )
+          })
+        }
+      })
+
+      const results = await Promise.all(promises)
+      setMessages(prev => {
+        const newMessages = [...prev]
+        results.forEach(result => {
+          const msgIdx = newMessages.findIndex(m => m.modelId === result.modelId && m.groupId === groupId)
+          if (msgIdx !== -1) {
+            newMessages[msgIdx] = { ...newMessages[msgIdx], content: result.content, tokens: result.tokens, time: result.time, isLoading: false }
+          }
+        })
+        return newMessages
+      })
+      setIsLoading(false)
+      return
+    }
+
     // If 2 LLMs selected, send to both
     if (selectedLLMs.length === 2) {
+      const compareGroupId = `cg-${Date.now()}`
       // Add empty assistant messages for both LLMs
       const assistantMsgs: DisplayMessage[] = selectedLLMs.map((llmId, idx) => ({
         id: `assistant-${Date.now()}-${idx}`,
@@ -539,13 +812,14 @@ api.getMessages(sessionId)
         if (isClaudeModel) {
           const response = await api.chat({
             message: userMessage,
-            file_id: currentQuery?.dataSources?.[0] || primaryFile?.file_id || "",
+            file_id: selectedModel?.datasets?.[0]?.datasetId || primaryFile?.file_id || "",
             query_id: queryId!,
-            filename: currentQuery?.sourceCsvName || selectedModel?.datasets?.[0]?.datasetName || "",
+            filename: selectedModel?.datasets?.[0]?.datasetName || primaryFile?.filename || "",
             model: llmId,
             data_context: buildDataContext(),
-            finetuned_model: currentQuery?.trainingModelId || selectedModel?.id || "",
+            finetuned_model: selectedModel?.id || "",
             model_path: selectedModel?.modelPath || selectedModel?.name || "",
+            compare_group: compareGroupId,
           })
           const endTime = Date.now()
           const timeTaken = ((endTime - startTime) / 1000).toFixed(1)
@@ -555,13 +829,14 @@ api.getMessages(sessionId)
             api.chatStream(
               {
                 message: userMessage,
-                file_id: currentQuery?.dataSources?.[0] || primaryFile?.file_id || "",
+                file_id: selectedModel?.datasets?.[0]?.datasetId || primaryFile?.file_id || "",
                 query_id: queryId!,
-                filename: currentQuery?.sourceCsvName || selectedModel?.datasets?.[0]?.datasetName || "",
+                filename: selectedModel?.datasets?.[0]?.datasetName || primaryFile?.filename || "",
                 model: llmId,
                 data_context: buildDataContext(),
-                finetuned_model: currentQuery?.trainingModelId || selectedModel?.id || "",
+                finetuned_model: selectedModel?.id || "",
                 model_path: selectedModel?.modelPath || selectedModel?.name || "",
+                compare_group: compareGroupId,
               },
               (chunk) => {
                 streamContent += chunk
@@ -602,7 +877,6 @@ api.getMessages(sessionId)
         return newMessages
       })
       setIsLoading(false)
-      setTimeout(() => setHasInitializedChat(false), 100)
       return
     }
 
@@ -629,13 +903,14 @@ api.getMessages(sessionId)
         // Non-streaming for Claude
         const response = await api.chat({
           message: userMessage,
-          file_id: currentQuery?.dataSources?.[0] || primaryFile?.file_id || "",
+          file_id: selectedModel?.datasets?.[0]?.datasetId || primaryFile?.file_id || "",
           query_id: queryId!,
-          filename: currentQuery?.sourceCsvName || selectedModel?.datasets?.[0]?.datasetName || "",
+          filename: selectedModel?.datasets?.[0]?.datasetName || primaryFile?.filename || "",
           model: selectedLLMs[0],
           data_context: buildDataContext(),
-          finetuned_model: currentQuery?.trainingModelId || selectedModel?.id || "",
+          finetuned_model: selectedModel?.id || "",
           model_path: selectedModel?.modelPath || selectedModel?.name || "",
+          compare_group: `sg-${Date.now()}`,
         })
         
         const endTime = Date.now()
@@ -654,20 +929,20 @@ api.getMessages(sessionId)
           return newMessages
         })
         setIsLoading(false)
-        setTimeout(() => setHasInitializedChat(false), 100)
         return
       } else {
         // Streaming for OpenAI
         await api.chatStream(
           {
             message: userMessage,
-            file_id: currentQuery?.dataSources?.[0] || primaryFile?.file_id || "",
+            file_id: selectedModel?.datasets?.[0]?.datasetId || primaryFile?.file_id || "",
             query_id: queryId!,
-            filename: currentQuery?.sourceCsvName || selectedModel?.datasets?.[0]?.datasetName || "",
+            filename: selectedModel?.datasets?.[0]?.datasetName || primaryFile?.filename || "",
             model: selectedLLMs[0],
             data_context: buildDataContext(),
-            finetuned_model: currentQuery?.trainingModelId || selectedModel?.id || "",
+            finetuned_model: selectedModel?.id || "",
             model_path: selectedModel?.modelPath || selectedModel?.name || "",
+            compare_group: `sg-${Date.now()}`,
           },
           (chunk) => {
             streamContent += chunk
@@ -696,7 +971,6 @@ api.getMessages(sessionId)
               return newMessages
             })
             // Silent refresh
-            setTimeout(() => setHasInitializedChat(false), 100)
           }
         )
       }
@@ -743,7 +1017,11 @@ api.getMessages(sessionId)
 
   // Model click handler for new chat screen
   const handleModelSelect = async (model: AdaptedModel) => {
-    setSelectedModel(model)
+    if (compareMode) {
+      toggleModelSelection(model)
+      return
+    }
+    setSelectedModels([model])
     setModelSearchQuery("")
     setIsLoading(true)
     const modelFiles = model.datasets && model.datasets.length > 0
@@ -921,6 +1199,8 @@ api.getMessages(sessionId)
     )
   }
 
+  if (!mounted) return null
+
   return (
     <TooltipProvider>
       <div className="flex h-[calc(100vh-6rem)] flex-col relative">
@@ -929,52 +1209,95 @@ api.getMessages(sessionId)
           <div className="flex items-center justify-between gap-2 md:gap-4">
             {/* Left: Model selection + data sources */}
             <div className="flex items-center gap-3">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-card hover:bg-muted transition-colors">
+              <DropdownMenu modal={false}>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" className="gap-2 border-border bg-card">
                     <Box className="h-4 w-4 text-[#0052CC] dark:text-[#2684FF]" />
-                    <span className="text-sm font-medium truncate max-w-[150px]">{selectedModel?.name || currentQuery?.name || "Model"}</span>
-                  </button>
-                </TooltipTrigger>
-                {selectedModel && (
-                  <TooltipContent side="bottom" className="max-w-xs p-3">
-                    <p className="text-xs font-medium">{selectedModel.name}</p>
-                    <p className="text-xs text-muted-foreground mt-1">Accuracy: {formatAccuracy(selectedModel.accuracy)}</p>
-                  </TooltipContent>
-                )}
-              </Tooltip>
+                    <span className="truncate max-w-[150px]">
+                      {compareMode ? `${selectedModels.length} Model${selectedModels.length !== 1 ? "s" : ""}` : selectedModel?.name || "\u00A0"}
+                    </span>
+                    <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-64">
+                  <DropdownMenuLabel className="text-xs text-muted-foreground">
+                    {compareMode ? "Select up to 4 models" : "Select a model"}
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  {backendModels.map((model) => {
+                    const isSelected = selectedModels.some((m) => m.id === model.id)
+                    return (
+                      <div key={model.id} onClick={() => toggleModelSelection(model)} className={cn("flex items-center gap-3 px-2 py-2 cursor-pointer rounded-md transition-colors", isSelected ? "bg-[#0052CC]/10 dark:bg-[#2684FF]/10" : "hover:bg-muted")}>
+                        {compareMode && <div className={cn("flex h-4 w-4 shrink-0 items-center justify-center rounded border", isSelected ? "bg-[#0052CC] border-[#0052CC] dark:bg-[#2684FF] dark:border-[#2684FF]" : "border-muted-foreground/30")}>{isSelected && <Check className="h-3 w-3 text-white" />}</div>}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{model.name}</p>
+                          <p className="text-xs text-muted-foreground">{model.datasets.length} sources</p>
+                        </div>
+                        {!compareMode && isSelected && <Check className="h-4 w-4 text-[#0052CC] dark:text-[#2684FF]" />}
+                      </div>
+                    )
+                  })}
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              {compareMode && selectedModels.length > 1 && (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {selectedModels.slice(1).map((model) => (
+                    <div key={model.id} className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs bg-muted text-muted-foreground">
+                      {model.name}
+                      <button onClick={() => setSelectedModels(selectedModels.filter((m) => m.id !== model.id))} className="hover:opacity-70">×</button>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {/* Connected data tooltip */}
-              {selectedFiles.length > 0 && (
+              {(() => {
+                const allSources = compareMode && selectedModels.length > 1
+                  ? selectedModels.flatMap(m => m.datasets || [])
+                  : (selectedModel?.datasets || [])
+                return allSources.length > 0 ? (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
                       <Database className="h-3.5 w-3.5" />
-                      <span>{selectedFiles.length} source{selectedFiles.length !== 1 ? "s" : ""}</span>
+                      <span>{allSources.length} source{allSources.length !== 1 ? "s" : ""}</span>
                     </button>
                   </TooltipTrigger>
                   <TooltipContent side="bottom" className="max-w-xs p-3 bg-popover border border-border">
                     <p className="text-xs font-medium mb-2 text-foreground">Connected Data Sources</p>
                     <div className="space-y-1.5">
-                      {selectedFiles.map((file: any) => (
-                        <div key={file.file_id} className="flex items-center gap-2 text-xs">
+                      {allSources.map((ds: any) => (
+                        <div key={ds.datasetId} className="flex items-center gap-2 text-xs">
                           <Database className="h-3 w-3 text-muted-foreground" />
-                          <span className="text-foreground">{file.filename}</span>
+                          <span className="text-foreground">{ds.datasetName}</span>
                         </div>
                       ))}
                     </div>
                   </TooltipContent>
                 </Tooltip>
-              )}
+              ) : null})()}
             </div>
 
-            {/* Right: Compare mode info */}
-            {selectedLLMs.length === 2 && (
-              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#0052CC]/10 text-xs text-[#0052CC] dark:text-[#2684FF]">
+            {/* Right: Compare mode */}
+            <div className="flex items-center gap-2">
+              {selectedLLMs.length === 2 && !compareMode && (
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#0052CC]/10 text-xs text-[#0052CC] dark:text-[#2684FF]">
+                  <GitCompare className="h-3.5 w-3.5" />
+                  <span>Compare ({selectedLLMs.length} LLMs)</span>
+                </div>
+              )}
+              <Button
+                variant={compareMode ? "default" : "outline"}
+                size="sm"
+                onClick={toggleCompareMode}
+                className={cn("gap-1.5", compareMode && "bg-[#0052CC] hover:bg-[#003D99] text-white")}
+              >
                 <GitCompare className="h-3.5 w-3.5" />
-                <span>Compare ({selectedLLMs.length} LLMs)</span>
-              </div>
-            )}
+                Compare
+                {compareMode && ` (${selectedModels.length})`}
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -988,7 +1311,7 @@ api.getMessages(sessionId)
               <p className="mt-4 text-sm text-muted-foreground">Start chatting with your data</p>
             </div>
           ) : (
-            <div key={refreshCount} className="mx-auto max-w-4xl p-4 space-y-6">
+            <div key={refreshCount} className={cn("mx-auto p-4 space-y-6", compareMode ? "max-w-full px-4" : "max-w-4xl")}>
               {(() => {
                 const renderedGroups = new Set<string>()
                 return messages.map((msg, idx) => {
@@ -1004,13 +1327,13 @@ api.getMessages(sessionId)
                   if (isCompareGroup && msg.role === "assistant") {
                     renderedGroups.add(msg.groupId!)
                     return (
-                      <div key={msg.groupId} className={cn("grid gap-4 grid-cols-1", groupMessages.length === 2 && "sm:grid-cols-2", groupMessages.length >= 3 && "sm:grid-cols-2 lg:grid-cols-3")}>
+                      <div key={msg.groupId} className={cn("grid gap-3 grid-cols-1", groupMessages.length === 2 && "sm:grid-cols-2", groupMessages.length === 3 && "sm:grid-cols-2 lg:grid-cols-3", groupMessages.length >= 4 && "sm:grid-cols-2 lg:grid-cols-4")}>
                         {groupMessages.map((compareMsg) => (
-                          <div key={compareMsg.id} className="space-y-1">
+                          <div key={compareMsg.id} className="space-y-1 min-w-0">
                             <span className="text-xs font-medium px-1 text-muted-foreground">
                               {compareMsg.model}
                             </span>
-                            <div className="rounded-2xl rounded-tl-md border border-border bg-card p-4">
+                            <div className="rounded-2xl rounded-tl-md border border-border bg-card p-4 overflow-hidden break-words">
                               {compareMsg.isLoading && !compareMsg.content ? (
                                 <div className="flex gap-1">
                                   <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" />
@@ -1059,7 +1382,7 @@ api.getMessages(sessionId)
                             {msg.model && (
                               <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground mb-2 inline-block">{msg.model}</span>
                             )}
-                            <div className="rounded-2xl rounded-tl-md border border-border bg-card p-4">
+                            <div className="rounded-2xl rounded-tl-md border border-border bg-card p-4 overflow-hidden break-words">
                               {msg.isLoading && !msg.content ? (
                                 <div className="flex gap-1">
                                   <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" />
@@ -1106,8 +1429,8 @@ api.getMessages(sessionId)
         )}
 
         {/* Input Area */}
-        <div className="shrink-0 border-t border-border p-4">
-          <form onSubmit={handleSubmit} className="mx-auto max-w-4xl">
+        <div className="shrink-0 px-4 pb-0 pt-2">
+          <form onSubmit={handleSubmit} className={cn("mx-auto", compareMode ? "max-w-full px-4" : "max-w-4xl")}>
             <div className="rounded-2xl border border-border bg-card p-3">
               <Textarea
                 ref={textareaRef}

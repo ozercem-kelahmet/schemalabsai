@@ -274,7 +274,17 @@ export function DatasetGrid() {
         python_code: pythonScript
       })
       if (response.status === "success") {
-        toast.success(`Dataset "${response.filename}" created with ${response.rows} rows and ${response.columns} columns`, { duration: 4000 })
+        toast.success("Dataset created: " + response.filename + " (" + (response.credits_used || 0) + " credits)", { duration: 5000 })
+        // Auto download CSV
+        if (response.file_id) {
+          const API_HOST = window.location.origin.includes(":3000") ? window.location.origin.replace(":3000", ":8080") : window.location.origin
+          const link = document.createElement("a")
+          link.href = API_HOST + "/api/download/" + response.file_id
+          link.download = response.filename || "dataset.csv"
+          document.body.appendChild(link)
+          link.click()
+          document.body.removeChild(link)
+        }
         setIsGenerateModalOpen(false)
         setGenerateName("")
         setGenerateDescription("")
@@ -620,7 +630,7 @@ def generate_data(rows, columns):
 df = generate_data(${generateRows}, ${generateColumns})`}
                   value={pythonScript}
                   onChange={(e) => setPythonScript(e.target.value)}
-                  className="border-border bg-background text-foreground font-mono text-sm resize-none min-h-[140px]"
+                  className="border-border bg-background text-foreground font-mono text-sm min-h-[140px] max-h-[200px] overflow-y-auto"
                 />
               ) : (
                 <Textarea
@@ -629,7 +639,7 @@ df = generate_data(${generateRows}, ${generateColumns})`}
 Example: Generate customer data with columns: customer_id, name, email, signup_date, plan_type (free/pro/enterprise), monthly_spend, churn_risk_score (0-1)"
                   value={generatePrompt}
                   onChange={(e) => setGeneratePrompt(e.target.value)}
-                  className="border-border bg-background text-foreground resize-none min-h-[120px]"
+                  className="border-border bg-background text-foreground min-h-[120px] max-h-[200px] overflow-y-auto"
                 />
               )}
             </div>
@@ -638,7 +648,7 @@ Example: Generate customer data with columns: customer_id, name, email, signup_d
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Estimated cost</span>
                 <span className="font-medium text-foreground">
-                  ~{(Number.parseInt(generateRows) * Number.parseInt(generateColumns) * 0.0001).toFixed(2)} credits
+                  ~{Math.min(10, Math.max(0.50, 0.50 + Number.parseInt(generateRows)/1000*0.10 + Number.parseInt(generateColumns)/10*0.05)).toFixed(2)} credits
                 </span>
               </div>
             </div>

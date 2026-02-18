@@ -32,7 +32,9 @@ export function TrainingStep({
     return `${mins}:${String(secs).padStart(2, "0")}`
   }
 
-  const progress = currentMetrics ? (currentMetrics.epoch / currentMetrics.totalEpochs) * 100 : 0
+  // Progress bar accuracy-based (0-100%)
+  const rawAcc = currentMetrics?.accuracy || 0
+  const progress = Math.min(100, rawAcc > 1 ? rawAcc : rawAcc * 100)
 
   return (
     <div className="space-y-6">
@@ -67,7 +69,7 @@ export function TrainingStep({
                   {status === "training" ? "Training in Progress" : status}
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  Epoch {currentMetrics?.epoch || 0} of {currentMetrics?.totalEpochs || 50}
+                  Epoch {currentMetrics?.epoch || 0} of {currentMetrics?.totalEpochs || "..."}
                 </p>
               </div>
             </div>

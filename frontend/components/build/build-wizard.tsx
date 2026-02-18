@@ -47,6 +47,8 @@ export function BuildWizard() {
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
   const timerRef = useRef<NodeJS.Timeout | null>(null)
   const trainingStartedRef = useRef(false)
+  const skipCheckRef = useRef(false)
+  const completedByPollingRef = useRef(false)
 
   // Load metrics history from localStorage on mount
   useEffect(() => {
@@ -88,22 +90,24 @@ export function BuildWizard() {
     setLogs((prev) => [...prev, `[${timestamp}] ${message}`])
   }, [])
 
-
   // Check for ongoing training on mount
   useEffect(() => {
     const checkOngoingTraining = async () => {
+      console.log("CHECK_ONGOING skipCheck=", skipCheckRef.current)
+      if (skipCheckRef.current) return
       try {
         const progress = await api.getTrainingProgress()
         // Skip if training already completed (epoch >= epochs means done)
+        console.log("PROGRESS_STATUS:", progress.status, "epoch:", progress.epoch, "epochs:", progress.epochs)
         if (progress.status === "training" && progress.epoch < progress.epochs) {
           setCurrentStep("training")
           setTrainingStatus("training")
           trainingStartedRef.current = true
-          setTotalEpochs(progress.epochs || 100)
+
           const normalizedAccuracy = progress.accuracy > 1 ? progress.accuracy / 100 : progress.accuracy
           setCurrentMetrics({
             epoch: progress.epoch,
-            totalEpochs: progress.epochs || 100,
+            totalEpochs: (progress.epochs > 0 ? progress.epochs : totalEpochs),
             loss: progress.loss || 0,
             accuracy: normalizedAccuracy || 0,
             learningRate: 0.001,
@@ -119,6 +123,17 @@ export function BuildWizard() {
   }, [addLog])
   const startTraining = async () => {
     trainingStartedRef.current = false
+    completedByPollingRef.current = false
+
+    if (selectedDatasets.length === 0) {
+      toast.error("No Data Selected", { description: "Please select at least one dataset or connection to train on.", duration: 5000 })
+      return
+    }
+
+    if (!modelName.trim()) {
+      toast.error("Model Name Required", { description: "Please enter a name for your model.", duration: 5000 })
+      return
+    }
 
     try {
       // Separate files from connections (connections have syncStatus "synced")
@@ -175,6 +190,7 @@ export function BuildWizard() {
           setTrainingStatus("idle")
           return
         }
+        console.log("TRAIN_PROMISE_RESOLVED", result); if (completedByPollingRef.current) return // polling already handled
         handleTrainResult(result)
       }).catch((err: any) => {
         toast.error("Training Failed", { description: err.message, duration: 10000 })
@@ -215,7 +231,7 @@ export function BuildWizard() {
         addLog(`Final Loss: ${result.loss?.toFixed(4) || "N/A"}`)
         addLog("Evaluating model performance...")
 
-        const finalAccuracy = (result.accuracy > 1 ? result.accuracy / 100 : result.accuracy) || 0.95
+        const finalAccuracy = (result.accuracy > 1 ? result.accuracy / 100 : result.accuracy) || 0
         setEvalMetrics({
           accuracy: finalAccuracy,
           precision: result.precision || finalAccuracy * 0.98,
@@ -265,8 +281,13 @@ export function BuildWizard() {
         const progress = await api.getTrainingProgress()
         
         if (progress.status === "training") {
-          const epochs = progress.epochs || totalEpochs
-          setTotalEpochs(epochs)
+          // Terminaldeki epochs gelince kilitle, geri donmesin
+          const serverEpochs = progress.epochs
+          const epochs = (serverEpochs && serverEpochs > 0) ? serverEpochs : totalEpochs
+          if (serverEpochs && serverEpochs > 0 && totalEpochs === 5) {
+            setTotalEpochs(serverEpochs)
+          }
+
           
           const newMetrics: TrainingMetrics = {
             epoch: progress.epoch,
@@ -288,7 +309,8 @@ export function BuildWizard() {
         } else if (progress.status === "completed") {
           // Training completed - move to evaluate
           stopPolling()
-          const finalAccuracy = (progress.accuracy > 1 ? progress.accuracy / 100 : progress.accuracy) || 0.95
+          completedByPollingRef.current = true
+          const finalAccuracy = (progress.accuracy > 1 ? progress.accuracy / 100 : progress.accuracy) || 0
           setEvalMetrics({
             accuracy: finalAccuracy,
             precision: progress.precision || finalAccuracy * 0.98,
@@ -366,14 +388,22 @@ export function BuildWizard() {
     setLogs([])
     setIsPaused(false)
     trainingStartedRef.current = false
+    completedByPollingRef.current = false
   }
 
   const handleTrainAgain = () => {
+    stopPolling()
+    skipCheckRef.current = true
+    setTrainingStatus("idle")
+    trainingStartedRef.current = false
+    completedByPollingRef.current = false
     setCurrentStep("config")
     setEvalMetrics(null)
     setBuiltModel(null)
     setCurrentMetrics(null)
     setMetricsHistory([])
+    setLogs([])
+    setElapsedTime(0)
   }
 
   const handleOpenPlayground = async () => {

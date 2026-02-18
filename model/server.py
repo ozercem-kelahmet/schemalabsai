@@ -1211,7 +1211,7 @@ def _load_sessions():
                 for qid, sess in training_sessions.items():
                     if sess.get("status") in ["training", "preparing", "merging", "processing", "starting"]:
                         sess["status"] = "failed"
-                        user_id = session.get("user_id") or request.headers.get("X-User-ID")
+                        user_id = sess.get("user_id", "")
                         if user_id:
                             try:
                                 import psycopg2
@@ -1220,7 +1220,7 @@ def _load_sessions():
                                 cur.execute("SELECT email, name FROM users WHERE id = %s", (user_id,))
                                 result = cur.fetchone()
                                 if result:
-                                    send_training_email(result[0], "failed", "model", error=str(e), user_name=result[1] if len(result) > 1 else None)
+                                    send_training_email(result[0], "failed", "model", error="Training interrupted by server restart", user_name=result[1] if len(result) > 1 else None)
                                 cur.close()
                                 conn.close()
                             except Exception as ex:
@@ -2420,8 +2420,22 @@ def finetune(bypass_queue=False):
         col_mapping, feature_cols = smart_column_mapping(numeric_df.columns.tolist(), target_col)
         
         
-        # Tüm feature kolonlarını al
-        X = df[feature_cols].values.astype(np.float32)
+        # Tüm feature kolonlarını al - numeric yoksa categorical encode et
+        if len(feature_cols) == 0:
+            cat_cols = [c for c in df.columns if c != target_col and df[c].dtype == 'object']
+            if len(cat_cols) == 0:
+                return jsonify({"error": "Dataset has no usable features. Please upload a dataset with at least one data column.", "status": "failed"}), 400
+            print(f"No numeric features found. Encoding {len(cat_cols)} categorical columns as features.")
+            encoded_frames = []
+            for col in cat_cols:
+                le_feat = LabelEncoder()
+                encoded = le_feat.fit_transform(df[col].fillna('__NA__').astype(str))
+                encoded_frames.append(encoded)
+            X = np.column_stack(encoded_frames).astype(np.float32)
+            feature_cols = cat_cols
+            print(f"Encoded features shape: {X.shape}")
+        else:
+            X = df[feature_cols].values.astype(np.float32)
         
         # Eksik değer kontrolü
         has_missing = np.isnan(X).any()
@@ -2516,12 +2530,6 @@ def finetune(bypass_queue=False):
             traceback.print_exc()
             raise
         
-        except Exception as e:
-            print(f"ERROR creating model: {e}")
-            import traceback
-            traceback.print_exc()
-            raise
-        
         # Dinamik batch size ve epochs - algoritmik
         batch_size = batch_size_req if batch_size_req > 0 else dyn_cfg['batch_size']
         epochs = epochs_req if epochs_req > 0 else dyn_cfg['epochs']
@@ -2593,6 +2601,29 @@ def finetune(bypass_queue=False):
         prefetch = 2 if num_workers > 0 else None
         dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=pin_mem, prefetch_factor=prefetch)
         
+        # Akilli epoch tahmini: data ozellikleri + ogrenme zorlugu
+        import math
+        rows = len(X)
+        # Veri/parametre orani - model ne kadar kolay ezberler
+        params_per_class = input_dim * 64 + 64 * n_classes  # yakласіk model parametresi
+        data_ratio = rows / max(1, params_per_class)  # cok data = hizli ogrenme
+        # Sinif dengesi ve karmasikligi
+        class_factor = math.log2(max(2, n_classes))  # 2 sinif=1, 4=2, 8=3
+        # Feature zorlugu
+        feat_factor = math.log10(max(2, input_dim))  # 10 feat=1, 100=2, 1000=3
+        # Temel tahmin
+        if data_ratio > 2:  # cok data, az parametre - hizli
+            base = int(5 + class_factor * 2)
+        elif data_ratio > 0.5:  # dengeli
+            base = int(10 + class_factor * 3 + feat_factor * 2)
+        elif data_ratio > 0.1:  # az data
+            base = int(20 + class_factor * 5 + feat_factor * 3)
+        else:  # cok az data, cok parametre
+            base = int(40 + class_factor * 8 + feat_factor * 5)
+        # Patience ekle (early stop margin) ve sinirla
+        estimated_epochs = max(patience + 2, min(max_epochs, base + patience))
+        session["epochs"] = estimated_epochs
+        training_progress.update(session)
         print(f"📊 Training loop starting: max_epochs={max_epochs}, best_acc={best_acc}")
         while current_epoch < max_epochs and time.time() < training_timeout:
             ft_model.train()
@@ -2698,12 +2729,7 @@ def finetune(bypass_queue=False):
             
             session["epoch"] = current_epoch
             # Early stop olacaksa epochs'u güncelle
-            if best_acc >= 99.0:
-                session["epochs"] = current_epoch
-            elif best_acc >= 99.0 and no_improve >= patience:  # %99 hedef
-                session["epochs"] = current_epoch
-            else:
-                session["epochs"] = current_epoch + 1
+            # epochs degismez, sadece epoch ilerler
             session["accuracy"] = acc
             session["loss"] = avg_loss
             session["eta"] = eta
@@ -2752,7 +2778,6 @@ def finetune(bypass_queue=False):
         except Exception as e:
             print(f"Email send failed: {e}")
         session["accuracy"] = best_acc
-        session["epochs"] = current_epoch
         session["epoch"] = current_epoch
         training_progress.update(session); save_session(query_id, session) if "query_id" in dir() and query_id else training_progress
         
@@ -3231,7 +3256,7 @@ if __name__ == '__main__':
     import logging
     log = logging.getLogger('werkzeug')
     log.setLevel(logging.ERROR)
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False, threaded=True)
 
 
 # Email notification

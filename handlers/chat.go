@@ -29,6 +29,7 @@ type ChatRequest struct {
 	DataContext    string `json:"data_context"`
 	Stream         bool   `json:"stream"`
 	FineTunedModel string `json:"finetuned_model"`
+	CompareGroup   string `json:"compare_group"`
 }
 
 type ChatResponse struct {
@@ -439,19 +440,31 @@ func isClaudeModel(model string) bool {
 }
 
 // Helper function to save messages to DB
-func saveMessagesToDB(userID, queryID, userMessage, assistantMessage, model string, tokens int) {
+func saveMessagesToDB(userID, queryID, userMessage, assistantMessage, model string, tokens int, compareGroup string, finetunedModelID ...string) {
+	ftModelID := ""
+	if len(finetunedModelID) > 0 {
+		ftModelID = finetunedModelID[0]
+	}
 	if userID == "" || DB == nil {
 		return
 	}
-	// Save user message
-	DB.Create(&Message{
-		ID:        uuid.New().String(),
-		Role:      "user",
-		Content:   userMessage,
-		QueryID:   queryID,
-		UserID:    userID,
-		CreatedAt: time.Now(),
-	})
+	// Save user message - skip if same compare_group already has a user
+	skipUser := false
+	if compareGroup != "" {
+		var existing Message
+		skipUser = DB.Where("query_id = ? AND role = ? AND compare_group = ?", queryID, "user", compareGroup).First(&existing).Error == nil
+	}
+	if !skipUser {
+		DB.Create(&Message{
+			ID:        uuid.New().String(),
+			Role:      "user",
+			Content:   userMessage,
+			QueryID:   queryID,
+			UserID:    userID,
+			CompareGroup: compareGroup,
+			CreatedAt: time.Now(),
+		})
+	}
 	// Save assistant message
 	DB.Create(&Message{
 		ID:        uuid.New().String(),
@@ -461,7 +474,9 @@ func saveMessagesToDB(userID, queryID, userMessage, assistantMessage, model stri
 		Tokens:    tokens,
 		QueryID:   queryID,
 		UserID:    userID,
+FineTunedModelID: ftModelID,
 		CreatedAt: time.Now(),
+		CompareGroup:     compareGroup,
 	})
 }
 
@@ -657,11 +672,31 @@ func ChatHandler(w http.ResponseWriter, r *http.Request) {
 		} else {
 			fineTunedResult = result
 			fmt.Printf("DEBUG fineTunedResult length: %d\n", len(fineTunedResult))
+if strings.Contains(fineTunedResult, "vsRaptors") {
+fmt.Println("DEBUG: fineTunedResult CONTAINS vsRaptors!")
+} else {
+fmt.Println("DEBUG: fineTunedResult does NOT contain vsRaptors")
+}
 		}
 	}
 
 	// Fine-tuned model analysis is already included via callFineTunedModel
-	basePrompt := getSystemPrompt(req.Filename, req.DataContext, "")
+	// Get all source file names for the model
+	promptFilename := req.Filename
+	fmt.Printf("DEBUG REQ: FineTunedModel=%q Filename=%q\n", req.FineTunedModel, req.Filename)
+	if req.FineTunedModel != "" {
+		var mfn FineTunedModel
+		if err := DB.Where("id = ?", req.FineTunedModel).First(&mfn).Error; err == nil {
+			fmt.Printf("DEBUG MODEL: SourceName=%q\n", mfn.SourceName)
+			if mfn.SourceName != "" {
+				promptFilename = mfn.SourceName
+			}
+		} else {
+			fmt.Printf("DEBUG MODEL ERROR: %v\n", err)
+		}
+	}
+	fmt.Printf("DEBUG PROMPT FILENAME: %q\n", promptFilename)
+	basePrompt := getSystemPrompt(promptFilename, req.DataContext, "")
 	var systemPrompt string
 	if fineTunedResult != "" {
 		chunks := chunkAnalysis(fineTunedResult, 80000)
@@ -671,8 +706,15 @@ func ChatHandler(w http.ResponseWriter, r *http.Request) {
 		systemPrompt = basePrompt
 	}
 
+	// Model-specific history key for compare mode
+	historyKey := sessionID
+	if req.CompareGroup != "" && req.FineTunedModel != "" {
+		historyKey = sessionID + "_" + req.FineTunedModel
+	} else if req.CompareGroup != "" {
+		historyKey = sessionID + "_" + req.Model
+	}
 	historyMutex.Lock()
-	history, exists := conversationHistory[sessionID]
+	history, exists := conversationHistory[historyKey]
 	if !exists {
 		history = []ChatMessage{}
 	}
@@ -680,7 +722,7 @@ func ChatHandler(w http.ResponseWriter, r *http.Request) {
 	if len(history) > maxHistoryTurns*2 {
 		history = history[len(history)-maxHistoryTurns*2:]
 	}
-	conversationHistory[sessionID] = history
+	conversationHistory[historyKey] = history
 	historyMutex.Unlock()
 
 	// Check if Claude model - use non-streaming
@@ -701,12 +743,12 @@ func ChatHandler(w http.ResponseWriter, r *http.Request) {
 			historyMutex.Lock()
 			fmt.Printf("DEBUG LLM Response: %s\n", response)
 			if len(response) > 10 {
-				conversationHistory[sessionID] = append(conversationHistory[sessionID], ChatMessage{Role: "assistant", Content: response})
+				conversationHistory[historyKey] = append(conversationHistory[historyKey], ChatMessage{Role: "assistant", Content: response})
 			}
 			historyMutex.Unlock()
 
 			// Save to DB
-			saveMessagesToDB(userID, sessionID, req.Message, response, req.Model, tokens)
+			saveMessagesToDB(userID, sessionID, req.Message, response, req.Model, tokens, req.CompareGroup, req.FineTunedModel)
 
 			fmt.Fprintf(w, "data: [DONE]\n\n")
 			if f, ok := w.(http.Flusher); ok {
@@ -725,12 +767,12 @@ func ChatHandler(w http.ResponseWriter, r *http.Request) {
 		historyMutex.Lock()
 		fmt.Printf("DEBUG LLM Response: %s\n", response)
 		if len(response) > 10 {
-			conversationHistory[sessionID] = append(conversationHistory[sessionID], ChatMessage{Role: "assistant", Content: response})
+			conversationHistory[historyKey] = append(conversationHistory[historyKey], ChatMessage{Role: "assistant", Content: response})
 		}
 		historyMutex.Unlock()
 
 		// Save to DB
-		saveMessagesToDB(userID, sessionID, req.Message, response, req.Model, tokens)
+		saveMessagesToDB(userID, sessionID, req.Message, response, req.Model, tokens, req.CompareGroup, req.FineTunedModel)
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(ChatResponse{
@@ -836,12 +878,12 @@ func ChatHandler(w http.ResponseWriter, r *http.Request) {
 		// Save history
 		historyMutex.Lock()
 		if fullResponse.Len() > 10 {
-			conversationHistory[sessionID] = append(conversationHistory[sessionID], ChatMessage{Role: "assistant", Content: fullResponse.String()})
+			conversationHistory[historyKey] = append(conversationHistory[historyKey], ChatMessage{Role: "assistant", Content: fullResponse.String()})
 		}
 		historyMutex.Unlock()
 
 		// Save to DB
-		saveMessagesToDB(userID, sessionID, req.Message, fullResponse.String(), req.Model, len(fullResponse.String())/4)
+		saveMessagesToDB(userID, sessionID, req.Message, fullResponse.String(), req.Model, len(fullResponse.String())/4, req.CompareGroup, req.FineTunedModel)
 
 		fmt.Fprintf(w, "data: [DONE]\n\n")
 		flusher.Flush()
@@ -889,12 +931,12 @@ func ChatHandler(w http.ResponseWriter, r *http.Request) {
 
 	historyMutex.Lock()
 	if len(assistantMsg) > 10 {
-		conversationHistory[sessionID] = append(conversationHistory[sessionID], ChatMessage{Role: "assistant", Content: assistantMsg})
+		conversationHistory[historyKey] = append(conversationHistory[historyKey], ChatMessage{Role: "assistant", Content: assistantMsg})
 	}
 	historyMutex.Unlock()
 
 	// Save to DB
-	saveMessagesToDB(userID, sessionID, req.Message, assistantMsg, req.Model, openAIResp.Usage.TotalTokens)
+	saveMessagesToDB(userID, sessionID, req.Message, assistantMsg, req.Model, openAIResp.Usage.TotalTokens, req.CompareGroup, req.FineTunedModel)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ChatResponse{
