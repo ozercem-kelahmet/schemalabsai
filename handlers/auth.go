@@ -1112,29 +1112,39 @@ conn.Username, conn.Password, connHost, conn.Port, conn.Database, sslmode)
 	case "databricks":
 		if conn.Host != "" && conn.APIKey != "" {
 			httpClient := &http.Client{Timeout: 30 * time.Second}
-		workspaceURL := "https://" + strings.TrimPrefix(strings.TrimPrefix(conn.Host, "https://"), "http://")
-		catalog := conn.Database
-		if catalog == "" { catalog = "main" }
-		req, _ := http.NewRequest("GET", workspaceURL+"/api/2.1/unity-catalog/tables?catalog_name="+catalog+"&schema_name=default", nil)
-			req.Header.Set("Authorization", "Bearer "+conn.APIKey)
-			resp, err := httpClient.Do(req)
-			if err == nil && resp.StatusCode == 200 {
-				defer resp.Body.Close()
-				var result struct {
-					Tables []struct {
-						Name      string `json:"name"`
-						TableType string `json:"table_type"`
-					} `json:"tables"`
+			workspaceURL := "https://" + strings.TrimPrefix(strings.TrimPrefix(conn.Host, "https://"), "http://")
+			catalog := conn.Database
+			if catalog == "" { catalog = "main" }
+			// List schemas first
+			schReq, _ := http.NewRequest("GET", workspaceURL+"/api/2.1/unity-catalog/schemas?catalog_name="+catalog, nil)
+			schReq.Header.Set("Authorization", "Bearer "+conn.APIKey)
+			schResp, serr := httpClient.Do(schReq)
+			var schemaNames []string
+			if serr == nil && schResp.StatusCode == 200 {
+				var schResult struct { Schemas []struct { Name string `json:"name"` } `json:"schemas"` }
+				json.NewDecoder(schResp.Body).Decode(&schResult)
+				schResp.Body.Close()
+				for _, s := range schResult.Schemas {
+					if s.Name != "information_schema" { schemaNames = append(schemaNames, s.Name) }
 				}
-				json.NewDecoder(resp.Body).Decode(&result)
-				for _, t := range result.Tables {
-					tables = append(tables, t.Name)
-					tableInfos = append(tableInfos, TableInfo{Name: t.Name, Rows: 0, Columns: 0})
-				}
-			} else if err == nil {
-				resp.Body.Close()
+			} else if serr == nil { schResp.Body.Close() }
+			if len(schemaNames) == 0 { schemaNames = []string{"default"} }
+			for _, schema := range schemaNames {
+				tReq, _ := http.NewRequest("GET", workspaceURL+"/api/2.1/unity-catalog/tables?catalog_name="+catalog+"&schema_name="+schema, nil)
+				tReq.Header.Set("Authorization", "Bearer "+conn.APIKey)
+				tResp, terr := httpClient.Do(tReq)
+				if terr == nil && tResp.StatusCode == 200 {
+					var tResult struct { Tables []struct { Name string `json:"name"`; Columns []struct{ Name string `json:"name"` } `json:"columns"` } `json:"tables"` }
+					json.NewDecoder(tResp.Body).Decode(&tResult)
+					tResp.Body.Close()
+					for _, t := range tResult.Tables {
+						tables = append(tables, schema+"."+t.Name)
+						tableInfos = append(tableInfos, TableInfo{Name: schema+"."+t.Name, Rows: 0, Columns: len(t.Columns)})
+					}
+				} else if terr == nil { tResp.Body.Close() }
 			}
 		}
+
 
 	case "pinecone":
 		if conn.Endpoint != "" && conn.APIKey != "" {
