@@ -206,10 +206,11 @@ export function PlaygroundContent({ sessionId: propSessionId }: PlaygroundConten
     } catch {}
     
     const loadAll = async () => {
-      const [modelsRes, filesRes, messagesRes] = await Promise.all([
+      const [modelsRes, filesRes, messagesRes, queriesRes] = await Promise.all([
         api.getFineTunedModels().catch(() => ({ models: [] })),
         api.getUploadedFiles().catch(() => ({ files: [] })),
         sessionId ? api.getMessages(sessionId).catch(() => ({ messages: [] })) : Promise.resolve(null),
+        api.getQueries().catch(() => ({ queries: [] })),
       ])
       const allModels = modelsRes.models && Array.isArray(modelsRes.models) ? modelsRes.models.map(adaptBackendModel) : []
       setBackendModels(allModels)
@@ -218,12 +219,14 @@ export function PlaygroundContent({ sessionId: propSessionId }: PlaygroundConten
         setUploadedFiles(filesRes.files)
       }
       // Set model immediately from messages
+      let modelSetFromMessages = false
       if (messagesRes?.messages?.length > 0 && allModels.length > 0) {
         const modelIds = [...new Set(messagesRes.messages.filter((m: any) => m.role === "assistant" && m.finetuned_model_id).map((m: any) => m.finetuned_model_id))]
         if (modelIds.length > 0) {
           const models = modelIds.map((id: string) => allModels.find(m => m.id === id)).filter(Boolean)
           if (models.length > 0) {
             setSelectedModels(models as any)
+            modelSetFromMessages = true
             if ((models[0] as any)?.datasets?.length > 0) {
               setSelectedFiles((models[0] as any).datasets.map((ds: any) => ({ file_id: ds.datasetId, filename: ds.datasetName, source: ds.source })))
             }
@@ -234,6 +237,40 @@ export function PlaygroundContent({ sessionId: propSessionId }: PlaygroundConten
           const ml = llmMsg.model.toLowerCase()
           if (ml.includes("gpt")) setSelectedLLMs(["gpt-4o"])
           else if (ml.includes("claude")) setSelectedLLMs(["claude-sonnet-4-5"])
+        }
+      }
+      // Fallback: if model not set from messages, try from query
+      if (!modelSetFromMessages && sessionId && allModels.length > 0) {
+        const queryList = queriesRes?.queries || queriesRes || []
+        const thisQuery = Array.isArray(queryList) ? queryList.find((q: any) => q.id === sessionId) : null
+        if (thisQuery?.trainingModelId) {
+          const tid = thisQuery.trainingModelId
+          let model = allModels.find(m => m.id === tid || m.name === tid || m.modelPath === tid)
+          // Fallback: match by date pattern in model path
+          if (!model) {
+            const dateMatch = tid.match(/(\d{8})/)
+            if (dateMatch) {
+              model = allModels.find(m => m.modelPath?.includes(dateMatch[1]) || m.name?.includes(dateMatch[1]))
+            }
+          }
+          if (model) {
+            setSelectedModels([model] as any)
+            modelSetFromMessages = true
+            if ((model as any)?.datasets?.length > 0) {
+              setSelectedFiles((model as any).datasets.map((ds: any) => ({ file_id: ds.datasetId, filename: ds.datasetName, source: ds.source })))
+            }
+          }
+        }
+        // Last fallback: try modelName from query
+        if (!modelSetFromMessages && thisQuery?.modelName) {
+          const model = allModels.find(m => m.name === thisQuery.modelName)
+          if (model) {
+            setSelectedModels([model] as any)
+            modelSetFromMessages = true
+            if ((model as any)?.datasets?.length > 0) {
+              setSelectedFiles((model as any).datasets.map((ds: any) => ({ file_id: ds.datasetId, filename: ds.datasetName, source: ds.source })))
+            }
+          }
         }
       }
       setModelsLoading(false)
