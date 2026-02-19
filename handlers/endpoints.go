@@ -235,6 +235,19 @@ result := map[string]interface{}{
 w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
+
+	// Deduct credits and log usage
+	if DB != nil {
+		var quota UserQuota
+		if DB.Where("user_id = ?", key.UserID).First(&quota).Error == nil {
+			quota.CreditsUsed += 0.02
+			DB.Save(&quota)
+		}
+		DB.Create(&UsageLog{
+			ID: uuid.New().String(), UserID: key.UserID, EventType: "endpoint", EventName: "Endpoint Query: " + path,
+			ResourceID: endpoint.ID, CreditsUsed: 0.02, ModelUsed: endpoint.FineTunedModelID, CreatedAt: time.Now(),
+		})
+	}
 }
 
 // Helper function to check if model is OpenAI

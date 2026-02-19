@@ -1279,7 +1279,10 @@ if req.ConnectionIDs != "" {
 		if conn.SubType == "databricks" && conn.Host != "" && conn.APIKey != "" {
 			httpClient := &http.Client{Timeout: 30 * time.Second}
 			// List tables
-			listReq, _ := http.NewRequest("GET", conn.Host+"/api/2.1/unity-catalog/tables?catalog_name="+conn.Database+"&schema_name=default", nil)
+			dbWorkspaceURL := "https://" + strings.TrimPrefix(strings.TrimPrefix(conn.Host, "https://"), "http://")
+			dbCatalog := conn.Database
+			if dbCatalog == "" { dbCatalog = "main" }
+			listReq, _ := http.NewRequest("GET", dbWorkspaceURL+"/api/2.1/unity-catalog/tables?catalog_name="+dbCatalog+"&schema_name=default", nil)
 			listReq.Header.Set("Authorization", "Bearer "+conn.APIKey)
 			listResp, err := httpClient.Do(listReq)
 			if err != nil {
@@ -1296,7 +1299,7 @@ if req.ConnectionIDs != "" {
 			for _, t := range listResult.Tables {
 				query := fmt.Sprintf("SELECT * FROM %s", t.Name)
 				reqBody, _ := json.Marshal(map[string]interface{}{"statement": query, "warehouse_id": conn.Endpoint})
-				sqlReq, _ := http.NewRequest("POST", conn.Host+"/api/2.0/sql/statements", bytes.NewReader(reqBody))
+				sqlReq, _ := http.NewRequest("POST", dbWorkspaceURL+"/api/2.0/sql/statements", bytes.NewReader(reqBody))
 				sqlReq.Header.Set("Authorization", "Bearer "+conn.APIKey)
 				sqlReq.Header.Set("Content-Type", "application/json")
 				sqlResp, serr := httpClient.Do(sqlReq)

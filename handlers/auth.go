@@ -355,6 +355,7 @@ type Message struct {
 	CreatedAt time.Time `json:"created_at"`
 FineTunedModelID string `json:"finetuned_model_id"`
 	CompareGroup     string `json:"compare_group"`
+	TimeTaken        string `json:"time_taken"`
 }
 
 // QueryFile - many to many
@@ -1109,9 +1110,12 @@ conn.Username, conn.Password, connHost, conn.Port, conn.Database, sslmode)
 		}
 
 	case "databricks":
-		if conn.Endpoint != "" && conn.APIKey != "" {
-			httpClient := &http.Client{Timeout: 15 * time.Second}
-			req, _ := http.NewRequest("GET", conn.Endpoint+"/api/2.1/unity-catalog/tables?catalog_name=main&schema_name=default", nil)
+		if conn.Host != "" && conn.APIKey != "" {
+			httpClient := &http.Client{Timeout: 30 * time.Second}
+		workspaceURL := "https://" + strings.TrimPrefix(strings.TrimPrefix(conn.Host, "https://"), "http://")
+		catalog := conn.Database
+		if catalog == "" { catalog = "main" }
+		req, _ := http.NewRequest("GET", workspaceURL+"/api/2.1/unity-catalog/tables?catalog_name="+catalog+"&schema_name=default", nil)
 			req.Header.Set("Authorization", "Bearer "+conn.APIKey)
 			resp, err := httpClient.Do(req)
 			if err == nil && resp.StatusCode == 200 {
@@ -1253,7 +1257,7 @@ conn.Username, conn.Password, connHost, conn.Port, conn.Database, sslmode)
 
 	case "rest_api":
 		if conn.Endpoint != "" {
-			httpClient := &http.Client{Timeout: 15 * time.Second}
+			httpClient := &http.Client{Timeout: 30 * time.Second}
 			req, _ := http.NewRequest("GET", conn.Endpoint, nil)
 			if conn.APIKey != "" {
 				req.Header.Set("Authorization", "Bearer "+conn.APIKey)
@@ -1261,7 +1265,7 @@ conn.Username, conn.Password, connHost, conn.Port, conn.Database, sslmode)
 			resp, err := httpClient.Do(req)
 			if err == nil && resp.StatusCode == 200 {
 				defer resp.Body.Close()
-				bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+				bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 				var jsonArray []interface{}
 				if json.Unmarshal(bodyBytes, &jsonArray) == nil && len(jsonArray) > 0 {
 					tables = append(tables, "api_data")
@@ -1648,11 +1652,12 @@ mongoURI = fmt.Sprintf("mongodb://%s:%d/%s", conn.Host, conn.Port, conn.Database
 
 
 	case "databricks":
-		if conn.Endpoint != "" && conn.APIKey != "" {
+		if conn.Host != "" && conn.APIKey != "" {
 			httpClient := &http.Client{Timeout: 30 * time.Second}
 			query := fmt.Sprintf("SELECT * FROM %s LIMIT %d", sanitizeTableName(input.TableName), input.Limit)
-			reqBody, _ := json.Marshal(map[string]interface{}{"statement": query, "warehouse_id": conn.Bucket})
-			req, _ := http.NewRequest("POST", conn.Endpoint+"/api/2.0/sql/statements", bytes.NewReader(reqBody))
+			reqBody, _ := json.Marshal(map[string]interface{}{"statement": query, "warehouse_id": conn.Endpoint})
+		workspaceURL := "https://" + strings.TrimPrefix(strings.TrimPrefix(conn.Host, "https://"), "http://")
+		req, _ := http.NewRequest("POST", workspaceURL+"/api/2.0/sql/statements", bytes.NewReader(reqBody))
 			req.Header.Set("Authorization", "Bearer "+conn.APIKey)
 			req.Header.Set("Content-Type", "application/json")
 			resp, err := httpClient.Do(req)

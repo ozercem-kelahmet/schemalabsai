@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 type PredictRequest struct {
@@ -47,6 +50,20 @@ func PredictHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(body)
+
+	// Deduct credits and log usage
+	userID := r.Header.Get("X-User-ID")
+	if userID != "" && DB != nil {
+		var quota UserQuota
+		if DB.Where("user_id = ?", userID).First(&quota).Error == nil {
+			quota.CreditsUsed += 0.05
+			DB.Save(&quota)
+		}
+		DB.Create(&UsageLog{
+			ID: uuid.New().String(), UserID: userID, EventType: "predict", EventName: "Prediction",
+			CreditsUsed: 0.05, ModelUsed: "schema-v0", CreatedAt: time.Now(),
+		})
+	}
 }
 
 func HealthHandler(w http.ResponseWriter, r *http.Request) {

@@ -440,7 +440,7 @@ func isClaudeModel(model string) bool {
 }
 
 // Helper function to save messages to DB
-func saveMessagesToDB(userID, queryID, userMessage, assistantMessage, model string, tokens int, compareGroup string, finetunedModelID ...string) {
+func saveMessagesToDB(userID, queryID, userMessage, assistantMessage, model string, tokens int, compareGroup string, timeTaken string, finetunedModelID ...string) {
 	ftModelID := ""
 	if len(finetunedModelID) > 0 {
 		ftModelID = finetunedModelID[0]
@@ -475,8 +475,37 @@ func saveMessagesToDB(userID, queryID, userMessage, assistantMessage, model stri
 		QueryID:   queryID,
 		UserID:    userID,
 FineTunedModelID: ftModelID,
+	TimeTaken: timeTaken,
 		CreatedAt: time.Now(),
 		CompareGroup:     compareGroup,
+	})
+
+	// Deduct credits and log usage
+	creditCost := float64(tokens) / 1000.0 * 0.01
+	if creditCost < 0.01 { creditCost = 0.01 }
+	if creditCost > 5.0 { creditCost = 5.0 }
+
+	var quota UserQuota
+	if DB.Where("user_id = ?", userID).First(&quota).Error == nil {
+		quota.CreditsUsed += creditCost
+		DB.Save(&quota)
+	}
+
+	eventName := "Chat Query"
+	if ftModelID != "" {
+		eventName = "Chat Query (Fine-tuned)"
+	}
+	DB.Create(&UsageLog{
+		ID:           uuid.New().String(),
+		UserID:       userID,
+		EventType:    "chat",
+		EventName:    eventName,
+		ResourceID:   queryID,
+		ResourceName: model,
+		CreditsUsed:  creditCost,
+		TokensUsed:   tokens,
+		ModelUsed:    model,
+		CreatedAt:    time.Now(),
 	})
 }
 
@@ -612,6 +641,7 @@ func chunkAnalysis(analysis string, maxChars int) []string {
 }
 
 func ChatHandler(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -748,7 +778,7 @@ fmt.Println("DEBUG: fineTunedResult does NOT contain vsRaptors")
 			historyMutex.Unlock()
 
 			// Save to DB
-			saveMessagesToDB(userID, sessionID, req.Message, response, req.Model, tokens, req.CompareGroup, req.FineTunedModel)
+			saveMessagesToDB(userID, sessionID, req.Message, response, req.Model, tokens, req.CompareGroup, fmt.Sprintf("%.1fs", time.Since(startTime).Seconds()), req.FineTunedModel)
 
 			fmt.Fprintf(w, "data: [DONE]\n\n")
 			if f, ok := w.(http.Flusher); ok {
@@ -772,7 +802,7 @@ fmt.Println("DEBUG: fineTunedResult does NOT contain vsRaptors")
 		historyMutex.Unlock()
 
 		// Save to DB
-		saveMessagesToDB(userID, sessionID, req.Message, response, req.Model, tokens, req.CompareGroup, req.FineTunedModel)
+		saveMessagesToDB(userID, sessionID, req.Message, response, req.Model, tokens, req.CompareGroup, fmt.Sprintf("%.1fs", time.Since(startTime).Seconds()), req.FineTunedModel)
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(ChatResponse{
@@ -883,7 +913,7 @@ fmt.Println("DEBUG: fineTunedResult does NOT contain vsRaptors")
 		historyMutex.Unlock()
 
 		// Save to DB
-		saveMessagesToDB(userID, sessionID, req.Message, fullResponse.String(), req.Model, len(fullResponse.String())/4, req.CompareGroup, req.FineTunedModel)
+		saveMessagesToDB(userID, sessionID, req.Message, fullResponse.String(), req.Model, len(fullResponse.String())/4, req.CompareGroup, fmt.Sprintf("%.1fs", time.Since(startTime).Seconds()), req.FineTunedModel)
 
 		fmt.Fprintf(w, "data: [DONE]\n\n")
 		flusher.Flush()
@@ -936,7 +966,7 @@ fmt.Println("DEBUG: fineTunedResult does NOT contain vsRaptors")
 	historyMutex.Unlock()
 
 	// Save to DB
-	saveMessagesToDB(userID, sessionID, req.Message, assistantMsg, req.Model, openAIResp.Usage.TotalTokens, req.CompareGroup, req.FineTunedModel)
+	saveMessagesToDB(userID, sessionID, req.Message, assistantMsg, req.Model, openAIResp.Usage.TotalTokens, req.CompareGroup, fmt.Sprintf("%.1fs", time.Since(startTime).Seconds()), req.FineTunedModel)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ChatResponse{

@@ -402,6 +402,7 @@ api.getMessages(sessionId)
               modelId: m.finetuned_model_id || "",
               compareGroup: m.compare_group || "",
               tokens: m.tokens,
+              time: m.time_taken || "",
               timestamp: new Date(m.created_at),
             }))
             
@@ -697,11 +698,12 @@ api.getMessages(sessionId)
 
     // MODEL COMPARE: If compare mode with multiple models
     if (compareMode && selectedModels.length > 1) {
+      const llmName = llmOptions.find(l => l.id === selectedLLMs[0])?.name || selectedLLMs[0]
       const assistantMsgs: DisplayMessage[] = selectedModels.map((model, idx) => ({
         id: `assistant-${Date.now()}-model-${idx}`,
         role: "assistant" as const,
         content: "",
-        model: model.name,
+        model: llmName,
         modelId: model.id,
         timestamp: new Date(),
         isLoading: true,
@@ -1055,6 +1057,7 @@ api.getMessages(sessionId)
           content: m.content,
           model: m.model,
           tokens: m.tokens,
+              time: m.time_taken || "",
           timestamp: new Date(m.created_at),
           query_id: m.query_id,
         }))
@@ -1203,7 +1206,7 @@ api.getMessages(sessionId)
 
   return (
     <TooltipProvider>
-      <div className="flex h-[calc(100vh-6rem)] flex-col relative">
+      <div className="flex h-[calc(100vh-1.5rem)] flex-col relative -mb-6">
         {/* Header Controls */}
         <div className="shrink-0 border-b border-border px-3 md:px-4 py-2 md:py-3">
           <div className="flex items-center justify-between gap-2 md:gap-4">
@@ -1327,11 +1330,11 @@ api.getMessages(sessionId)
                   if (isCompareGroup && msg.role === "assistant") {
                     renderedGroups.add(msg.groupId!)
                     return (
-                      <div key={msg.groupId} className={cn("grid gap-3 grid-cols-1", groupMessages.length === 2 && "sm:grid-cols-2", groupMessages.length === 3 && "sm:grid-cols-2 lg:grid-cols-3", groupMessages.length >= 4 && "sm:grid-cols-2 lg:grid-cols-4")}>
+                      <div key={msg.groupId} className={cn("grid gap-3 grid-cols-1", groupMessages.length === 2 && "sm:grid-cols-2", groupMessages.length === 3 && "sm:grid-cols-2 lg:grid-cols-3", groupMessages.length >= 4 && "sm:grid-cols-2 xl:grid-cols-4")}>
                         {groupMessages.map((compareMsg) => (
                           <div key={compareMsg.id} className="space-y-1 min-w-0">
                             <span className="text-xs font-medium px-1 text-muted-foreground">
-                              {compareMsg.model}
+                              {(compareMsg.modelId && backendModels.find(m => m.id === compareMsg.modelId)?.name) || selectedModel?.name || compareMsg.model}
                             </span>
                             <div className="rounded-2xl rounded-tl-md border border-border bg-card p-4 overflow-hidden break-words">
                               {compareMsg.isLoading && !compareMsg.content ? (
@@ -1353,6 +1356,9 @@ api.getMessages(sessionId)
                                   {compareMsg.time && (
                                     <span className="text-xs text-muted-foreground">{compareMsg.time}</span>
                                   )}
+                                  <span className="text-[10px] text-muted-foreground/70 ml-auto">
+                                    {compareMsg.model}
+                                  </span>
                                 </div>
                               )}
                             </div>
@@ -1429,7 +1435,7 @@ api.getMessages(sessionId)
         {/* Input Area */}
         <div className="shrink-0 px-4 pb-0 pt-2">
           <form onSubmit={handleSubmit} className={cn("mx-auto", compareMode ? "max-w-full px-4" : "max-w-4xl")}>
-            <div className="rounded-2xl border border-border bg-card p-3">
+            <div className="rounded-2xl border border-border p-3">
               <Textarea
                 ref={textareaRef}
                 value={input}
@@ -1500,7 +1506,7 @@ api.getMessages(sessionId)
               </div>
             </div>
           </form>
-          <p className="text-center text-[11px] text-muted-foreground mt-1 mb-0">v.Alpha: Outputs may be incorrect, verify important information.</p>
+          <p className="text-center text-[11px] text-muted-foreground mt-1 mb-0 pb-1">v.Alpha: Outputs may be incorrect, verify important information.</p>
         </div>
       </div>
     </TooltipProvider>

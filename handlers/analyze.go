@@ -6,6 +6,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // AnalyzeHandler - API Key ile dosya analizi (CSV, Excel, JSON)
@@ -74,4 +76,17 @@ func AnalyzeHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
+
+	// Deduct credits and log usage
+	if DB != nil {
+		var quota UserQuota
+		if DB.Where("user_id = ?", userID).First(&quota).Error == nil {
+			quota.CreditsUsed += 0.10
+			DB.Save(&quota)
+		}
+		DB.Create(&UsageLog{
+			ID: uuid.New().String(), UserID: userID, EventType: "analyze", EventName: "Data Analysis",
+			CreditsUsed: 0.10, ModelUsed: "schema-v0", CreatedAt: time.Now(),
+		})
+	}
 }
