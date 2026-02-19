@@ -284,7 +284,7 @@ export function BuildWizard() {
           // Terminaldeki epochs gelince kilitle, geri donmesin
           const serverEpochs = progress.epochs
           const epochs = (serverEpochs && serverEpochs > 0) ? serverEpochs : totalEpochs
-          if (serverEpochs && serverEpochs > 0 && totalEpochs === 5) {
+          if (serverEpochs && serverEpochs > 0) {
             setTotalEpochs(serverEpochs)
           }
 

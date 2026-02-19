@@ -412,6 +412,8 @@ type Connection struct {
 	SSL          bool       `json:"ssl"`
 	Status       string     `json:"status"` // active, error, disconnected
 	LastTestedAt *time.Time `json:"last_tested_at"`
+	CachedTables string     `json:"cached_tables"`
+	CachedAt     *time.Time `json:"cached_at"`
 	UserID       string     `json:"user_id"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`
@@ -628,11 +630,16 @@ func TestConnectionHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 	case "mongodb":
-		if input.Host != "" && input.Database != "" {
-			mongoURI := fmt.Sprintf("mongodb://%s:%s@%s:%d/%s", input.Username, input.Password, input.Host, input.Port, input.Database)
-			if input.Username == "" {
-				mongoURI = fmt.Sprintf("mongodb://%s:%d/%s", input.Host, input.Port, input.Database)
-			}
+	var mongoURI string
+	if input.Endpoint != "" {
+		mongoURI = input.Endpoint
+	} else if input.Host != "" && input.Database != "" {
+		mongoURI = fmt.Sprintf("mongodb://%s:%s@%s:%d/%s", input.Username, input.Password, input.Host, input.Port, input.Database)
+		if input.Username == "" {
+			mongoURI = fmt.Sprintf("mongodb://%s:%d/%s", input.Host, input.Port, input.Database)
+		}
+	}
+	if mongoURI != "" {
 			clientOptions := options.Client().ApplyURI(mongoURI).SetConnectTimeout(10 * time.Second)
 			client, err := mongo.Connect(context.Background(), clientOptions)
 			if err != nil {
@@ -651,7 +658,7 @@ func TestConnectionHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		} else {
 			success = false
-			message = "Host and database required"
+			message = "Connection string or host+database required"
 		}
 
 	case "pinecone":
@@ -853,9 +860,11 @@ func TestConnectionHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 	case "databricks":
-		if input.Endpoint != "" && input.APIKey != "" {
+		if (input.Host != "" || input.Endpoint != "") && input.APIKey != "" {
 			client := &http.Client{Timeout: 10 * time.Second}
-			req, _ := http.NewRequest("GET", input.Endpoint+"/api/2.0/clusters/list", nil)
+			workspaceURL := input.Host
+			if workspaceURL == "" { workspaceURL = input.Endpoint }
+			req, _ := http.NewRequest("GET", workspaceURL+"/api/2.0/clusters/list", nil)
 			req.Header.Set("Authorization", "Bearer "+input.APIKey)
 			resp, err := client.Do(req)
 			if err != nil {
@@ -955,6 +964,13 @@ func ListTablesHandler(w http.ResponseWriter, r *http.Request) {
 		Name    string `json:"name"`
 		Rows    int64  `json:"rows"`
 		Columns int    `json:"columns"`
+	}
+
+	// Check cache first (5 min TTL)
+	if conn.CachedTables != "" && conn.CachedAt != nil && time.Since(*conn.CachedAt) < 5*time.Minute {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(conn.CachedTables))
+		return
 	}
 
 	var tableInfos []TableInfo
@@ -1064,10 +1080,15 @@ conn.Username, conn.Password, connHost, conn.Port, conn.Database, sslmode)
 		}
 
 	case "mongodb":
-		mongoURI := fmt.Sprintf("mongodb://%s:%s@%s:%d/%s", conn.Username, conn.Password, conn.Host, conn.Port, conn.Database)
+	var mongoURI string
+	if conn.Endpoint != "" {
+		mongoURI = conn.Endpoint
+	} else {
+		mongoURI = fmt.Sprintf("mongodb://%s:%s@%s:%d/%s", conn.Username, conn.Password, conn.Host, conn.Port, conn.Database)
 		if conn.Username == "" {
 			mongoURI = fmt.Sprintf("mongodb://%s:%d/%s", conn.Host, conn.Port, conn.Database)
 		}
+	}
 		clientOptions := options.Client().ApplyURI(mongoURI).SetConnectTimeout(10 * time.Second)
 		client, err := mongo.Connect(context.Background(), clientOptions)
 		if err != nil {
@@ -1301,6 +1322,40 @@ conn.Username, conn.Password, connHost, conn.Port, conn.Database, sslmode)
 						tableInfos = append(tableInfos, TableInfo{Name: t.Name, Rows: 0, Columns: len(t.Fields)})
 					}
 				}
+// Query type'dan field isimlerini al ve her biri icin row count cek
+for _, t := range result.Data.Schema.Types {
+if t.Name == "Query" {
+for _, f := range t.Fields {
+queryName := f.Name
+gqlQuery := fmt.Sprintf(`{"query":"{ %s { __typename } }"}`, queryName)
+countReq, _ := http.NewRequest("POST", conn.Endpoint, strings.NewReader(gqlQuery))
+countReq.Header.Set("Content-Type", "application/json")
+if conn.APIKey != "" {
+countReq.Header.Set("Authorization", "Bearer "+conn.APIKey)
+}
+countResp, cerr := httpClient.Do(countReq)
+if cerr == nil && countResp.StatusCode == 200 {
+var countResult map[string]interface{}
+json.NewDecoder(countResp.Body).Decode(&countResult)
+countResp.Body.Close()
+if data, ok := countResult["data"].(map[string]interface{}); ok {
+if arr, ok := data[queryName].([]interface{}); ok {
+for ti := range tableInfos {
+lowerName := strings.ToLower(tableInfos[ti].Name)
+if strings.EqualFold(tableInfos[ti].Name, queryName) || lowerName+"s" == queryName || lowerName+"ies" == strings.Replace(queryName, "ies", "ies", 1) {
+tableInfos[ti].Rows = int64(len(arr))
+break
+}
+}
+}
+}
+} else if cerr == nil {
+countResp.Body.Close()
+}
+}
+break
+}
+}
 			} else if err == nil {
 				resp.Body.Close()
 			}
@@ -1399,15 +1454,19 @@ conn.Username, conn.Password, connHost, conn.Port, conn.Database, sslmode)
 				resp.Body.Close()
 			}
 		}
-		return
 	}
 
-	if len(tableInfos) > 0 {
-		json.NewEncoder(w).Encode(map[string]interface{}{"tables": tables, "table_details": tableInfos})
-	} else {
-		json.NewEncoder(w).Encode(map[string]interface{}{"tables": tables})
-	}
+// Cache results to DB
+responseData := map[string]interface{}{"tables": tables}
+if len(tableInfos) > 0 {
+responseData["table_details"] = tableInfos
 }
+cacheBytes, _ := json.Marshal(responseData)
+now := time.Now()
+DB.Model(&Connection{}).Where("id = ?", conn.ID).Updates(map[string]interface{}{"cached_tables": string(cacheBytes), "cached_at": now})
+json.NewEncoder(w).Encode(responseData)
+}
+
 
 // Export table to CSV
 func ExportTableHandler(w http.ResponseWriter, r *http.Request) {
@@ -1512,10 +1571,15 @@ func ExportTableHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 	case "mongodb":
-		mongoURI := fmt.Sprintf("mongodb://%s:%s@%s:%d/%s", conn.Username, conn.Password, conn.Host, conn.Port, conn.Database)
-		if conn.Username == "" {
-			mongoURI = fmt.Sprintf("mongodb://%s:%d/%s", conn.Host, conn.Port, conn.Database)
-		}
+var mongoURI string
+if conn.Endpoint != "" {
+mongoURI = conn.Endpoint
+} else {
+mongoURI = fmt.Sprintf("mongodb://%s:%s@%s:%d/%s", conn.Username, conn.Password, conn.Host, conn.Port, conn.Database)
+if conn.Username == "" {
+mongoURI = fmt.Sprintf("mongodb://%s:%d/%s", conn.Host, conn.Port, conn.Database)
+}
+}
 		clientOptions := options.Client().ApplyURI(mongoURI).SetConnectTimeout(10 * time.Second)
 		mongoClient, err := mongo.Connect(context.Background(), clientOptions)
 		if err != nil {

@@ -25,7 +25,7 @@ interface ConnectionData {
   files?: File[]
 }
 
-type DatabaseProvider = "postgresql" | "mysql" | "supabase" | "mongodb" | "databricks" | "snowflake" | "pinecone" | "weaviate" | "chroma" | "lancedb"
+type DatabaseProvider = "postgresql" | "mysql" | "supabase" | "mongodb" | "databricks" | "snowflake" | "pinecone" | "chroma"
 type CloudProvider = "google-drive" | "gcs" | "aws-s3"
 
 const databaseProviders: { id: DatabaseProvider; name: string; icon: React.ReactNode; description: string }[] = [
@@ -36,9 +36,7 @@ const databaseProviders: { id: DatabaseProvider; name: string; icon: React.React
   { id: "databricks", name: "Databricks", description: "Unified analytics platform", icon: <svg viewBox="0 0 24 24" className="h-5 w-5 text-[#FF3621]" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" /></svg> },
   { id: "snowflake", name: "Snowflake", description: "Cloud data warehouse", icon: <Database className="h-5 w-5 text-[#29B5E8]" /> },
   { id: "pinecone", name: "Pinecone", description: "Vector database for AI", icon: <Database className="h-5 w-5 text-[#7B61FF]" /> },
-  { id: "weaviate", name: "Weaviate", description: "Open-source vector database", icon: <Database className="h-5 w-5 text-[#00C8A8]" /> },
   { id: "chroma", name: "Chroma", description: "Embedding database", icon: <Database className="h-5 w-5 text-[#FFD700]" /> },
-  { id: "lancedb", name: "LanceDB", description: "Serverless vector database", icon: <Database className="h-5 w-5 text-[#3B82F6]" /> },
 ]
 
 const cloudProviders: { id: CloudProvider; name: string; description: string; icon: React.ReactNode }[] = [
@@ -143,9 +141,12 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
     } else if (databaseProviders.find(p => p.id === selectedProvider)) {
       connection.type = "database"
       connection.subType = selectedProvider || undefined
-      const isRelationalDB = ["postgresql", "mysql", "supabase", "mongodb", "snowflake", "databricks"].includes(selectedProvider || "")
+      const isRelationalDB = ["postgresql", "mysql", "supabase"].includes(selectedProvider || "")
+      const isMongoOrAdvanced = ["mongodb", "snowflake", "databricks"].includes(selectedProvider || "")
       if (isRelationalDB) {
         connection.config = { host: dbHost, port: dbPort, database: dbName, username: dbUser, password: dbPassword, ssl: selectedProvider === "supabase" }
+      } else if (isMongoOrAdvanced) {
+        connection.config = { endpoint, authToken, host: dbHost, port: dbPort, database: dbName, username: dbUser, password: dbPassword }
       } else {
         connection.config = { apiKey, endpoint }
       }
@@ -172,8 +173,11 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
     const cloudProvider = cloudProviders.find(p => p.id === selectedProvider)
 
     if (dbProvider) {
-      const isRelational = ["postgresql", "mysql", "supabase", "mongodb", "snowflake", "databricks"].includes(selectedProvider || "")
-      const isVectorDB = ["pinecone", "weaviate", "chroma", "lancedb"].includes(selectedProvider || "")
+      const isRelational = ["postgresql", "mysql", "supabase"].includes(selectedProvider || "")
+      const isMongoDB = selectedProvider === "mongodb"
+      const isDatabricks = selectedProvider === "databricks"
+      const isSnowflake = selectedProvider === "snowflake"
+      const isVectorDB = ["pinecone", "chroma"].includes(selectedProvider || "")
       return (
         <div className="space-y-3 animate-in fade-in-50 duration-200">
           <div className="flex items-center gap-3 pb-3 border-b border-border">
@@ -192,33 +196,123 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
               placeholder={`My ${dbProvider.name}`} className="bg-card border-border text-foreground" />
           </div>
 
-          {isRelational ? (
+          {isMongoDB ? (
+            <>
+              <div className="space-y-1">
+                <Label className="text-foreground text-xs">Connection Method</Label>
+                <div className="text-xs text-muted-foreground bg-muted/50 rounded px-2 py-1.5">MongoDB Driver (python)</div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-foreground text-xs">Connection String <span className="text-red-500">*</span></Label>
+                <Input value={endpoint} onChange={(e) => setEndpoint(e.target.value)}
+                  placeholder="mongodb+srv://admin:<db_password>@<cluster>.v8arnsh.mongodb.net/?appName=<app_name>" className="bg-card border-border text-foreground font-mono text-xs" />
+              </div>
+              <Button onClick={() => handleConnect("database")}
+                disabled={!connectionName || !endpoint}
+                className="w-full bg-[#0052CC] hover:bg-[#003D99] text-white">
+                Connect MongoDB
+              </Button>
+            </>
+          ) : isDatabricks ? (
+            <>
+              <div className="space-y-1">
+                <Label className="text-foreground text-xs">Connection Method</Label>
+                <div className="text-xs text-muted-foreground bg-muted/50 rounded px-2 py-1.5">REST API</div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-foreground text-xs">Workspace URL <span className="text-red-500">*</span></Label>
+                <Input value={dbHost} onChange={(e) => setDbHost(e.target.value)}
+                  placeholder="https://dbc-xxxxx.cloud.databricks.com" className="bg-card border-border text-foreground" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-foreground text-xs">Access Token <span className="text-red-500">*</span></Label>
+                <Input type="password" value={authToken} onChange={(e) => setAuthToken(e.target.value)}
+                  placeholder="dapi..." className="bg-card border-border text-foreground" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-foreground text-xs">SQL Warehouse HTTP Path <span className="text-red-500">*</span></Label>
+                <Input value={endpoint} onChange={(e) => setEndpoint(e.target.value)}
+                  placeholder="/sql/1.0/warehouses/xxxxx" className="bg-card border-border text-foreground" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-foreground text-xs">Catalog <span className="text-red-500">*</span></Label>
+                <Input value={dbName} onChange={(e) => setDbName(e.target.value)}
+                  placeholder="main" className="bg-card border-border text-foreground" />
+              </div>
+              <Button onClick={() => handleConnect("database")}
+                disabled={!connectionName || !dbHost || !authToken || !endpoint || !dbName}
+                className="w-full bg-[#0052CC] hover:bg-[#003D99] text-white">
+                Connect Databricks
+              </Button>
+            </>
+          ) : isSnowflake ? (
+            <>
+              <div className="space-y-1">
+                <Label className="text-foreground text-xs">Connection Method</Label>
+                <div className="text-xs text-muted-foreground bg-muted/50 rounded px-2 py-1.5">Snowflake Connector</div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-foreground text-xs">Account Identifier <span className="text-red-500">*</span></Label>
+                <Input value={dbHost} onChange={(e) => setDbHost(e.target.value)}
+                  placeholder="orgname-accountname" className="bg-card border-border text-foreground" />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-foreground text-xs">Username <span className="text-red-500">*</span></Label>
+                  <Input value={dbUser} onChange={(e) => setDbUser(e.target.value)}
+                    placeholder="your_username" className="bg-card border-border text-foreground" />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-foreground text-xs">Password <span className="text-red-500">*</span></Label>
+                  <Input type="password" value={dbPassword} onChange={(e) => setDbPassword(e.target.value)}
+                    placeholder="••••••••" className="bg-card border-border text-foreground" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-foreground text-xs">Database <span className="text-red-500">*</span></Label>
+                  <Input value={dbName} onChange={(e) => setDbName(e.target.value)}
+                    placeholder="MY_DATABASE" className="bg-card border-border text-foreground" />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-foreground text-xs">Warehouse <span className="text-red-500">*</span></Label>
+                  <Input value={endpoint} onChange={(e) => setEndpoint(e.target.value)}
+                    placeholder="COMPUTE_WH" className="bg-card border-border text-foreground" />
+                </div>
+              </div>
+              <Button onClick={() => handleConnect("database")}
+                disabled={!connectionName || !dbHost || !dbUser || !dbPassword || !dbName || !endpoint}
+                className="w-full bg-[#0052CC] hover:bg-[#003D99] text-white">
+                Connect Snowflake
+              </Button>
+            </>
+          ) : isRelational ? (
             <>
               <div className="grid grid-cols-3 gap-2">
                 <div className="col-span-2 space-y-1">
-                  <Label className="text-foreground text-xs">Host</Label>
+                  <Label className="text-foreground text-xs">Host <span className="text-red-500">*</span></Label>
                   <Input value={dbHost} onChange={(e) => setDbHost(e.target.value)}
                     placeholder={selectedProvider === "supabase" ? "db.xxxx.supabase.co" : "localhost"} className="bg-card border-border text-foreground" />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-foreground text-xs">Port</Label>
+                  <Label className="text-foreground text-xs">Port <span className="text-red-500">*</span></Label>
                   <Input value={dbPort} onChange={(e) => setDbPort(e.target.value)}
-                    placeholder={selectedProvider === "mongodb" ? "27017" : selectedProvider === "mysql" ? "3306" : "5432"} className="bg-card border-border text-foreground" />
+                    placeholder={selectedProvider === "mysql" ? "3306" : "5432"} className="bg-card border-border text-foreground" />
                 </div>
               </div>
               <div className="space-y-1">
-                <Label className="text-foreground text-xs">Database</Label>
+                <Label className="text-foreground text-xs">Database <span className="text-red-500">*</span></Label>
                 <Input value={dbName} onChange={(e) => setDbName(e.target.value)}
                   placeholder={selectedProvider === "supabase" ? "postgres" : "mydb"} className="bg-card border-border text-foreground" />
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
-                  <Label className="text-foreground text-xs">Username</Label>
+                  <Label className="text-foreground text-xs">Username <span className="text-red-500">*</span></Label>
                   <Input value={dbUser} onChange={(e) => setDbUser(e.target.value)}
                     placeholder={selectedProvider === "supabase" ? "postgres" : "user"} className="bg-card border-border text-foreground" />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-foreground text-xs">Password</Label>
+                  <Label className="text-foreground text-xs">Password <span className="text-red-500">*</span></Label>
                   <Input type="password" value={dbPassword} onChange={(e) => setDbPassword(e.target.value)}
                     placeholder="••••••••" className="bg-card border-border text-foreground" />
                 </div>

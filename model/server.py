@@ -2348,7 +2348,8 @@ def finetune(bypass_queue=False):
         session = get_session(query_id)
         # print(f"DEBUG FINETUNE START: query_id={query_id}, epochs_req={epochs_req}, analyze_only={analyze_only}")
         # Reset session for new training
-        session.update({"epoch": 0, "epochs": 0, "accuracy": 0.0, "loss": 0.0, "status": "starting", "eta": "0%", "start_time": time.time(), "query_id": query_id, "user_id": request.headers.get("X-User-ID")})
+        initial_epochs = int(request.form.get('epochs', 5)) or 5
+        session.update({"epoch": 0, "epochs": initial_epochs, "accuracy": 0.0, "loss": 0.0, "status": "training", "eta": "0%", "start_time": time.time(), "query_id": query_id, "user_id": request.headers.get("X-User-ID")})
         save_session(query_id, session)
         
         merge_files = request.form.get('merge_files', 'false').lower() == 'true'
@@ -2621,7 +2622,7 @@ def finetune(bypass_queue=False):
         else:  # cok az data, cok parametre
             base = int(40 + class_factor * 8 + feat_factor * 5)
         # Patience ekle (early stop margin) ve sinirla
-        estimated_epochs = max(patience + 2, min(max_epochs, base + patience))
+        estimated_epochs = min(epochs, max_epochs)  # basit: kullanıcı epochs veya max
         session["epochs"] = estimated_epochs
         training_progress.update(session)
         print(f"📊 Training loop starting: max_epochs={max_epochs}, best_acc={best_acc}")
@@ -2728,8 +2729,9 @@ def finetune(bypass_queue=False):
                 eta = "..."
             
             session["epoch"] = current_epoch
-            # Early stop olacaksa epochs'u güncelle
-            # epochs degismez, sadece epoch ilerler
+            # Epoch sayısı epochs'u geçtiyse güncelle
+            if current_epoch >= session["epochs"]:
+                session["epochs"] = current_epoch + 1
             session["accuracy"] = acc
             session["loss"] = avg_loss
             session["eta"] = eta
@@ -2740,6 +2742,10 @@ def finetune(bypass_queue=False):
             
             if best_acc >= 99.0:
                 print(f"🎉 %99+ accuracy - MÜKEMMEL!")
+                session["epochs"] = current_epoch
+                session["epoch"] = current_epoch
+                session["accuracy"] = best_acc
+                training_progress.update(session)
                 break
             
             if best_acc >= 99.0 and no_improve >= patience:  # %99 hedef
@@ -2761,6 +2767,9 @@ def finetune(bypass_queue=False):
             ft_model.load_state_dict(best_state)
         
         session["status"] = "completed"
+        session["epochs"] = current_epoch
+        session["epoch"] = current_epoch
+        session["accuracy"] = best_acc
         # Get user email from session/database
         # Get user email from DB via query_id
         try:

@@ -27,6 +27,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+sf "github.com/snowflakedb/gosnowflake"
 	gormpg "gorm.io/driver/postgres"
 	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -424,9 +425,14 @@ func getConnectionChecksum(conn Connection) string {
 		return fmt.Sprintf("mysql-%d-%s", count, checksum)
 
 	case "mongodb":
-		mongoURI := fmt.Sprintf("mongodb://%s:%s@%s:%d/%s", conn.Username, conn.Password, conn.Host, conn.Port, conn.Database)
-		if conn.Username == "" {
-			mongoURI = fmt.Sprintf("mongodb://%s:%d/%s", conn.Host, conn.Port, conn.Database)
+		var mongoURI string
+		if conn.Endpoint != "" {
+			mongoURI = conn.Endpoint
+		} else {
+			mongoURI = fmt.Sprintf("mongodb://%s:%s@%s:%d/%s", conn.Username, conn.Password, conn.Host, conn.Port, conn.Database)
+			if conn.Username == "" {
+				mongoURI = fmt.Sprintf("mongodb://%s:%d/%s", conn.Host, conn.Port, conn.Database)
+			}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -637,9 +643,14 @@ func fetchConnectionData(conn Connection, userID string) []string {
 		}
 
 	case "mongodb":
-		mongoURI := fmt.Sprintf("mongodb://%s:%s@%s:%d/%s", conn.Username, conn.Password, conn.Host, conn.Port, conn.Database)
-		if conn.Username == "" {
-			mongoURI = fmt.Sprintf("mongodb://%s:%d/%s", conn.Host, conn.Port, conn.Database)
+		var mongoURI string
+		if conn.Endpoint != "" {
+			mongoURI = conn.Endpoint
+		} else {
+			mongoURI = fmt.Sprintf("mongodb://%s:%s@%s:%d/%s", conn.Username, conn.Password, conn.Host, conn.Port, conn.Database)
+			if conn.Username == "" {
+				mongoURI = fmt.Sprintf("mongodb://%s:%d/%s", conn.Host, conn.Port, conn.Database)
+			}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -656,21 +667,29 @@ func fetchConnectionData(conn Connection, userID string) []string {
 
 	case "snowflake":
 		if conn.Host == "" { return nil }
-		// Snowflake uses same SQL pattern as PostgreSQL
-		sslMode := "require"
-		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-			conn.Host, conn.Port, conn.Username, conn.Password, conn.Database, sslMode)
-		tempDB, err := gorm.Open(gormpg.Open(dsn), &gorm.Config{})
+		sfCfg := &sf.Config{
+			Account:   conn.Host,
+			User:      conn.Username,
+			Password:  conn.Password,
+			Database:  conn.Database,
+			Warehouse: conn.Bucket,
+		}
+		sfDsn, err := sf.DSN(sfCfg)
 		if err != nil { return nil }
-		sqlDB, _ := tempDB.DB()
-		defer sqlDB.Close()
-		rows, _ := sqlDB.Query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
+		sfDB, err := sql.Open("snowflake", sfDsn)
+		if err != nil { return nil }
+		defer sfDB.Close()
+		rows, _ := sfDB.Query("SHOW TABLES")
 		if rows != nil {
 			var tables []string
-			for rows.Next() { var t string; rows.Scan(&t); tables = append(tables, t) }
+			for rows.Next() {
+				var createdOn, name, kind, dbName, schemaName string
+				rows.Scan(&createdOn, &name, &kind, &dbName, &schemaName)
+				tables = append(tables, name)
+			}
 			rows.Close()
 			for _, table := range tables {
-				fid := exportTableToCSV(sqlDB, table, conn, userID)
+				fid := exportTableToCSV(sfDB, table, conn, userID)
 				if fid != "" { fileIDs = append(fileIDs, fid) }
 			}
 		}

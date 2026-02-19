@@ -1369,20 +1369,18 @@ api.getMessages(sessionId)
                           <div className="rounded-2xl rounded-tr-md bg-[#0052CC] px-4 py-2.5 text-white">
                             <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
                           </div>
-                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-gray-600 to-gray-700">
-                            <User className="h-4 w-4 text-white" />
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted">
+                            <User className="h-4 w-4 text-muted-foreground" />
                           </div>
                         </div>
                       ) : (
-                        <div className="flex items-start gap-3 max-w-[90%]">
-                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-[#2684FF] to-[#0052CC]">
-                            <Sparkles className="h-4 w-4 text-white" />
+                        <div className="flex items-start gap-3">
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted">
+                            <Box className="h-4 w-4 text-muted-foreground" />
                           </div>
-                          <div className="flex-1 space-y-2">
-                            {msg.model && (
-                              <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground mb-2 inline-block">{msg.model}</span>
-                            )}
+                          <div className="flex-1">
                             <div className="rounded-2xl rounded-tl-md border border-border bg-card p-4 overflow-hidden break-words">
+
                               {msg.isLoading && !msg.content ? (
                                 <div className="flex gap-1">
                                   <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" />
@@ -1438,7 +1436,7 @@ api.getMessages(sessionId)
                 onChange={handleTextareaChange}
                 onKeyDown={handleKeyDown}
                 placeholder={selectedModel ? "Ask anything about your data..." : "Select a model first..."}
-                className="min-h-[44px] max-h-[200px] resize-none border-0 bg-transparent p-0 text-sm focus-visible:ring-0"
+                className="min-h-[44px] max-h-[200px] resize-none border-0 bg-transparent p-0 text-sm focus-visible:ring-0 placeholder:text-muted-foreground"
                 disabled={isLoading || (!selectedModel && !sessionId)}
                 rows={1}
               />
@@ -1470,25 +1468,32 @@ api.getMessages(sessionId)
                         <div
                           key={llm.id}
                           onClick={() => toggleLLMSelection(llm.id)}
-                          className={cn("flex items-center gap-3 px-2 py-2 cursor-pointer rounded-md", isSelected ? "bg-[#0052CC]/10" : "hover:bg-muted")}
+                          className={cn("flex items-center gap-3 px-2 py-2 cursor-pointer rounded-md transition-colors", isSelected ? "bg-[#0052CC]/10 dark:bg-[#2684FF]/10" : "hover:bg-muted")}
                         >
-                          <Checkbox checked={isSelected} className="pointer-events-none" />
+                          {!compareMode && <Checkbox checked={isSelected} className="pointer-events-none" />}
                           <div className="flex-1">
                             <p className="text-sm font-medium">{llm.name}</p>
                             <p className="text-xs text-muted-foreground">{llm.provider}</p>
                           </div>
+                          {compareMode && isSelected && <Check className="h-4 w-4 text-[#0052CC] dark:text-[#2684FF]" />}
                         </div>
                       )
                     })}
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                      <DropdownMenuSeparator />
+                      <div className="px-2 py-1.5">
+                        <p className="text-[10px] text-muted-foreground">
+                          {compareMode ? "Single LLM in compare mode" : "Select up to 2 LLMs"}
+                        </p>
+                      </div>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
 
                 <Button
                   type="submit"
                   size="sm"
                   disabled={!input.trim() || isLoading || (!selectedModel && !sessionId)}
-                  className={cn("h-8 w-8 rounded-full p-0", input.trim() && (selectedModel || sessionId) ? "bg-[#0052CC] hover:bg-[#003D99] text-white" : "bg-muted text-muted-foreground")}
+                  className={cn("h-8 w-8 rounded-full p-0 transition-colors", input.trim() ? "bg-[#0052CC] hover:bg-[#003D99] text-white" : "bg-muted text-muted-foreground")}
                 >
                   <ArrowUp className="h-4 w-4" />
                 </Button>

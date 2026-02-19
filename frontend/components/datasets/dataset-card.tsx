@@ -4,7 +4,7 @@ import { useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { SourceBadge } from "./source-badge"
 import type { Dataset } from "@/lib/types"
-import { Table, Columns, Pencil, Trash2, Check, X } from "lucide-react"
+import { Table, Columns, Pencil, Trash2, Check, X, Download } from "lucide-react"
 
 interface DatasetCardProps {
   dataset: Dataset
@@ -21,6 +21,8 @@ const verticalLabels: Record<string, string> = {
   hr: "HR",
   operations: "Operations",
 }
+
+const uploadSources = ["upload", "google-drive", "generated"]
 
 export function DatasetCard({ dataset, onViewSchema, onEdit, onDelete }: DatasetCardProps) {
   const [isEditing, setIsEditing] = useState(false)
@@ -64,6 +66,23 @@ export function DatasetCard({ dataset, onViewSchema, onEdit, onDelete }: Dataset
                 <Pencil className="h-3.5 w-3.5" />
               </button>
             )}
+            {/* Download button */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                const API_HOST = window.location.origin.includes(":3000") ? window.location.origin.replace(":3000", ":8080") : window.location.origin
+                const link = document.createElement("a")
+                link.href = API_HOST + "/api/download/" + dataset.id
+                link.download = dataset.name + ".csv"
+                document.body.appendChild(link)
+                link.click()
+                document.body.removeChild(link)
+              }}
+              className="p-1.5 rounded-md bg-background/80 backdrop-blur-sm border border-border hover:bg-[#0052CC]/10 text-muted-foreground hover:text-[#0052CC] transition-colors"
+              title="Download CSV"
+            >
+              <Download className="h-3.5 w-3.5" />
+            </button>
             {onDelete && (
               <button
                 onClick={(e) => { e.stopPropagation(); onDelete(dataset); }}
@@ -128,14 +147,16 @@ export function DatasetCard({ dataset, onViewSchema, onEdit, onDelete }: Dataset
           {dataset.syncStatus && (
             <span
               className={`rounded-md px-2 py-1 text-xs ${
-                dataset.syncStatus === "synced"
-                  ? "bg-emerald-500/10 text-emerald-500"
-                  : dataset.syncStatus === "pending"
+                uploadSources.includes(dataset.source)
+                  ? "bg-muted text-muted-foreground"
+                  : dataset.syncStatus === "synced"
+                    ? "bg-emerald-500/10 text-emerald-500"
+                    : dataset.syncStatus === "pending"
                     ? "bg-yellow-500/10 text-yellow-500"
                     : "bg-orange-500/10 text-orange-500"
               }`}
             >
-              {dataset.syncStatus === "synced" ? "Synced" : dataset.syncStatus === "pending" ? "Pending" : "Outdated"}
+              {uploadSources.includes(dataset.source) ? "Static" : dataset.syncStatus === "synced" ? "Synced" : dataset.syncStatus === "pending" ? "Pending" : "Outdated"}
             </span>
           )}
         </div>

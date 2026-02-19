@@ -96,7 +96,7 @@ export function DatasetGrid() {
             id: c.id,
             name: c.name,
             description: `${c.sub_type || c.type} connection`,
-            source: (c.sub_type === "postgresql" ? "postgresql" : c.sub_type === "mongodb" ? "mongodb" : c.sub_type || "api") as DataSource,
+            source: (c.sub_type === "postgresql" ? "postgresql" : c.sub_type === "mongodb" ? "mongodb" : c.sub_type === "rest_api" ? "rest" : c.sub_type === "graphql" ? "graphql" : c.sub_type || "api") as DataSource,
             vertical: "" as Vertical,
             complexity: "medium" as Complexity,
             rowCount: totalRows > 10000 ? "large" as RowCount : totalRows > 1000 ? "medium" as RowCount : "small" as RowCount,
@@ -275,16 +275,6 @@ export function DatasetGrid() {
       })
       if (response.status === "success") {
         toast.success("Dataset created: " + response.filename + " (" + (response.credits_used || 0) + " credits)", { duration: 5000 })
-        // Auto download CSV
-        if (response.file_id) {
-          const API_HOST = window.location.origin.includes(":3000") ? window.location.origin.replace(":3000", ":8080") : window.location.origin
-          const link = document.createElement("a")
-          link.href = API_HOST + "/api/download/" + response.file_id
-          link.download = response.filename || "dataset.csv"
-          document.body.appendChild(link)
-          link.click()
-          document.body.removeChild(link)
-        }
         setIsGenerateModalOpen(false)
         setGenerateName("")
         setGenerateDescription("")
@@ -457,24 +447,40 @@ export function DatasetGrid() {
             }
           } else if (connection.type === "database") {
             try {
-              const isRelationalDB = ["postgresql", "mysql", "supabase", "mongodb", "snowflake", "databricks"].includes(connection.subType || "")
               toast.loading("Connecting to database...")
-              await api.createConnection({
+              let connData: any = {
                 name: connection.name,
                 type: "database",
                 sub_type: connection.subType || "",
-                ...(isRelationalDB ? {
-                  host: connection.config.host || "",
-                  port: parseInt(connection.config.port) || 5432,
-                  database: connection.config.database || "",
-                  username: connection.config.username || "",
-                  password: connection.config.password || "",
-                  ssl: connection.config.ssl || false
-                } : {
-                  api_key: connection.config.apiKey || "",
-                  endpoint: connection.config.endpoint || ""
-                })
-              })
+              }
+              if (connection.subType === "mongodb") {
+                // MongoDB: connection string endpoint'e gider
+                connData.endpoint = connection.config.endpoint || ""
+              } else if (connection.subType === "databricks") {
+                // Databricks: workspace URL -> host, token -> api_key, SQL path -> endpoint, catalog -> database
+                connData.host = connection.config.host || ""
+                connData.api_key = connection.config.authToken || ""
+                connData.endpoint = connection.config.endpoint || ""
+                connData.database = connection.config.database || ""
+              } else if (connection.subType === "snowflake") {
+                // Snowflake: account -> host, warehouse -> bucket
+                connData.host = connection.config.host || ""
+                connData.username = connection.config.username || ""
+                connData.password = connection.config.password || ""
+                connData.database = connection.config.database || ""
+                connData.bucket = connection.config.endpoint || ""
+              } else if (["postgresql", "mysql", "supabase"].includes(connection.subType || "")) {
+                connData.host = connection.config.host || ""
+                connData.port = parseInt(connection.config.port) || 5432
+                connData.database = connection.config.database || ""
+                connData.username = connection.config.username || ""
+                connData.password = connection.config.password || ""
+                connData.ssl = connection.config.ssl || false
+              } else {
+                connData.api_key = connection.config.apiKey || ""
+                connData.endpoint = connection.config.endpoint || ""
+              }
+              await api.createConnection(connData)
               toast.dismiss()
               toast.success("Database connected!")
             } catch (error) {
@@ -486,9 +492,9 @@ export function DatasetGrid() {
               await api.createConnection({
                 name: connection.name,
                 type: "api",
-                sub_type: "rest",
+                sub_type: connection.subType === "graphql" ? "graphql" : "rest_api",
                 endpoint: connection.config.endpoint || "",
-                auth_token: connection.config.authToken || ""
+                api_key: connection.config.authToken || ""
               })
               toast.dismiss()
               toast.success("API connected!")
