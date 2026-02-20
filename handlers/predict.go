@@ -33,6 +33,16 @@ func PredictHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userID := r.Header.Get("X-User-ID")
+	if userID != "" {
+		if ok, reason := CheckCredits(userID, 0.05); !ok {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]string{"error": reason})
+			return
+		}
+	}
+
 	jsonData, _ := json.Marshal(req)
 
 	resp, err := http.Post(
@@ -52,7 +62,7 @@ func PredictHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(body)
 
 	// Deduct credits and log usage
-	userID := r.Header.Get("X-User-ID")
+	userID = r.Header.Get("X-User-ID")
 	if userID != "" && DB != nil {
 		var quota UserQuota
 		if DB.Where("user_id = ?", userID).First(&quota).Error == nil {

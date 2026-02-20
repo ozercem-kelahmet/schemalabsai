@@ -127,9 +127,9 @@ export function ConfigStep({
       
       const connDatasets: Dataset[] = []
       for (const c of connections) {
-        let totalRows = 0
-        let totalCols = 0
-        let schemaItems: any[] = []
+        console.log("CONFIG-STEP conn:", c.name, c.sub_type, "total_rows=", c.total_rows, "total_cols=", c.total_cols); let totalRows = c.total_rows || 0
+        let totalCols = c.total_cols || 0
+        let schemaItems: any[] = (c.schema || []).map((s: string) => ({ name: s, type: "string" as const, description: "" }))
         connDatasets.push({
           id: c.id,
           name: c.name,
@@ -142,7 +142,7 @@ export function ConfigStep({
           columns: totalCols,
           schema: schemaItems,
           sampleData: [],
-          syncStatus: "synced" as const,
+          syncStatus: "synced" as const, rateLimit: c.rate_limit || "",
         })
       }
       
@@ -166,10 +166,10 @@ export function ConfigStep({
               if (result.status === "fulfilled") {
                 const tables = result.value.table_details || result.value.tables || []
                 const totalRows = tables.reduce((sum: number, t: any) => sum + (t.rows || 0), 0)
-                const totalCols = tables.length > 0 ? (tables[0].columns || 0) : 0
+                const totalCols = tables.reduce((sum: number, t: any) => sum + (t.columns || 0), 0)
                 const schemaItems = tables.map((t: any) => ({ name: t.name, type: "string" as const, description: `${t.rows} rows, ${t.columns} cols` }))
                 const idx = updated.findIndex(d => d.id === connections[ci].id)
-                if (idx >= 0) {
+                if (idx >= 0 && totalRows > updated[idx].rows) {
                   updated[idx] = { ...updated[idx], rows: totalRows, columns: totalCols, schema: schemaItems,
                     rowCount: (totalRows > 10000 ? "large" : totalRows > 1000 ? "medium" : "small") as any }
                 }

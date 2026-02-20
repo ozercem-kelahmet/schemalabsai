@@ -783,7 +783,19 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
                 />
               </div>
               
-
+              <div>
+                <Label htmlFor="daily-quota" className="text-foreground">Daily Row Limit (Optional)</Label>
+                <Input
+                  id="daily-quota"
+                  type="number"
+                  value={dailyQuota}
+                  onChange={(e) => setDailyQuota(e.target.value)}
+                  placeholder="e.g. 1000 rows/day"
+                  className="bg-card border-border text-foreground"
+                />
+                <p className="text-xs text-muted-foreground mt-1">API daily quota limit if applicable</p>
+              </div>
+              
               <Button 
                 onClick={() => handleConnect("api")}
                 disabled={!connectionName || !endpoint}

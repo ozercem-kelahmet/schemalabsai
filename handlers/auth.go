@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -8,12 +9,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-"net"
-	"bytes"
+"log"
 	"io"
+	"net"
 	"net/http"
 	"os"
-	"strings"
+	"strconv"
+"strings"
 	"time"
 
 	"sync"
@@ -345,17 +347,17 @@ func (Query) TableName() string { return "queries" }
 
 // Message model
 type Message struct {
-	ID        string    `gorm:"primaryKey" json:"id"`
-	Role      string    `json:"role"`
-	Content   string    `gorm:"type:text" json:"content"`
-	Model     string    `json:"model"`
-	Tokens    int       `json:"tokens"`
-	QueryID   string    `json:"query_id"`
-	UserID    string    `json:"user_id"`
-	CreatedAt time.Time `json:"created_at"`
-FineTunedModelID string `json:"finetuned_model_id"`
-	CompareGroup     string `json:"compare_group"`
-	TimeTaken        string `json:"time_taken"`
+	ID               string    `gorm:"primaryKey" json:"id"`
+	Role             string    `json:"role"`
+	Content          string    `gorm:"type:text" json:"content"`
+	Model            string    `json:"model"`
+	Tokens           int       `json:"tokens"`
+	QueryID          string    `json:"query_id"`
+	UserID           string    `json:"user_id"`
+	CreatedAt        time.Time `json:"created_at"`
+	FineTunedModelID string    `json:"finetuned_model_id"`
+	CompareGroup     string    `json:"compare_group"`
+	TimeTaken        string    `json:"time_taken"`
 }
 
 // QueryFile - many to many
@@ -397,27 +399,29 @@ type Folder struct {
 
 // Connection types
 type Connection struct {
-	ID           string     `gorm:"primaryKey" json:"id"`
-	Name         string     `json:"name"`
-	Type         string     `json:"type"`     // database, vectordb, cloud, api
-	SubType      string     `json:"sub_type"` // postgresql, mysql, pinecone, etc.
-	Host         string     `json:"host"`
-	Port         int        `json:"port"`
-	Database     string     `json:"database"`
-	Username     string     `json:"username"`
-	Password     string     `json:"-"`
-	APIKey       string     `json:"-"`
-	Endpoint     string     `json:"endpoint"`
-	Bucket       string     `json:"bucket"`
-	Region       string     `json:"region"`
-	SSL          bool       `json:"ssl"`
-	Status       string     `json:"status"` // active, error, disconnected
-	LastTestedAt *time.Time `json:"last_tested_at"`
-	CachedTables string     `json:"cached_tables"`
-	CachedAt     *time.Time `json:"cached_at"`
-	UserID       string     `json:"user_id"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	ID             string     `gorm:"primaryKey" json:"id"`
+	Name           string     `json:"name"`
+	Type           string     `json:"type"`     // database, vectordb, cloud, api
+	SubType        string     `json:"sub_type"` // postgresql, mysql, pinecone, etc.
+	Host           string     `json:"host"`
+	Port           int        `json:"port"`
+	Database       string     `json:"database"`
+	Username       string     `json:"username"`
+	Password       string     `json:"-"`
+	APIKey         string     `json:"-"`
+	Endpoint       string     `json:"endpoint"`
+	Bucket         string     `json:"bucket"`
+	Region         string     `json:"region"`
+	SSL            bool       `json:"ssl"`
+	Status         string     `json:"status"` // active, error, disconnected
+	LastTestedAt   *time.Time `json:"last_tested_at"`
+	CachedTables   string     `json:"cached_tables"`
+	CachedAt       *time.Time `json:"cached_at"`
+	SelectedTables string     `json:"selected_tables"`
+RateLimit      string     `json:"rate_limit"`
+	UserID         string     `json:"user_id"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 type APIKey struct {
@@ -532,7 +536,30 @@ func ListConnectionsHandler(w http.ResponseWriter, r *http.Request) {
 			"endpoint":   c.Endpoint,
 			"bucket":     c.Bucket,
 			"status":     c.Status,
+"rate_limit": c.RateLimit,
 			"created_at": c.CreatedAt,
+		}
+		// Add cached rows/cols
+		if c.CachedTables != "" {
+			var cached struct {
+				TableDetails []struct {
+					Name    string `json:"name"`
+					Rows    int64  `json:"rows"`
+					Columns int    `json:"columns"`
+				} `json:"table_details"`
+			}
+			json.Unmarshal([]byte(c.CachedTables), &cached)
+			var totalRows int64
+			var totalCols int
+			var schemaNames []string
+			for _, t := range cached.TableDetails {
+				totalRows += t.Rows
+				totalCols += t.Columns
+				schemaNames = append(schemaNames, t.Name)
+			}
+			result[i]["total_rows"] = totalRows
+			result[i]["total_cols"] = totalCols
+			result[i]["schema"] = schemaNames
 		}
 	}
 
@@ -631,16 +658,16 @@ func TestConnectionHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 	case "mongodb":
-	var mongoURI string
-	if input.Endpoint != "" {
-		mongoURI = input.Endpoint
-	} else if input.Host != "" && input.Database != "" {
-		mongoURI = fmt.Sprintf("mongodb://%s:%s@%s:%d/%s", input.Username, input.Password, input.Host, input.Port, input.Database)
-		if input.Username == "" {
-			mongoURI = fmt.Sprintf("mongodb://%s:%d/%s", input.Host, input.Port, input.Database)
+		var mongoURI string
+		if input.Endpoint != "" {
+			mongoURI = input.Endpoint
+		} else if input.Host != "" && input.Database != "" {
+			mongoURI = fmt.Sprintf("mongodb://%s:%s@%s:%d/%s", input.Username, input.Password, input.Host, input.Port, input.Database)
+			if input.Username == "" {
+				mongoURI = fmt.Sprintf("mongodb://%s:%d/%s", input.Host, input.Port, input.Database)
+			}
 		}
-	}
-	if mongoURI != "" {
+		if mongoURI != "" {
 			clientOptions := options.Client().ApplyURI(mongoURI).SetConnectTimeout(10 * time.Second)
 			client, err := mongo.Connect(context.Background(), clientOptions)
 			if err != nil {
@@ -864,7 +891,9 @@ func TestConnectionHandler(w http.ResponseWriter, r *http.Request) {
 		if (input.Host != "" || input.Endpoint != "") && input.APIKey != "" {
 			client := &http.Client{Timeout: 10 * time.Second}
 			workspaceURL := input.Host
-			if workspaceURL == "" { workspaceURL = input.Endpoint }
+			if workspaceURL == "" {
+				workspaceURL = input.Endpoint
+			}
 			req, _ := http.NewRequest("GET", workspaceURL+"/api/2.0/clusters/list", nil)
 			req.Header.Set("Authorization", "Bearer "+input.APIKey)
 			resp, err := client.Do(req)
@@ -937,6 +966,191 @@ func TestConnectionHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// UpdateConnectionHandler - Update connection settings
+func UpdateConnectionHandler(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie("session")
+	if err != nil {
+		http.Error(w, "Not authenticated", http.StatusUnauthorized)
+		return
+	}
+	session, err := GetSession(cookie.Value)
+	if err != nil || session == nil {
+		http.Error(w, "Invalid session", http.StatusUnauthorized)
+		return
+	}
+	var req struct {
+		ID             string   `json:"id"`
+		SelectedTables []string `json:"selected_tables"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+	if req.ID == "" {
+		http.Error(w, "Missing id", http.StatusBadRequest)
+		return
+	}
+	var conn Connection
+	if err := DB.Where("id = ? AND user_id = ?", req.ID, session.UserID).First(&conn).Error; err != nil {
+		http.Error(w, "Connection not found", http.StatusNotFound)
+		return
+	}
+	if len(req.SelectedTables) > 0 {
+		tablesJSON, _ := json.Marshal(req.SelectedTables)
+		// Build cache from old cache filtered by selected tables
+		var oldCache struct {
+			Tables       []string `json:"tables"`
+			TableDetails []struct {
+				Name    string `json:"name"`
+				Rows    int64  `json:"rows"`
+				Columns int    `json:"columns"`
+			} `json:"table_details"`
+		}
+		if conn.CachedTables != "" {
+			json.Unmarshal([]byte(conn.CachedTables), &oldCache)
+		}
+		selectedMap := make(map[string]bool)
+		for _, s := range req.SelectedTables {
+			selectedMap[s] = true
+		}
+		var filteredTables []string
+		var filteredInfos []map[string]interface{}
+		for _, t := range oldCache.Tables {
+			if selectedMap[t] {
+				filteredTables = append(filteredTables, t)
+			}
+		}
+		for _, ti := range oldCache.TableDetails {
+			if selectedMap[ti.Name] {
+				filteredInfos = append(filteredInfos, map[string]interface{}{"name": ti.Name, "rows": ti.Rows, "columns": ti.Columns})
+			}
+		}
+// Databricks: fetch row counts for selected tables
+if conn.SubType == "databricks" && conn.Host != "" && conn.APIKey != "" {
+httpCl := &http.Client{Timeout: 30 * time.Second}
+wURL := "https://" + strings.TrimPrefix(strings.TrimPrefix(conn.Host, "https://"), "http://")
+dbCat := conn.Database
+if dbCat == "" { dbCat = "main" }
+wID := conn.Endpoint
+if strings.Contains(wID, "/") { p := strings.Split(wID, "/"); wID = p[len(p)-1] }
+filteredInfos = nil
+for _, tbl := range req.SelectedTables {
+cQ := fmt.Sprintf("SELECT COUNT(*) as cnt FROM %s.%s", dbCat, tbl)
+b, _ := json.Marshal(map[string]interface{}{"statement": cQ, "warehouse_id": wID, "wait_timeout": "30s"})
+rq, _ := http.NewRequest("POST", wURL+"/api/2.0/sql/statements", bytes.NewReader(b))
+rq.Header.Set("Authorization", "Bearer "+conn.APIKey)
+rq.Header.Set("Content-Type", "application/json")
+rs, er := httpCl.Do(rq)
+rw := int64(0)
+cl := 0
+if er == nil && rs.StatusCode == 200 {
+var cr struct { Result struct { DataArray [][]string `json:"data_array"` } `json:"result"` }
+json.NewDecoder(rs.Body).Decode(&cr)
+rs.Body.Close()
+if len(cr.Result.DataArray) > 0 && len(cr.Result.DataArray[0]) > 0 {
+if v, e := strconv.ParseInt(cr.Result.DataArray[0][0], 10, 64); e == nil { rw = v }
+}
+} else if er == nil { rs.Body.Close() }
+for _, ti := range oldCache.TableDetails { if ti.Name == tbl { cl = ti.Columns } }
+filteredInfos = append(filteredInfos, map[string]interface{}{"name": tbl, "rows": rw, "columns": cl})
+log.Printf("📡 Databricks row count: %s = %d rows, %d cols", tbl, rw, cl)
+}
+filteredTables = req.SelectedTables
+}
+
+if (conn.SubType == "postgresql" || conn.SubType == "supabase") && conn.Host != "" {
+connHost := conn.Host
+sslmode := "disable"
+if conn.SubType == "supabase" {
+if ips, err := net.LookupIP(conn.Host); err == nil {
+for _, ip := range ips { if ip.To4() != nil { connHost = ip.String(); break } }
+}
+sslmode = "require"
+}
+if conn.SSL { sslmode = "require" }
+dsn := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=%s", conn.Username, conn.Password, connHost, conn.Port, conn.Database, sslmode)
+tempDB, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+if err == nil {
+sqlDB2, _ := tempDB.DB()
+filteredInfos = nil
+for _, tbl := range req.SelectedTables {
+var rw int64
+var cl int
+sqlDB2.QueryRow("SELECT count(*) FROM \"" + tbl + "\"").Scan(&rw)
+sqlDB2.QueryRow("SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name=$1", tbl).Scan(&cl)
+filteredInfos = append(filteredInfos, map[string]interface{}{"name": tbl, "rows": rw, "columns": cl})
+log.Printf("📡 PostgreSQL row count: %s = %d rows, %d cols", tbl, rw, cl)
+}
+filteredTables = req.SelectedTables
+sqlDB2.Close()
+}
+}
+if conn.SubType == "mongodb" {
+var mongoURI string
+if conn.Endpoint != "" { mongoURI = conn.Endpoint } else {
+mongoURI = fmt.Sprintf("mongodb://%s:%s@%s:%d/%s", conn.Username, conn.Password, conn.Host, conn.Port, conn.Database)
+if conn.Username == "" { mongoURI = fmt.Sprintf("mongodb://%s:%d/%s", conn.Host, conn.Port, conn.Database) }
+}
+clientOpts := options.Client().ApplyURI(mongoURI).SetConnectTimeout(10 * time.Second)
+mclient, merr := mongo.Connect(context.Background(), clientOpts)
+if merr == nil {
+filteredInfos = nil
+dbName := conn.Database
+for _, collName := range req.SelectedTables {
+cnt, _ := mclient.Database(dbName).Collection(collName).CountDocuments(context.Background(), map[string]interface{}{})
+filteredInfos = append(filteredInfos, map[string]interface{}{"name": collName, "rows": cnt, "columns": 0})
+log.Printf("📡 MongoDB row count: %s = %d rows", collName, cnt)
+}
+filteredTables = req.SelectedTables
+mclient.Disconnect(context.Background())
+}
+}
+if conn.SubType == "snowflake" && conn.Host != "" {
+sfDSN := fmt.Sprintf("%s:%s@%s/%s", conn.Username, conn.Password, conn.Host, conn.Database)
+sfDB, err := sql.Open("snowflake", sfDSN)
+if err == nil {
+filteredInfos = nil
+for _, tbl := range req.SelectedTables {
+var rw int64
+sfDB.QueryRow(fmt.Sprintf("SELECT count(*) FROM %s", tbl)).Scan(&rw)
+filteredInfos = append(filteredInfos, map[string]interface{}{"name": tbl, "rows": rw, "columns": 0})
+log.Printf("📡 Snowflake row count: %s = %d rows", tbl, rw)
+}
+filteredTables = req.SelectedTables
+sfDB.Close()
+}
+}
+if conn.SubType == "mysql" && conn.Host != "" {
+mysqlDSN := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", conn.Username, conn.Password, conn.Host, conn.Port, conn.Database)
+mysqlDB, err := sql.Open("mysql", mysqlDSN)
+if err == nil {
+filteredInfos = nil
+for _, tbl := range req.SelectedTables {
+var rw int64
+var cl int
+mysqlDB.QueryRow(fmt.Sprintf("SELECT count(*) FROM `%s`", tbl)).Scan(&rw)
+mysqlDB.QueryRow("SELECT count(*) FROM information_schema.columns WHERE table_schema=? AND table_name=?", conn.Database, tbl).Scan(&cl)
+filteredInfos = append(filteredInfos, map[string]interface{}{"name": tbl, "rows": rw, "columns": cl})
+log.Printf("📡 MySQL row count: %s = %d rows, %d cols", tbl, rw, cl)
+}
+filteredTables = req.SelectedTables
+mysqlDB.Close()
+}
+}
+		newCache := map[string]interface{}{"tables": filteredTables}
+		if len(filteredInfos) > 0 {
+			newCache["table_details"] = filteredInfos
+		}
+		newCacheBytes, _ := json.Marshal(newCache)
+		now := time.Now()
+		DB.Model(&conn).Updates(map[string]interface{}{
+			"selected_tables": string(tablesJSON),
+			"cached_tables":   string(newCacheBytes),
+			"cached_at":       now,
+		})
+
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+}
+
 // List tables from a connection
 func ListTablesHandler(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie("session")
@@ -979,18 +1193,23 @@ func ListTablesHandler(w http.ResponseWriter, r *http.Request) {
 
 	switch conn.SubType {
 	case "postgresql", "supabase":
-connHost := conn.Host
-if conn.SubType == "supabase" {
-if ips, err := net.LookupIP(conn.Host); err == nil {
-for _, ip := range ips {
-if ip.To4() != nil { connHost = ip.String(); break }
-}
-}
-}
-sslmode := "disable"
-if conn.SubType == "supabase" || conn.SSL { sslmode = "require" }
-dsn := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=%s",
-conn.Username, conn.Password, connHost, conn.Port, conn.Database, sslmode)
+		connHost := conn.Host
+		if conn.SubType == "supabase" {
+			if ips, err := net.LookupIP(conn.Host); err == nil {
+				for _, ip := range ips {
+					if ip.To4() != nil {
+						connHost = ip.String()
+						break
+					}
+				}
+			}
+		}
+		sslmode := "disable"
+		if conn.SubType == "supabase" || conn.SSL {
+			sslmode = "require"
+		}
+		dsn := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=%s",
+			conn.Username, conn.Password, connHost, conn.Port, conn.Database, sslmode)
 		tempDB, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 		if err != nil {
 			http.Error(w, "Connection failed: "+err.Error(), http.StatusInternalServerError)
@@ -1081,15 +1300,15 @@ conn.Username, conn.Password, connHost, conn.Port, conn.Database, sslmode)
 		}
 
 	case "mongodb":
-	var mongoURI string
-	if conn.Endpoint != "" {
-		mongoURI = conn.Endpoint
-	} else {
-		mongoURI = fmt.Sprintf("mongodb://%s:%s@%s:%d/%s", conn.Username, conn.Password, conn.Host, conn.Port, conn.Database)
-		if conn.Username == "" {
-			mongoURI = fmt.Sprintf("mongodb://%s:%d/%s", conn.Host, conn.Port, conn.Database)
+		var mongoURI string
+		if conn.Endpoint != "" {
+			mongoURI = conn.Endpoint
+		} else {
+			mongoURI = fmt.Sprintf("mongodb://%s:%s@%s:%d/%s", conn.Username, conn.Password, conn.Host, conn.Port, conn.Database)
+			if conn.Username == "" {
+				mongoURI = fmt.Sprintf("mongodb://%s:%d/%s", conn.Host, conn.Port, conn.Database)
+			}
 		}
-	}
 		clientOptions := options.Client().ApplyURI(mongoURI).SetConnectTimeout(10 * time.Second)
 		client, err := mongo.Connect(context.Background(), clientOptions)
 		if err != nil {
@@ -1114,37 +1333,58 @@ conn.Username, conn.Password, connHost, conn.Port, conn.Database, sslmode)
 			httpClient := &http.Client{Timeout: 30 * time.Second}
 			workspaceURL := "https://" + strings.TrimPrefix(strings.TrimPrefix(conn.Host, "https://"), "http://")
 			catalog := conn.Database
-			if catalog == "" { catalog = "main" }
+			if catalog == "" {
+				catalog = "main"
+			}
 			// List schemas first
 			schReq, _ := http.NewRequest("GET", workspaceURL+"/api/2.1/unity-catalog/schemas?catalog_name="+catalog, nil)
 			schReq.Header.Set("Authorization", "Bearer "+conn.APIKey)
 			schResp, serr := httpClient.Do(schReq)
 			var schemaNames []string
 			if serr == nil && schResp.StatusCode == 200 {
-				var schResult struct { Schemas []struct { Name string `json:"name"` } `json:"schemas"` }
+				var schResult struct {
+					Schemas []struct {
+						Name string `json:"name"`
+					} `json:"schemas"`
+				}
 				json.NewDecoder(schResp.Body).Decode(&schResult)
 				schResp.Body.Close()
 				for _, s := range schResult.Schemas {
-					if s.Name != "information_schema" { schemaNames = append(schemaNames, s.Name) }
+					if s.Name != "information_schema" {
+						schemaNames = append(schemaNames, s.Name)
+					}
 				}
-			} else if serr == nil { schResp.Body.Close() }
-			if len(schemaNames) == 0 { schemaNames = []string{"default"} }
+			} else if serr == nil {
+				schResp.Body.Close()
+			}
+			if len(schemaNames) == 0 {
+				schemaNames = []string{"default"}
+			}
 			for _, schema := range schemaNames {
 				tReq, _ := http.NewRequest("GET", workspaceURL+"/api/2.1/unity-catalog/tables?catalog_name="+catalog+"&schema_name="+schema, nil)
 				tReq.Header.Set("Authorization", "Bearer "+conn.APIKey)
 				tResp, terr := httpClient.Do(tReq)
 				if terr == nil && tResp.StatusCode == 200 {
-					var tResult struct { Tables []struct { Name string `json:"name"`; Columns []struct{ Name string `json:"name"` } `json:"columns"` } `json:"tables"` }
+					var tResult struct {
+						Tables []struct {
+							Name    string `json:"name"`
+							Columns []struct {
+								Name string `json:"name"`
+							} `json:"columns"`
+						} `json:"tables"`
+					}
 					json.NewDecoder(tResp.Body).Decode(&tResult)
 					tResp.Body.Close()
 					for _, t := range tResult.Tables {
-						tables = append(tables, schema+"."+t.Name)
-						tableInfos = append(tableInfos, TableInfo{Name: schema+"."+t.Name, Rows: 0, Columns: len(t.Columns)})
+						tableFull := schema + "." + t.Name
+						tables = append(tables, tableFull)
+						tableInfos = append(tableInfos, TableInfo{Name: tableFull, Rows: 0, Columns: len(t.Columns)})
 					}
-				} else if terr == nil { tResp.Body.Close() }
+				} else if terr == nil {
+					tResp.Body.Close()
+				}
 			}
 		}
-
 
 	case "pinecone":
 		if conn.Endpoint != "" && conn.APIKey != "" {
@@ -1194,7 +1434,9 @@ conn.Username, conn.Password, connHost, conn.Port, conn.Database, sslmode)
 				var schema struct {
 					Classes []struct {
 						Class      string `json:"class"`
-						Properties []struct{ Name string `json:"name"` } `json:"properties"`
+						Properties []struct {
+							Name string `json:"name"`
+						} `json:"properties"`
 					} `json:"classes"`
 				}
 				json.NewDecoder(resp.Body).Decode(&schema)
@@ -1309,8 +1551,8 @@ conn.Username, conn.Password, connHost, conn.Port, conn.Database, sslmode)
 	case "graphql":
 		if conn.Endpoint != "" {
 			httpClient := &http.Client{Timeout: 15 * time.Second}
-			introspection := `{"query":"{ __schema { types { name kind fields { name } } } }"}`
-			req, _ := http.NewRequest("POST", conn.Endpoint, strings.NewReader(introspection))
+			typesQuery := `{"query":"{ __schema { types { name kind fields { name type { name kind ofType { name kind ofType { name kind } } } } } } }"}`
+			req, _ := http.NewRequest("POST", conn.Endpoint, strings.NewReader(typesQuery))
 			req.Header.Set("Content-Type", "application/json")
 			if conn.APIKey != "" {
 				req.Header.Set("Authorization", "Bearer "+conn.APIKey)
@@ -1318,58 +1560,162 @@ conn.Username, conn.Password, connHost, conn.Port, conn.Database, sslmode)
 			resp, err := httpClient.Do(req)
 			if err == nil && resp.StatusCode == 200 {
 				defer resp.Body.Close()
-				var result struct {
-					Data struct {
-						Schema struct {
-							Types []struct {
-								Name   string `json:"name"`
-								Kind   string `json:"kind"`
-								Fields []struct{ Name string `json:"name"` } `json:"fields"`
-							} `json:"types"`
-						} `json:"__schema"`
-					} `json:"data"`
-				}
-				json.NewDecoder(resp.Body).Decode(&result)
-				for _, t := range result.Data.Schema.Types {
-					if t.Kind == "OBJECT" && !strings.HasPrefix(t.Name, "__") && t.Name != "Query" && t.Name != "Mutation" && t.Name != "Subscription" {
-						tables = append(tables, t.Name)
-						tableInfos = append(tableInfos, TableInfo{Name: t.Name, Rows: 0, Columns: len(t.Fields)})
+				respBytes, _ := io.ReadAll(resp.Body)
+				var rawResult map[string]interface{}
+				json.Unmarshal(respBytes, &rawResult)
+				dataObj, _ := rawResult["data"].(map[string]interface{})
+				schemaObj, _ := dataObj["__schema"].(map[string]interface{})
+				allTypes, _ := schemaObj["types"].([]interface{})
+				// Build type->col count and scalar fields map
+				typeColCount := make(map[string]int)
+				typeScalarFields := make(map[string][]string)
+				for _, typ := range allTypes {
+					tObj, _ := typ.(map[string]interface{})
+					tName, _ := tObj["name"].(string)
+					tKind, _ := tObj["kind"].(string)
+					if tKind != "OBJECT" || strings.HasPrefix(tName, "__") {
+						continue
+					}
+					fields, _ := tObj["fields"].([]interface{})
+					var scalars []string
+					for _, fld := range fields {
+						fObj, _ := fld.(map[string]interface{})
+						fName, _ := fObj["name"].(string)
+						fType, _ := fObj["type"].(map[string]interface{})
+						fKind, _ := fType["kind"].(string)
+						ftName, _ := fType["name"].(string)
+						if fKind == "NON_NULL" {
+							if ot, ok := fType["ofType"].(map[string]interface{}); ok {
+								ftName, _ = ot["name"].(string)
+							}
+						}
+						if fKind == "SCALAR" || ftName == "String" || ftName == "Int" || ftName == "Float" || ftName == "Boolean" || ftName == "ID" {
+							scalars = append(scalars, fName)
+						}
+					}
+					typeColCount[tName] = len(fields)
+					if len(scalars) > 0 {
+						typeScalarFields[tName] = scalars
 					}
 				}
-// Query type'dan field isimlerini al ve her biri icin row count cek
-for _, t := range result.Data.Schema.Types {
-if t.Name == "Query" {
-for _, f := range t.Fields {
-queryName := f.Name
-gqlQuery := fmt.Sprintf(`{"query":"{ %s { __typename } }"}`, queryName)
-countReq, _ := http.NewRequest("POST", conn.Endpoint, strings.NewReader(gqlQuery))
-countReq.Header.Set("Content-Type", "application/json")
-if conn.APIKey != "" {
-countReq.Header.Set("Authorization", "Bearer "+conn.APIKey)
-}
-countResp, cerr := httpClient.Do(countReq)
-if cerr == nil && countResp.StatusCode == 200 {
-var countResult map[string]interface{}
-json.NewDecoder(countResp.Body).Decode(&countResult)
-countResp.Body.Close()
-if data, ok := countResult["data"].(map[string]interface{}); ok {
-if arr, ok := data[queryName].([]interface{}); ok {
-for ti := range tableInfos {
-lowerName := strings.ToLower(tableInfos[ti].Name)
-if strings.EqualFold(tableInfos[ti].Name, queryName) || lowerName+"s" == queryName || lowerName+"ies" == strings.Replace(queryName, "ies", "ies", 1) {
-tableInfos[ti].Rows = int64(len(arr))
-break
-}
-}
-}
-}
-} else if cerr == nil {
-countResp.Body.Close()
-}
-}
-break
-}
-}
+				// Helper: check if type chain has LIST and resolve return type name
+				isListAndResolve := func(typeObj map[string]interface{}) (bool, string) {
+					isList := false
+					retName := ""
+					cur := typeObj
+					for cur != nil {
+						k, _ := cur["kind"].(string)
+						n, _ := cur["name"].(string)
+						if k == "LIST" {
+							isList = true
+						}
+						if (k == "OBJECT" || k == "INTERFACE") && n != "" {
+							retName = n
+						}
+						if ot, ok := cur["ofType"].(map[string]interface{}); ok {
+							cur = ot
+						} else {
+							break
+						}
+					}
+					return isList, retName
+				}
+				// Find Query type - only show list-returning fields as tables
+				for _, typ := range allTypes {
+					tObj, _ := typ.(map[string]interface{})
+					tName, _ := tObj["name"].(string)
+					if tName != "Query" {
+						continue
+					}
+					fields, _ := tObj["fields"].([]interface{})
+					for _, fld := range fields {
+						fObj, _ := fld.(map[string]interface{})
+						fType, _ := fObj["type"].(map[string]interface{})
+						isList, retType := isListAndResolve(fType)
+						if !isList {
+							continue
+						}
+						fName, _ := fObj["name"].(string)
+						if retType == "" {
+							singular := strings.TrimSuffix(fName, "ies")
+							if singular != fName {
+								singular += "y"
+							} else {
+								singular = strings.TrimSuffix(fName, "s")
+							}
+							cap := strings.ToUpper(singular[:1]) + singular[1:]
+							if _, ok := typeColCount[cap]; ok {
+								retType = cap
+							}
+						}
+						if retType == "" {
+							continue
+						}
+						cols := typeColCount[retType]
+						tables = append(tables, retType)
+						tableInfos = append(tableInfos, TableInfo{Name: retType, Rows: 0, Columns: cols})
+					}
+					break
+				}
+				// Fetch row counts using list queries
+				for _, typ := range allTypes {
+					tObj, _ := typ.(map[string]interface{})
+					tName, _ := tObj["name"].(string)
+					if tName != "Query" {
+						continue
+					}
+					fields, _ := tObj["fields"].([]interface{})
+					for _, fld := range fields {
+						fObj, _ := fld.(map[string]interface{})
+						fType, _ := fObj["type"].(map[string]interface{})
+						isList, _ := isListAndResolve(fType)
+						if !isList {
+							continue
+						}
+						queryName, _ := fObj["name"].(string)
+						singular := strings.TrimSuffix(queryName, "ies")
+						if singular != queryName {
+							singular += "y"
+						} else {
+							singular = strings.TrimSuffix(queryName, "s")
+						}
+						cap := strings.ToUpper(singular[:1]) + singular[1:]
+						matchIdx := -1
+						for ti, tbl := range tableInfos {
+							if tbl.Name == cap {
+								matchIdx = ti
+								break
+							}
+						}
+						if matchIdx < 0 {
+							continue
+						}
+						scalars := typeScalarFields[tableInfos[matchIdx].Name]
+						if len(scalars) == 0 {
+							continue
+						}
+						gqlQ := fmt.Sprintf(`{"query":"{ %s { %s } }"}`, queryName, scalars[0])
+						cReq, _ := http.NewRequest("POST", conn.Endpoint, strings.NewReader(gqlQ))
+						cReq.Header.Set("Content-Type", "application/json")
+						if conn.APIKey != "" {
+							cReq.Header.Set("Authorization", "Bearer "+conn.APIKey)
+						}
+						cResp, cerr := httpClient.Do(cReq)
+						if cerr == nil && cResp.StatusCode == 200 {
+							var cResult map[string]interface{}
+							json.NewDecoder(cResp.Body).Decode(&cResult)
+							cResp.Body.Close()
+							if d, ok := cResult["data"].(map[string]interface{}); ok {
+								if arr, ok := d[queryName].([]interface{}); ok {
+									tableInfos[matchIdx].Rows = int64(len(arr))
+								}
+							}
+						} else if cerr == nil {
+							cResp.Body.Close()
+						}
+					}
+					break
+				}
 			} else if err == nil {
 				resp.Body.Close()
 			}
@@ -1470,17 +1816,41 @@ break
 		}
 	}
 
-// Cache results to DB
-responseData := map[string]interface{}{"tables": tables}
-if len(tableInfos) > 0 {
-responseData["table_details"] = tableInfos
+	// Filter by selected_tables if set
+	if conn.SelectedTables != "" {
+		var selectedList []string
+		json.Unmarshal([]byte(conn.SelectedTables), &selectedList)
+		if len(selectedList) > 0 {
+			selectedMap := make(map[string]bool)
+			for _, s := range selectedList {
+				selectedMap[s] = true
+			}
+			var filteredTables []string
+			var filteredInfos []TableInfo
+			for _, t := range tables {
+				if selectedMap[t] {
+					filteredTables = append(filteredTables, t)
+				}
+			}
+			for _, ti := range tableInfos {
+				if selectedMap[ti.Name] {
+					filteredInfos = append(filteredInfos, ti)
+				}
+			}
+			tables = filteredTables
+			tableInfos = filteredInfos
+		}
+	}
+	// Cache results to DB
+	responseData := map[string]interface{}{"tables": tables}
+	if len(tableInfos) > 0 {
+		responseData["table_details"] = tableInfos
+	}
+	cacheBytes, _ := json.Marshal(responseData)
+	now := time.Now()
+	DB.Model(&Connection{}).Where("id = ?", conn.ID).Updates(map[string]interface{}{"cached_tables": string(cacheBytes), "cached_at": now})
+	json.NewEncoder(w).Encode(responseData)
 }
-cacheBytes, _ := json.Marshal(responseData)
-now := time.Now()
-DB.Model(&Connection{}).Where("id = ?", conn.ID).Updates(map[string]interface{}{"cached_tables": string(cacheBytes), "cached_at": now})
-json.NewEncoder(w).Encode(responseData)
-}
-
 
 // Export table to CSV
 func ExportTableHandler(w http.ResponseWriter, r *http.Request) {
@@ -1585,15 +1955,15 @@ func ExportTableHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 	case "mongodb":
-var mongoURI string
-if conn.Endpoint != "" {
-mongoURI = conn.Endpoint
-} else {
-mongoURI = fmt.Sprintf("mongodb://%s:%s@%s:%d/%s", conn.Username, conn.Password, conn.Host, conn.Port, conn.Database)
-if conn.Username == "" {
-mongoURI = fmt.Sprintf("mongodb://%s:%d/%s", conn.Host, conn.Port, conn.Database)
-}
-}
+		var mongoURI string
+		if conn.Endpoint != "" {
+			mongoURI = conn.Endpoint
+		} else {
+			mongoURI = fmt.Sprintf("mongodb://%s:%s@%s:%d/%s", conn.Username, conn.Password, conn.Host, conn.Port, conn.Database)
+			if conn.Username == "" {
+				mongoURI = fmt.Sprintf("mongodb://%s:%d/%s", conn.Host, conn.Port, conn.Database)
+			}
+		}
 		clientOptions := options.Client().ApplyURI(mongoURI).SetConnectTimeout(10 * time.Second)
 		mongoClient, err := mongo.Connect(context.Background(), clientOptions)
 		if err != nil {
@@ -1660,14 +2030,13 @@ mongoURI = fmt.Sprintf("mongodb://%s:%d/%s", conn.Host, conn.Port, conn.Database
 		})
 		return
 
-
 	case "databricks":
 		if conn.Host != "" && conn.APIKey != "" {
 			httpClient := &http.Client{Timeout: 30 * time.Second}
 			query := fmt.Sprintf("SELECT * FROM %s LIMIT %d", sanitizeTableName(input.TableName), input.Limit)
 			reqBody, _ := json.Marshal(map[string]interface{}{"statement": query, "warehouse_id": conn.Endpoint})
-		workspaceURL := "https://" + strings.TrimPrefix(strings.TrimPrefix(conn.Host, "https://"), "http://")
-		req, _ := http.NewRequest("POST", workspaceURL+"/api/2.0/sql/statements", bytes.NewReader(reqBody))
+			workspaceURL := "https://" + strings.TrimPrefix(strings.TrimPrefix(conn.Host, "https://"), "http://")
+			req, _ := http.NewRequest("POST", workspaceURL+"/api/2.0/sql/statements", bytes.NewReader(reqBody))
 			req.Header.Set("Authorization", "Bearer "+conn.APIKey)
 			req.Header.Set("Content-Type", "application/json")
 			resp, err := httpClient.Do(req)
@@ -1679,7 +2048,9 @@ mongoURI = fmt.Sprintf("mongodb://%s:%d/%s", conn.Host, conn.Port, conn.Database
 			var result struct {
 				Manifest struct {
 					Schema struct {
-						Columns []struct{ Name string `json:"name"` } `json:"columns"`
+						Columns []struct {
+							Name string `json:"name"`
+						} `json:"columns"`
 					} `json:"schema"`
 				} `json:"manifest"`
 				Result struct {
@@ -1733,7 +2104,7 @@ mongoURI = fmt.Sprintf("mongodb://%s:%d/%s", conn.Host, conn.Port, conn.Database
 			defer resp.Body.Close()
 			var result struct {
 				Vectors []struct {
-					ID       string            `json:"id"`
+					ID       string                 `json:"id"`
 					Metadata map[string]interface{} `json:"metadata"`
 				} `json:"vectors"`
 			}

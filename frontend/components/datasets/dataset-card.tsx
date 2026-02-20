@@ -173,6 +173,11 @@ export function DatasetCard({ dataset, onViewSchema, onEdit, onDelete }: Dataset
             <span className="font-mono text-foreground">{dataset.columns}</span>
             <span className="text-muted-foreground">cols</span>
           </div>
+          {(dataset as any).rateLimit && (
+            <div className="flex items-center gap-1 text-xs text-amber-500">
+              <span>⚡ {(dataset as any).rateLimit} rows/day</span>
+            </div>
+          )}
         </div>
 
         {/* Schema Preview */}

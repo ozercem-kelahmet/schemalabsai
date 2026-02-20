@@ -60,6 +60,17 @@ func GenerateDatasetHandler(w http.ResponseWriter, r *http.Request) {
 	if req.Rows > 100000 { req.Rows = 100000 }
 	if req.Columns > 100 { req.Columns = 100 }
 
+	// Check quota
+	creditCost := math.Round((0.50+float64(req.Rows)/1000.0*0.10+float64(req.Columns)/10.0*0.05)*100) / 100
+	if creditCost < 0.50 { creditCost = 0.50 }
+	if creditCost > 10.0 { creditCost = 10.0 }
+	if ok, reason := CheckCredits(userID, creditCost); !ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{"error": reason})
+		return
+	}
+
 	fileID := uuid.New().String()
 	timestamp := time.Now().Format("20060102_150405")
 	filename := fmt.Sprintf("%s_%s.csv", sanitizeFilename(req.Name), timestamp)
@@ -81,7 +92,7 @@ func GenerateDatasetHandler(w http.ResponseWriter, r *http.Request) {
 	if fi != nil { size = fi.Size() }
 	rowCount, colNames := csvStats(destPath)
 
-	creditCost := math.Round((0.50+float64(req.Rows)/1000.0*0.10+float64(req.Columns)/10.0*0.05)*100) / 100
+	creditCost = math.Round((0.50+float64(req.Rows)/1000.0*0.10+float64(req.Columns)/10.0*0.05)*100) / 100
 	if creditCost < 0.50 { creditCost = 0.50 }
 	if creditCost > 10.0 { creditCost = 10.0 }
 

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -28,6 +29,14 @@ func AnalyzeHandler(w http.ResponseWriter, r *http.Request) {
 	// Multipart form parse (32MB max)
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		http.Error(w, `{"error": "Invalid form data or file too large"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Check quota
+	if ok, reason := CheckCredits(userID, 0.10); !ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{"error": reason})
 		return
 	}
 

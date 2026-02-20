@@ -204,6 +204,7 @@ func main() {
 	http.HandleFunc("/api/connections/create", enableCORS(handlers.AuthMiddleware(handlers.CreateConnectionHandler)))
 	http.HandleFunc("/api/connections/delete", enableCORS(handlers.AuthMiddleware(handlers.DeleteConnectionHandler)))
 	http.HandleFunc("/api/connections/test", enableCORS(handlers.AuthMiddleware(handlers.TestConnectionHandler)))
+	http.HandleFunc("/api/connections/update", enableCORS(handlers.AuthMiddleware(handlers.UpdateConnectionHandler)))
 	http.HandleFunc("/api/connections/tables", enableCORS(handlers.AuthMiddleware(handlers.ListTablesHandler)))
 	http.HandleFunc("/api/connections/export", enableCORS(handlers.AuthMiddleware(handlers.ExportTableHandler)))
 	http.HandleFunc("/api/keys", enableCORS(handlers.AuthMiddleware(handlers.ListAPIKeysHandler)))

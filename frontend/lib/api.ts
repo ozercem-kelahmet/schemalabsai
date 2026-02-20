@@ -258,7 +258,11 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params)
     })
-    return res.json()
+    const data = await res.json()
+    if (res.status === 403 || data.error) {
+      throw new Error(data.error || "Request failed")
+    }
+    return data
   },
 
   chatStream: async (

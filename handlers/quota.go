@@ -184,6 +184,30 @@ func CheckQuota(userID string, creditType string) (bool, string) {
 	return true, ""
 }
 
+// CheckCredits returns false if user has insufficient credits
+func CheckCredits(userID string, cost float64) (bool, string) {
+	quota, err := GetOrCreateQuota(userID)
+	if err != nil { return true, "" }
+	remaining := quota.CreditsTotal - quota.CreditsUsed
+	if remaining < cost {
+		return false, fmt.Sprintf("Insufficient credits. Remaining: %.2f, Required: %.2f", remaining, cost)
+	}
+	return true, ""
+}
+
+// CheckStorage returns false if user has insufficient storage
+func CheckStorage(userID string, additionalMB float64) (bool, string) {
+	quota, err := GetOrCreateQuota(userID)
+	if err != nil { return true, "" }
+	var totalSize int64
+	DB.Model(&UploadedFile{}).Where("user_id = ?", userID).Select("COALESCE(SUM(size), 0)").Scan(&totalSize)
+	usedMB := float64(totalSize) / (1024 * 1024)
+	if usedMB + additionalMB > quota.StorageLimitMB {
+		return false, fmt.Sprintf("Storage limit exceeded. Used: %.0fMB / %.0fMB", usedMB, quota.StorageLimitMB)
+	}
+	return true, ""
+}
+
 // QuotaHandler returns user's quota info
 func QuotaHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

@@ -1,4 +1,5 @@
 "use client"
+import { toast } from "sonner"
 
 import type React from "react"
 import { useState, useEffect, useRef, useCallback, useMemo } from "react"
@@ -776,6 +777,7 @@ api.getMessages(sessionId)
           })
           const endTime = Date.now()
           const timeTaken = ((endTime - startTime) / 1000).toFixed(1)
+          if (response.error) { toast.error(response.error); return { modelId: model.id, content: "⚠️ " + response.error, tokens: 0, time: "0s" } }
           return { modelId: model.id, content: response.response || "No response", tokens: response.tokens, time: timeTaken + "s" }
         } else {
           return new Promise<{ modelId: string; content: string; tokens: number; time: string }>((resolve) => {
@@ -862,6 +864,7 @@ api.getMessages(sessionId)
           })
           const endTime = Date.now()
           const timeTaken = ((endTime - startTime) / 1000).toFixed(1)
+          if (response.error) { toast.error(response.error); return { llmId, content: "⚠️ " + response.error, tokens: 0, time: "0s" } }
           return { llmId, content: response.response || "No response", tokens: response.tokens, time: timeTaken + "s" }
         } else {
           return new Promise<{ llmId: string; content: string; tokens: number; time: string }>((resolve) => {

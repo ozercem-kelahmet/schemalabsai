@@ -658,6 +658,16 @@ func ChatHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Printf("DEBUG REQUEST: finetuned_model=%s, file_id=%s\n", req.FineTunedModel, req.FileID)
 	// Get user ID and API key settings from auth middleware
 	userID := r.Header.Get("X-User-ID")
+
+	// Check quota before processing
+	if userID != "" {
+		if ok, reason := CheckCredits(userID, 0.01); !ok {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]string{"error": reason, "status": "quota_exceeded"})
+			return
+		}
+	}
 	apiKeyLLMModel := r.Header.Get("X-LLM-Model")
 	apiKeyFineTunedModel := r.Header.Get("X-FineTuned-Model")
 

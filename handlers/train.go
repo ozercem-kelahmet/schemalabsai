@@ -491,21 +491,21 @@ func exportConnectionToCSV(conn Connection, connID string) ([]string, error) {
 		if conn.SSL { sslmode = "require" }
 		dsn := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=%s",
 			conn.Username, conn.Password, connHost, conn.Port, conn.Database, sslmode)
-		paths, err := exportSQLToCSV(dsn, "postgres", connID, "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'", true)
+		paths, err := exportSQLToCSV(dsn, "postgres", connID, "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'", true, conn.SelectedTables)
 		if err != nil { return nil, err }
 		filePaths = append(filePaths, paths...)
 
 	case "mysql":
 		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true",
 			conn.Username, conn.Password, conn.Host, conn.Port, conn.Database)
-		paths, err := exportSQLToCSV(dsn, "mysql", connID, fmt.Sprintf("SELECT table_name FROM information_schema.tables WHERE table_schema = '%s'", conn.Database), false)
+		paths, err := exportSQLToCSV(dsn, "mysql", connID, fmt.Sprintf("SELECT table_name FROM information_schema.tables WHERE table_schema = '%s'", conn.Database), false, conn.SelectedTables)
 		if err != nil { return nil, err }
 		filePaths = append(filePaths, paths...)
 
 	case "snowflake":
 		dsn := fmt.Sprintf("postgresql://%s:%s@%s/%s",
 			conn.Username, conn.Password, conn.Host, conn.Database)
-		paths, err := exportSQLToCSV(dsn, "snowflake", connID, "SELECT table_name FROM information_schema.tables WHERE table_schema = 'PUBLIC'", true)
+		paths, err := exportSQLToCSV(dsn, "snowflake", connID, "SELECT table_name FROM information_schema.tables WHERE table_schema = 'PUBLIC'", true, conn.SelectedTables)
 		if err != nil { return nil, err }
 		filePaths = append(filePaths, paths...)
 
@@ -520,7 +520,15 @@ func exportConnectionToCSV(conn Connection, connID string) ([]string, error) {
 		defer client.Disconnect(ctx)
 		db := client.Database(conn.Database)
 		collections, _ := db.ListCollectionNames(ctx, map[string]interface{}{})
+var mongoSelMap map[string]bool
+if conn.SelectedTables != "" {
+var sel []string
+json.Unmarshal([]byte(conn.SelectedTables), &sel)
+mongoSelMap = make(map[string]bool)
+for _, s := range sel { mongoSelMap[s] = true }
+}
 		for _, collName := range collections {
+if mongoSelMap != nil && !mongoSelMap[collName] { continue }
 			csvPath := exportMongoToCSV(ctx, db, collName, conn, connID)
 			if csvPath != "" { filePaths = append(filePaths, csvPath) }
 		}
@@ -528,7 +536,7 @@ func exportConnectionToCSV(conn Connection, connID string) ([]string, error) {
 	case "databricks":
 		dsn := fmt.Sprintf("postgresql://%s:%s@%s/%s",
 			conn.Username, conn.Password, conn.Host, conn.Database)
-		paths, err := exportSQLToCSV(dsn, "databricks", connID, "SHOW TABLES", false)
+		paths, err := exportSQLToCSV(dsn, "databricks", connID, "SHOW TABLES", false, conn.SelectedTables)
 		if err != nil { log.Printf("Databricks export failed: %v", err) }
 		if len(paths) > 0 { filePaths = append(filePaths, paths...) }
 
@@ -721,6 +729,14 @@ func exportConnectionToCSV(conn Connection, connID string) ([]string, error) {
 				objName := bodyStr[keyStart : keyStart+endIdx]
 				keyStart += endIdx + 6
 				if strings.HasSuffix(objName, ".csv") || strings.HasSuffix(objName, ".json") {
+					var s3SelMap map[string]bool
+					if conn.SelectedTables != "" {
+						var sel []string
+						json.Unmarshal([]byte(conn.SelectedTables), &sel)
+						s3SelMap = make(map[string]bool)
+						for _, s := range sel { s3SelMap[s] = true }
+					}
+					if s3SelMap != nil && !s3SelMap[objName] { continue }
 					objURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", conn.Bucket, region, objName)
 					objReq, _ := http.NewRequest("GET", objURL, nil)
 					objResp, err := httpClient.Do(objReq)
@@ -772,7 +788,7 @@ func exportConnectionToCSV(conn Connection, connID string) ([]string, error) {
 }
 
 // exportSQLToCSV handles PostgreSQL, MySQL, Snowflake - any SQL-based DB
-func exportSQLToCSV(dsn, driver, connID, listTablesQuery string, quoteTable bool) ([]string, error) {
+func exportSQLToCSV(dsn, driver, connID, listTablesQuery string, quoteTable bool, selectedTables string) ([]string, error) {
 	var filePaths []string
 	var tempGorm *gorm.DB
 	var err error
@@ -797,7 +813,15 @@ func exportSQLToCSV(dsn, driver, connID, listTablesQuery string, quoteTable bool
 	}
 	tableRows.Close()
 
+var selectedMap map[string]bool
+if selectedTables != "" {
+var sel []string
+json.Unmarshal([]byte(selectedTables), &sel)
+selectedMap = make(map[string]bool)
+for _, s := range sel { selectedMap[s] = true }
+}
 	for _, tableName := range tableNames {
+if selectedMap != nil && !selectedMap[tableName] { continue }
 		q := fmt.Sprintf("SELECT * FROM %s", tableName)
 		if quoteTable { q = fmt.Sprintf(`SELECT * FROM "%s"`, tableName) }
 		dataRows, err := sqlDB.Query(q)
@@ -886,33 +910,215 @@ func exportVectorDBToCSV(conn Connection, connID string) ([]string, error) {
 // exportGraphQLToCSV fetches GraphQL introspection and data as CSV
 func exportGraphQLToCSV(conn Connection, connID string) ([]string, error) {
 	var filePaths []string
-	apiURL := fmt.Sprintf("http://%s:%d%s", conn.Host, conn.Port, func() string { if conn.Database != "" { return "/" + conn.Database } else { return "/graphql" } }())
-	if conn.SSL { apiURL = strings.Replace(apiURL, "http://", "https://", 1) }
+	apiURL := conn.Endpoint
+	if apiURL == "" { return nil, fmt.Errorf("no GraphQL endpoint") }
+	log.Printf("📡 exportGraphQLToCSV: apiURL=%s", apiURL)
+	httpClient := &http.Client{Timeout: 30 * time.Second}
 
-	// Simple introspection query to get types
-	query := `{"query": "{ __schema { queryType { fields { name } } } }"}`
-	client := &http.Client{Timeout: 30 * time.Second}
-	req, _ := http.NewRequest("POST", apiURL, strings.NewReader(query))
-	req.Header.Set("Content-Type", "application/json")
-	if conn.Password != "" { req.Header.Set("Authorization", "Bearer " + conn.Password) }
+	// Full introspection with deep ofType (7 levels covers all cases)
+	introQuery := `{"query":"{ __schema { queryType { fields { name type { name kind ofType { name kind ofType { name kind ofType { name kind } } } } } } } }"}`
+	introReq, _ := http.NewRequest("POST", apiURL, strings.NewReader(introQuery))
+	introReq.Header.Set("Content-Type", "application/json")
+	if conn.APIKey != "" { introReq.Header.Set("Authorization", "Bearer "+conn.APIKey) }
+	introResp, err := httpClient.Do(introReq)
+	if err != nil { return nil, fmt.Errorf("GraphQL introspection failed: %v", err) }
+	introBytes, _ := io.ReadAll(introResp.Body)
+	introResp.Body.Close()
+	log.Printf("📡 Introspection response: %d bytes", len(introBytes))
 
-	resp, err := client.Do(req)
-	if err != nil { return nil, fmt.Errorf("GraphQL request failed: %v", err) }
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	// Parse as raw JSON for flexible ofType depth
+	var rawResult map[string]interface{}
+	json.Unmarshal(introBytes, &rawResult)
 
-	// Parse response and save as CSV
-	csvPath := fmt.Sprintf("./uploads/conn_%s_graphql.csv", connID)
-	csvFile, _ := os.Create(csvPath)
-	csvWriter := csv.NewWriter(csvFile)
-	csvWriter.Write([]string{"query_type", "response"})
-	csvWriter.Write([]string{"introspection", string(body)})
-	csvWriter.Flush()
-	csvFile.Close()
-	filePaths = append(filePaths, csvPath)
-	log.Printf("Exported GraphQL data to %s", csvPath)
+	// Helper: recursively resolve type name from ofType chain
+	resolveTypeName := func(typeObj map[string]interface{}) string {
+		current := typeObj
+		for current != nil {
+			if name, ok := current["name"].(string); ok && name != "" {
+				kind, _ := current["kind"].(string)
+				if kind == "OBJECT" || kind == "INTERFACE" || kind == "UNION" {
+					return name
+				}
+			}
+			if ofType, ok := current["ofType"].(map[string]interface{}); ok {
+				current = ofType
+			} else {
+				break
+			}
+		}
+		return ""
+	}
+
+	// Helper: check if type chain contains LIST
+	isListType := func(typeObj map[string]interface{}) bool {
+		current := typeObj
+		for current != nil {
+			if kind, ok := current["kind"].(string); ok && kind == "LIST" {
+				return true
+			}
+			if ofType, ok := current["ofType"].(map[string]interface{}); ok {
+				current = ofType
+			} else {
+				break
+			}
+		}
+		return false
+	}
+
+	// Get all types for finding scalar fields
+	dataObj, _ := rawResult["data"].(map[string]interface{})
+	if dataObj == nil { return nil, fmt.Errorf("no data in introspection") }
+	schemaObj, _ := dataObj["__schema"].(map[string]interface{})
+	if schemaObj == nil { return nil, fmt.Errorf("no schema") }
+
+	// Get types from full introspection for scalar field lookup
+	typesQuery := `{"query":"{ __schema { types { name kind fields { name type { name kind ofType { name kind } } } } } }"}`
+	typesReq, _ := http.NewRequest("POST", apiURL, strings.NewReader(typesQuery))
+	typesReq.Header.Set("Content-Type", "application/json")
+	if conn.APIKey != "" { typesReq.Header.Set("Authorization", "Bearer "+conn.APIKey) }
+	typesResp, terr := httpClient.Do(typesReq)
+	if terr != nil { return nil, fmt.Errorf("types query failed: %v", terr) }
+	typesBytes, _ := io.ReadAll(typesResp.Body)
+	typesResp.Body.Close()
+
+	var typesResult map[string]interface{}
+	json.Unmarshal(typesBytes, &typesResult)
+	typesData, _ := typesResult["data"].(map[string]interface{})
+	typesSchema, _ := typesData["__schema"].(map[string]interface{})
+	allTypes, _ := typesSchema["types"].([]interface{})
+
+	// Build type -> scalar fields map
+	typeFieldsMap := make(map[string][]string)
+	for _, t := range allTypes {
+		tObj, _ := t.(map[string]interface{})
+		tName, _ := tObj["name"].(string)
+		tKind, _ := tObj["kind"].(string)
+		if tKind != "OBJECT" || tName == "" { continue }
+		fields, _ := tObj["fields"].([]interface{})
+		var scalarFields []string
+		for _, f := range fields {
+			fObj, _ := f.(map[string]interface{})
+			fName, _ := fObj["name"].(string)
+			fType, _ := fObj["type"].(map[string]interface{})
+			fKind, _ := fType["kind"].(string)
+			fTypeName, _ := fType["name"].(string)
+			if fKind == "NON_NULL" {
+				if ofType, ok := fType["ofType"].(map[string]interface{}); ok {
+					fTypeName, _ = ofType["name"].(string)
+				}
+			}
+			if fKind == "SCALAR" || fTypeName == "String" || fTypeName == "Int" || fTypeName == "Float" || fTypeName == "Boolean" || fTypeName == "ID" {
+				scalarFields = append(scalarFields, fName)
+			}
+		}
+		if len(scalarFields) > 0 {
+			typeFieldsMap[tName] = scalarFields
+		}
+	}
+
+	// Selected tables filter
+	var selectedMap map[string]bool
+	if conn.SelectedTables != "" {
+		var selected []string
+		json.Unmarshal([]byte(conn.SelectedTables), &selected)
+		if len(selected) > 0 {
+			selectedMap = make(map[string]bool)
+			for _, s := range selected { selectedMap[s] = true }
+		}
+	}
+
+	// Build singular field name -> type map (continent->Continent, country->Country)
+	queryType, _ := schemaObj["queryType"].(map[string]interface{})
+	queryFields, _ := queryType["fields"].([]interface{})
+	singularTypeMap := make(map[string]string)
+	for _, qf := range queryFields {
+		f, _ := qf.(map[string]interface{})
+		fName, _ := f["name"].(string)
+		fType, _ := f["type"].(map[string]interface{})
+		fKind, _ := fType["kind"].(string)
+		if fKind == "OBJECT" {
+			tName, _ := fType["name"].(string)
+			if tName != "" { singularTypeMap[fName] = tName }
+		}
+	}
+	log.Printf("📡 Found %d query fields, %d type mappings, %d singular fields", len(queryFields), len(typeFieldsMap), len(singularTypeMap))
+
+	for _, qf := range queryFields {
+		field, _ := qf.(map[string]interface{})
+		fieldName, _ := field["name"].(string)
+		fieldType, _ := field["type"].(map[string]interface{})
+
+		if !isListType(fieldType) { continue }
+		returnType := resolveTypeName(fieldType)
+		// If type not resolved from ofType chain, infer from singular field
+		if returnType == "" {
+			// Try: continents -> continent, countries -> country, languages -> language
+			singular := strings.TrimSuffix(fieldName, "ies") 
+			if singular != fieldName { singular += "y" } else { singular = strings.TrimSuffix(fieldName, "s") }
+			if t, ok := singularTypeMap[singular]; ok { returnType = t }
+		}
+		// Also try matching from typeFieldsMap by capitalized singular
+		if returnType == "" {
+			singular := strings.TrimSuffix(fieldName, "ies")
+			if singular != fieldName { singular += "y" } else { singular = strings.TrimSuffix(fieldName, "s") }
+			cap := strings.ToUpper(singular[:1]) + singular[1:]
+			if _, ok := typeFieldsMap[cap]; ok { returnType = cap }
+		}
+		log.Printf("📡 List field: %s -> %s", fieldName, returnType)
+		if returnType == "" { continue }
+
+		// Check selected tables
+		if selectedMap != nil {
+			matched := false
+			for sel := range selectedMap {
+				if strings.EqualFold(sel, fieldName) || strings.EqualFold(sel, returnType) || strings.HasPrefix(strings.ToLower(fieldName), strings.ToLower(sel)) {
+					matched = true; break
+				}
+			}
+			if !matched { continue }
+		}
+
+		scalarFields := typeFieldsMap[returnType]
+		if len(scalarFields) == 0 { continue }
+
+		fieldsStr := strings.Join(scalarFields, " ")
+		gqlQuery := fmt.Sprintf(`{"query":"{ %s { %s } }"}`, fieldName, fieldsStr)
+		dataReq, _ := http.NewRequest("POST", apiURL, strings.NewReader(gqlQuery))
+		dataReq.Header.Set("Content-Type", "application/json")
+		if conn.APIKey != "" { dataReq.Header.Set("Authorization", "Bearer "+conn.APIKey) }
+		dataResp, derr := httpClient.Do(dataReq)
+		if derr != nil { log.Printf("📡 Query %s failed: %v", fieldName, derr); continue }
+		dataRespBytes, _ := io.ReadAll(dataResp.Body)
+		dataResp.Body.Close()
+
+		var dataResult map[string]interface{}
+		json.Unmarshal(dataRespBytes, &dataResult)
+		if respData, ok := dataResult["data"].(map[string]interface{}); ok {
+			if arr, ok := respData[fieldName].([]interface{}); ok && len(arr) > 0 {
+				csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, fieldName)
+				csvFile, _ := os.Create(csvPath)
+				csvWriter := csv.NewWriter(csvFile)
+				csvWriter.Write(scalarFields)
+				for _, item := range arr {
+					if obj, ok := item.(map[string]interface{}); ok {
+						row := make([]string, len(scalarFields))
+						for i, h := range scalarFields {
+							if v, exists := obj[h]; exists && v != nil { row[i] = fmt.Sprintf("%v", v) }
+						}
+						csvWriter.Write(row)
+					}
+				}
+				csvWriter.Flush()
+				csvFile.Close()
+				filePaths = append(filePaths, csvPath)
+				log.Printf("📡 Exported %s to %s (%d rows, %d cols)", fieldName, csvPath, len(arr), len(scalarFields))
+			}
+		}
+	}
+	log.Printf("📡 exportGraphQLToCSV done: %d files exported", len(filePaths))
 	return filePaths, nil
 }
+
 
 // writeRowsToCSV writes sql.Rows to a CSV file
 func writeRowsToCSV(dataRows *sql.Rows, connID, tableName string) string {
@@ -1005,6 +1211,7 @@ if req.Epochs == 0 {
 	}
 
 // If connection_ids provided, export data from connections as CSV
+log.Printf("🔍 ConnectionIDs=%q FileIDs=%v filePaths=%d", req.ConnectionIDs, req.FileIDs, len(filePaths))
 if req.ConnectionIDs != "" {
 	connIDs := strings.Split(req.ConnectionIDs, ",")
 	for _, connID := range connIDs {
@@ -1051,110 +1258,16 @@ if req.ConnectionIDs != "" {
 			continue
 		}
 
-		// GraphQL connection - fetch all types, convert to CSV
-		if conn.SubType == "graphql" && conn.Endpoint != "" {
-			httpClient := &http.Client{Timeout: 30 * time.Second}
-			// First get Query type fields via introspection
-			introQuery := `{"query":"{ __schema { types { name kind fields { name type { name kind ofType { name } } } } } }"}`
-			introReq, _ := http.NewRequest("POST", conn.Endpoint, strings.NewReader(introQuery))
-			introReq.Header.Set("Content-Type", "application/json")
-			if conn.APIKey != "" { introReq.Header.Set("Authorization", "Bearer "+conn.APIKey) }
-			introResp, err := httpClient.Do(introReq)
-			if err != nil {
-				log.Printf("GraphQL introspection failed for %s: %v", connID, err)
-				continue
-			}
-			introBytes, _ := io.ReadAll(introResp.Body)
-			introResp.Body.Close()
-			var introResult struct {
-				Data struct {
-					Schema struct {
-						Types []struct {
-							Name   string `json:"name"`
-							Kind   string `json:"kind"`
-							Fields []struct {
-								Name string `json:"name"`
-								Type struct {
-									Name   string `json:"name"`
-									Kind   string `json:"kind"`
-									OfType *struct{ Name string `json:"name"` } `json:"ofType"`
-								} `json:"type"`
-							} `json:"fields"`
-						} `json:"types"`
-					} `json:"__schema"`
-				} `json:"data"`
-			}
-			json.Unmarshal(introBytes, &introResult)
-			// Find Query type and iterate its fields
-			for _, t := range introResult.Data.Schema.Types {
-				if t.Name == "Query" {
-					for _, field := range t.Fields {
-						// Build query with scalar fields of the return type
-						returnTypeName := field.Type.Name
-						if returnTypeName == "" && field.Type.OfType != nil {
-							returnTypeName = field.Type.OfType.Name
-						}
-						// Find the return type's scalar fields
-						var scalarFields []string
-						for _, rt := range introResult.Data.Schema.Types {
-							if rt.Name == returnTypeName && rt.Kind == "OBJECT" {
-								for _, rf := range rt.Fields {
-									fKind := rf.Type.Kind
-									fTypeName := rf.Type.Name
-									if fKind == "NON_NULL" && rf.Type.OfType != nil {
-										fTypeName = rf.Type.OfType.Name
-									}
-									if fKind == "SCALAR" || fTypeName == "String" || fTypeName == "Int" || fTypeName == "Float" || fTypeName == "Boolean" || fTypeName == "ID" {
-										scalarFields = append(scalarFields, rf.Name)
-									}
-								}
-								break
-							}
-						}
-						if len(scalarFields) == 0 { continue }
-						fieldsStr := strings.Join(scalarFields, " ")
-						gqlQuery := fmt.Sprintf(`{"query":"{ %s { %s } }"}`, field.Name, fieldsStr)
-						dataReq, _ := http.NewRequest("POST", conn.Endpoint, strings.NewReader(gqlQuery))
-						dataReq.Header.Set("Content-Type", "application/json")
-						if conn.APIKey != "" { dataReq.Header.Set("Authorization", "Bearer "+conn.APIKey) }
-						dataResp, derr := httpClient.Do(dataReq)
-						if derr != nil { continue }
-						dataBytes, _ := io.ReadAll(dataResp.Body)
-						dataResp.Body.Close()
-						var dataResult map[string]interface{}
-						json.Unmarshal(dataBytes, &dataResult)
-						if data, ok := dataResult["data"].(map[string]interface{}); ok {
-							if arr, ok := data[field.Name].([]interface{}); ok && len(arr) > 0 {
-								csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, field.Name)
-								csvFile, _ := os.Create(csvPath)
-								csvWriter := csv.NewWriter(csvFile)
-								csvWriter.Write(scalarFields)
-								for _, item := range arr {
-									if obj, ok := item.(map[string]interface{}); ok {
-										row := make([]string, len(scalarFields))
-										for i, h := range scalarFields { 
-											if v, exists := obj[h]; exists && v != nil {
-												row[i] = fmt.Sprintf("%v", v)
-											}
-										}
-										csvWriter.Write(row)
-									}
-								}
-								csvWriter.Flush()
-								csvFile.Close()
-								filePaths = append(filePaths, csvPath)
-								log.Printf("Exported GraphQL %s.%s to %s (%d rows)", connID, field.Name, csvPath, len(arr))
-							}
-						}
-					}
-					break
-				}
-			}
-			continue
-		}
 
 		// MongoDB connection
 		if conn.SubType == "mongodb" {
+			var mongoSelectedMap map[string]bool
+			if conn.SelectedTables != "" {
+				var sel []string
+				json.Unmarshal([]byte(conn.SelectedTables), &sel)
+				mongoSelectedMap = make(map[string]bool)
+				for _, s := range sel { mongoSelectedMap[s] = true }
+			}
 			var mongoURI string
 			if conn.Endpoint != "" {
 				mongoURI = conn.Endpoint
@@ -1181,6 +1294,7 @@ if req.ConnectionIDs != "" {
 			if dbName != "" {
 				collections, _ := client.Database(dbName).ListCollectionNames(context.Background(), map[string]interface{}{})
 				for _, collName := range collections {
+					if mongoSelectedMap != nil && !mongoSelectedMap[collName] { continue }
 					coll := client.Database(dbName).Collection(collName)
 					cursor, cerr := coll.Find(context.Background(), map[string]interface{}{})
 					if cerr != nil { continue }
@@ -1213,6 +1327,13 @@ if req.ConnectionIDs != "" {
 
 		// Snowflake connection
 		if conn.SubType == "snowflake" {
+			var sfSelectedMap map[string]bool
+			if conn.SelectedTables != "" {
+				var sel []string
+				json.Unmarshal([]byte(conn.SelectedTables), &sel)
+				sfSelectedMap = make(map[string]bool)
+				for _, s := range sel { sfSelectedMap[s] = true }
+			}
 			sfCfg := &sf.Config{
 				Account:   conn.Host,
 				User:      conn.Username,
@@ -1245,6 +1366,7 @@ if req.ConnectionIDs != "" {
 			}
 			sfRows.Close()
 			for _, tableName := range sfTableNames {
+				if sfSelectedMap != nil && !sfSelectedMap[tableName] { continue }
 				dataRows, err := sfDB.Query(fmt.Sprintf("SELECT * FROM %s", tableName))
 				if err != nil { continue }
 				cols, _ := dataRows.Columns()
@@ -1278,27 +1400,56 @@ if req.ConnectionIDs != "" {
 		// Databricks connection
 		if conn.SubType == "databricks" && conn.Host != "" && conn.APIKey != "" {
 			httpClient := &http.Client{Timeout: 30 * time.Second}
-			// List tables
 			dbWorkspaceURL := "https://" + strings.TrimPrefix(strings.TrimPrefix(conn.Host, "https://"), "http://")
 			dbCatalog := conn.Database
 			if dbCatalog == "" { dbCatalog = "main" }
-			listReq, _ := http.NewRequest("GET", dbWorkspaceURL+"/api/2.1/unity-catalog/tables?catalog_name="+dbCatalog+"&schema_name=default", nil)
-			listReq.Header.Set("Authorization", "Bearer "+conn.APIKey)
-			listResp, err := httpClient.Do(listReq)
-			if err != nil {
-				log.Printf("Databricks list tables failed for %s: %v", connID, err)
-				continue
+			// Extract warehouse ID from endpoint path
+			warehouseID := conn.Endpoint
+			if strings.Contains(warehouseID, "/") {
+				parts := strings.Split(warehouseID, "/")
+				warehouseID = parts[len(parts)-1]
 			}
-			var listResult struct {
-				Tables []struct {
-					Name string `json:"name"`
-				} `json:"tables"`
+			// Selected tables filter
+			var selectedMap map[string]bool
+			if conn.SelectedTables != "" {
+				var selected []string
+				json.Unmarshal([]byte(conn.SelectedTables), &selected)
+				if len(selected) > 0 {
+					selectedMap = make(map[string]bool)
+					for _, s := range selected { selectedMap[s] = true }
+				}
 			}
-			json.NewDecoder(listResp.Body).Decode(&listResult)
-			listResp.Body.Close()
-			for _, t := range listResult.Tables {
-				query := fmt.Sprintf("SELECT * FROM %s", t.Name)
-				reqBody, _ := json.Marshal(map[string]interface{}{"statement": query, "warehouse_id": conn.Endpoint})
+			// List schemas and tables
+			schReq, _ := http.NewRequest("GET", dbWorkspaceURL+"/api/2.1/unity-catalog/schemas?catalog_name="+dbCatalog, nil)
+			schReq.Header.Set("Authorization", "Bearer "+conn.APIKey)
+			schResp, serr := httpClient.Do(schReq)
+			var schemaNames []string
+			if serr == nil && schResp.StatusCode == 200 {
+				var schResult struct { Schemas []struct { Name string `json:"name"` } `json:"schemas"` }
+				json.NewDecoder(schResp.Body).Decode(&schResult)
+				schResp.Body.Close()
+				for _, s := range schResult.Schemas {
+					if s.Name != "information_schema" { schemaNames = append(schemaNames, s.Name) }
+				}
+			} else if serr == nil { schResp.Body.Close() }
+			if len(schemaNames) == 0 { schemaNames = []string{"default"} }
+			var dbTables []string
+			for _, schema := range schemaNames {
+				tReq, _ := http.NewRequest("GET", dbWorkspaceURL+"/api/2.1/unity-catalog/tables?catalog_name="+dbCatalog+"&schema_name="+schema, nil)
+				tReq.Header.Set("Authorization", "Bearer "+conn.APIKey)
+				tResp, terr := httpClient.Do(tReq)
+				if terr == nil && tResp.StatusCode == 200 {
+					var tResult struct { Tables []struct { Name string `json:"name"` } `json:"tables"` }
+					json.NewDecoder(tResp.Body).Decode(&tResult)
+					tResp.Body.Close()
+					for _, t := range tResult.Tables { dbTables = append(dbTables, schema+"."+t.Name) }
+				} else if terr == nil { tResp.Body.Close() }
+			}
+			log.Printf("📡 Databricks: found %d tables in catalog %s", len(dbTables), dbCatalog)
+			for _, tableFull := range dbTables {
+				if selectedMap != nil && !selectedMap[tableFull] { continue }
+				query := fmt.Sprintf("SELECT * FROM %s.%s LIMIT 10000", dbCatalog, tableFull)
+				reqBody, _ := json.Marshal(map[string]interface{}{"statement": query, "warehouse_id": warehouseID})
 				sqlReq, _ := http.NewRequest("POST", dbWorkspaceURL+"/api/2.0/sql/statements", bytes.NewReader(reqBody))
 				sqlReq.Header.Set("Authorization", "Bearer "+conn.APIKey)
 				sqlReq.Header.Set("Content-Type", "application/json")
@@ -1317,7 +1468,7 @@ if req.ConnectionIDs != "" {
 				json.NewDecoder(sqlResp.Body).Decode(&sqlResult)
 				sqlResp.Body.Close()
 				if len(sqlResult.Result.DataArray) > 0 {
-					csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, t.Name)
+					csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, strings.ReplaceAll(tableFull, ".", "_"))
 					csvFile, _ := os.Create(csvPath)
 					csvWriter := csv.NewWriter(csvFile)
 					var headers []string
@@ -1327,14 +1478,31 @@ if req.ConnectionIDs != "" {
 					csvWriter.Flush()
 					csvFile.Close()
 					filePaths = append(filePaths, csvPath)
-					log.Printf("Exported Databricks %s.%s to %s (%d rows)", connID, t.Name, csvPath, len(sqlResult.Result.DataArray))
+					log.Printf("Exported Databricks %s.%s to %s (%d rows)", connID, tableFull, csvPath, len(sqlResult.Result.DataArray))
 				}
 			}
 			continue
 		}
 
+		// GraphQL connection - use exportGraphQLToCSV
+		if conn.SubType == "graphql" && conn.Endpoint != "" {
+			paths, err := exportGraphQLToCSV(conn, connID)
+			if err != nil {
+				log.Printf("GraphQL export failed for %s: %v", connID, err)
+			}
+			if len(paths) > 0 { filePaths = append(filePaths, paths...) }
+			continue
+		}
+
 		// MySQL connection
 		if conn.SubType == "mysql" {
+			var mysqlSelectedMap map[string]bool
+			if conn.SelectedTables != "" {
+				var sel []string
+				json.Unmarshal([]byte(conn.SelectedTables), &sel)
+				mysqlSelectedMap = make(map[string]bool)
+				for _, s := range sel { mysqlSelectedMap[s] = true }
+			}
 			mysqlDSN := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", conn.Username, conn.Password, conn.Host, conn.Port, conn.Database)
 			mysqlDB, err := sql.Open("mysql", mysqlDSN)
 			if err != nil {
@@ -1355,6 +1523,7 @@ if req.ConnectionIDs != "" {
 			}
 			tableRows.Close()
 			for _, tableName := range mysqlTableNames {
+				if mysqlSelectedMap != nil && !mysqlSelectedMap[tableName] { continue }
 				dataRows, err := mysqlDB.Query(fmt.Sprintf("SELECT * FROM `%s`", tableName))
 				if err != nil { continue }
 				cols, _ := dataRows.Columns()
@@ -1387,6 +1556,14 @@ if req.ConnectionIDs != "" {
 
 		// Pinecone connection
 		if conn.SubType == "pinecone" && conn.Endpoint != "" && conn.APIKey != "" {
+			var pineSelectedMap map[string]bool
+			if conn.SelectedTables != "" {
+				var sel []string
+				json.Unmarshal([]byte(conn.SelectedTables), &sel)
+				pineSelectedMap = make(map[string]bool)
+				for _, s := range sel { pineSelectedMap[s] = true }
+			}
+			_ = pineSelectedMap
 			httpClient := &http.Client{Timeout: 30 * time.Second}
 			req, _ := http.NewRequest("POST", conn.Endpoint+"/query", strings.NewReader(`{"topK":10000,"includeMetadata":true,"includeValues":true,"vector":[0]}`))
 			req.Header.Set("Api-Key", conn.APIKey)
@@ -1500,7 +1677,15 @@ if req.ConnectionIDs != "" {
 				}
 				json.NewDecoder(listResp.Body).Decode(&listResult)
 				listResp.Body.Close()
+				var gdriveSelMap map[string]bool
+				if conn.SelectedTables != "" {
+					var sel []string
+					json.Unmarshal([]byte(conn.SelectedTables), &sel)
+					gdriveSelMap = make(map[string]bool)
+					for _, s := range sel { gdriveSelMap[s] = true }
+				}
 				for _, f := range listResult.Files {
+					if gdriveSelMap != nil && !gdriveSelMap[f.Name] { continue }
 					exportReq, _ := http.NewRequest("GET", "https://www.googleapis.com/drive/v3/files/"+f.ID+"?alt=media", nil)
 					exportReq.Header.Set("Authorization", "Bearer "+conn.APIKey)
 					exportResp, eerr := httpClient.Do(exportReq)
@@ -1542,6 +1727,14 @@ if req.ConnectionIDs != "" {
 					objName := bodyStr[keyStart : keyStart+endIdx]
 					keyStart += endIdx + 6
 					if strings.HasSuffix(objName, ".csv") || strings.HasSuffix(objName, ".json") {
+					var s3SelMap map[string]bool
+					if conn.SelectedTables != "" {
+						var sel []string
+						json.Unmarshal([]byte(conn.SelectedTables), &sel)
+						s3SelMap = make(map[string]bool)
+						for _, s := range sel { s3SelMap[s] = true }
+					}
+					if s3SelMap != nil && !s3SelMap[objName] { continue }
 						objURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", conn.Bucket, region, objName)
 						objReq, _ := http.NewRequest("GET", objURL, nil)
 						objResp, oerr := httpClient.Do(objReq)

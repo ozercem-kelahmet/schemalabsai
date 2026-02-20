@@ -197,6 +197,14 @@ func QueryEndpointHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update call counts
+	// Check quota
+	if ok, reason := CheckCredits(key.UserID, 0.02); !ok {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{"error": reason})
+		return
+	}
+
 	DB.Model(&endpoint).Update("calls", endpoint.Calls+1)
 	DB.Model(&key).Updates(map[string]interface{}{"requests": key.Requests + 1, "last_used": time.Now()})
 
