@@ -432,7 +432,7 @@ export function DatasetGrid() {
         open={isConnectModalOpen} 
         onOpenChange={setIsConnectModalOpen}
         onConnect={async (connection) => {
-          if (connection.type === "skip") {
+          if ((connection as any).type === "skip") {
             loadData()
             return
           }
@@ -441,7 +441,7 @@ export function DatasetGrid() {
             loadData()
             return
           }
-          if (connection.type === "upload" && connection.files) {
+          if ((connection as any).type === "upload" && connection.files) {
             try {
               // Get limits from API
               const limits = await api.getUploadLimits()
@@ -460,7 +460,7 @@ export function DatasetGrid() {
             } catch (error) {
               toast.error("File upload failed")
             }
-          } else if (connection.type === "database") {
+          } else if ((connection as any).type === "database") {
             try {
               toast.loading("Connecting to database...")
               let connData: any = {
@@ -501,7 +501,7 @@ export function DatasetGrid() {
             } catch (error) {
               toast.error("Database connection failed")
             }
-          } else if (connection.type === "api") {
+          } else if ((connection as any).type === "api") {
             try {
               toast.loading("Connecting to API...")
               await api.createConnection({
@@ -516,7 +516,7 @@ export function DatasetGrid() {
             } catch (error) {
               toast.error("API connection failed")
             }
-          } else if (connection.type === "cloud") {
+          } else if ((connection as any).type === "cloud") {
             try {
               toast.loading("Connecting to cloud storage...")
               await api.createConnection({
