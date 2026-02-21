@@ -1182,11 +1182,20 @@ func ListTablesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check cache first (5 min TTL)
-	if conn.CachedTables != "" && conn.CachedAt != nil && time.Since(*conn.CachedAt) < 5*time.Minute {
+forceRefresh := r.URL.Query().Get("refresh") == "true"
+isNullCache := conn.CachedTables == "" || conn.CachedTables == `{"tables":null}` || conn.CachedTables == `{"tables":null,"table_details":null}`
+if !isNullCache && conn.CachedAt != nil && !forceRefresh {
+if conn.SubType == "rest_api" || conn.SubType == "graphql" {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(conn.CachedTables))
 		return
 	}
+if time.Since(*conn.CachedAt) < 5*time.Minute {
+w.Header().Set("Content-Type", "application/json")
+w.Write([]byte(conn.CachedTables))
+return
+}
+}
 
 	var tableInfos []TableInfo
 	var tables []string
@@ -1509,6 +1518,7 @@ func ListTablesHandler(w http.ResponseWriter, r *http.Request) {
 
 	case "rest_api":
 		if conn.Endpoint != "" {
+log.Printf("🔍 REST API ListTables: endpoint=%s", conn.Endpoint)
 			httpClient := &http.Client{Timeout: 30 * time.Second}
 			req, _ := http.NewRequest("GET", conn.Endpoint, nil)
 			if conn.APIKey != "" {

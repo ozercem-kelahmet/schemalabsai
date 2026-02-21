@@ -65,7 +65,7 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
   const [dbName, setDbName] = useState("")
   const [dbUser, setDbUser] = useState("")
   const [dbPassword, setDbPassword] = useState("")
-  const [apiType, setApiType] = useState<"rest" | "graphql">("rest")
+  const [apiType, setApiType] = useState<"rest_api" | "graphql">("rest_api")
   const [step, setStep] = useState<"form" | "tables">("form")
   const [availableTables, setAvailableTables] = useState<{name: string, rows: number, columns: number}[]>([])
   const [selectedTables, setSelectedTables] = useState<string[]>([])
@@ -732,9 +732,9 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
             <TabsContent value="api" className="mt-4 space-y-4">
               <div className="flex gap-2 mb-4">
                 <Button
-                  variant={apiType === "rest" ? "default" : "outline"}
+                  variant={apiType === "rest_api" ? "default" : "outline"}
                   onClick={() => setApiType("rest")}
-                  className={apiType === "rest" ? "bg-[#0052CC]" : ""}
+                  className={apiType === "rest_api" ? "bg-[#0052CC]" : ""}
                 >
                   <Globe className="h-4 w-4 mr-2" />
                   REST API
