@@ -364,7 +364,7 @@ func (rw *RealTimeWatcher) StopWatching(modelID string) {
 }
 
 func (rw *RealTimeWatcher) poll(w *ConnWatcher, conn Connection) {
-	ticker := time.NewTicker(60 * time.Second)
+ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -408,7 +408,18 @@ func getConnectionChecksum(conn Connection) string {
 		defer db.Close()
 		var count int64
 		var txid string
-		db.QueryRow("SELECT COALESCE(SUM(n_live_tup), 0) FROM pg_stat_user_tables").Scan(&count)
+		if conn.SelectedTables != "" {
+var sel []string
+json.Unmarshal([]byte(conn.SelectedTables), &sel)
+if len(sel) > 0 {
+placeholders := make([]string, len(sel))
+args := make([]interface{}, len(sel))
+for i, s := range sel { placeholders[i] = fmt.Sprintf("$%d", i+1); args[i] = s }
+db.QueryRow("SELECT COALESCE(SUM(n_live_tup), 0) FROM pg_stat_user_tables WHERE relname IN ("+strings.Join(placeholders, ",")+")", args...).Scan(&count)
+}
+} else {
+db.QueryRow("SELECT COALESCE(SUM(n_live_tup), 0) FROM pg_stat_user_tables").Scan(&count)
+}
 		db.QueryRow("SELECT txid_current()::text").Scan(&txid)
 		return fmt.Sprintf("pg-%d-%s", count, txid)
 
@@ -445,7 +456,15 @@ func getConnectionChecksum(conn Connection) string {
 		collections, err := db.ListCollectionNames(ctx, bson.M{})
 		if err != nil { return "" }
 		totalDocs := int64(0)
+		var selMap map[string]bool
+		if conn.SelectedTables != "" {
+			var sel []string
+			json.Unmarshal([]byte(conn.SelectedTables), &sel)
+			selMap = make(map[string]bool)
+			for _, s := range sel { selMap[s] = true }
+		}
 		for _, coll := range collections {
+			if selMap != nil && !selMap[coll] { continue }
 			count, _ := db.Collection(coll).CountDocuments(ctx, bson.M{})
 			totalDocs += count
 		}
@@ -618,7 +637,15 @@ func fetchConnectionData(conn Connection, userID string) []string {
 		for rows.Next() { var t string; rows.Scan(&t); tables = append(tables, t) }
 		rows.Close()
 
+		var pgSelMap map[string]bool
+		if conn.SelectedTables != "" {
+			var sel []string
+			json.Unmarshal([]byte(conn.SelectedTables), &sel)
+			pgSelMap = make(map[string]bool)
+			for _, s := range sel { pgSelMap[s] = true }
+		}
 		for _, table := range tables {
+			if pgSelMap != nil && !pgSelMap[table] { continue }
 			fid := exportTableToCSV(sqlDB, table, conn, userID)
 			if fid != "" { fileIDs = append(fileIDs, fid) }
 		}
@@ -637,7 +664,15 @@ func fetchConnectionData(conn Connection, userID string) []string {
 		for rows.Next() { var t string; rows.Scan(&t); tables = append(tables, t) }
 		rows.Close()
 
+		var mySelMap map[string]bool
+		if conn.SelectedTables != "" {
+			var sel []string
+			json.Unmarshal([]byte(conn.SelectedTables), &sel)
+			mySelMap = make(map[string]bool)
+			for _, s := range sel { mySelMap[s] = true }
+		}
 		for _, table := range tables {
+			if mySelMap != nil && !mySelMap[table] { continue }
 			fid := exportTableToCSV(sqlDB, table, conn, userID)
 			if fid != "" { fileIDs = append(fileIDs, fid) }
 		}
@@ -660,7 +695,15 @@ func fetchConnectionData(conn Connection, userID string) []string {
 
 		db := client.Database(conn.Database)
 		collections, _ := db.ListCollectionNames(ctx, bson.M{})
+		var mgoSelMap map[string]bool
+		if conn.SelectedTables != "" {
+			var sel []string
+			json.Unmarshal([]byte(conn.SelectedTables), &sel)
+			mgoSelMap = make(map[string]bool)
+			for _, s := range sel { mgoSelMap[s] = true }
+		}
 		for _, coll := range collections {
+			if mgoSelMap != nil && !mgoSelMap[coll] { continue }
 			fid := exportMongoToCSV(ctx, db, coll, conn, userID)
 			if fid != "" { fileIDs = append(fileIDs, fid) }
 		}
@@ -688,7 +731,15 @@ func fetchConnectionData(conn Connection, userID string) []string {
 				tables = append(tables, name)
 			}
 			rows.Close()
+		var sfSelMap map[string]bool
+		if conn.SelectedTables != "" {
+			var sel []string
+			json.Unmarshal([]byte(conn.SelectedTables), &sel)
+			sfSelMap = make(map[string]bool)
+			for _, s := range sel { sfSelMap[s] = true }
+		}
 			for _, table := range tables {
+			if sfSelMap != nil && !sfSelMap[table] { continue }
 				fid := exportTableToCSV(sfDB, table, conn, userID)
 				if fid != "" { fileIDs = append(fileIDs, fid) }
 			}
@@ -696,7 +747,9 @@ func fetchConnectionData(conn Connection, userID string) []string {
 
 	case "databricks":
 		if conn.Endpoint == "" || conn.APIKey == "" { return nil }
-		// Databricks SQL via REST API
+		if conn.SelectedTables != "" {
+			log.Printf("📊 Databricks refresh with selected tables: %s", conn.SelectedTables)
+		}
 		fid := fetchAPIToCSV(conn, userID)
 		if fid != "" { fileIDs = append(fileIDs, fid) }
 
@@ -711,7 +764,15 @@ func fetchConnectionData(conn Connection, userID string) []string {
 		defer resp.Body.Close()
 		var gResult struct { Files []struct { ID string `json:"id"`; Name string `json:"name"` } `json:"files"` }
 		json.NewDecoder(resp.Body).Decode(&gResult)
-		for _, f := range gResult.Files {
+		var gdSelMap map[string]bool
+if conn.SelectedTables != "" {
+var sel []string
+json.Unmarshal([]byte(conn.SelectedTables), &sel)
+gdSelMap = make(map[string]bool)
+for _, s := range sel { gdSelMap[s] = true }
+}
+for _, f := range gResult.Files {
+if gdSelMap != nil && !gdSelMap[f.Name] { continue }
 			dlReq, _ := http.NewRequest("GET", "https://www.googleapis.com/drive/v3/files/"+f.ID+"?alt=media", nil)
 			dlReq.Header.Set("Authorization", "Bearer "+conn.APIKey)
 			dlResp, err := client.Do(dlReq)
@@ -744,6 +805,13 @@ func fetchConnectionData(conn Connection, userID string) []string {
 		if err != nil { return nil }
 		for _, obj := range result.Contents {
 			key := *obj.Key
+			if conn.SelectedTables != "" {
+				var s3Sel []string
+				json.Unmarshal([]byte(conn.SelectedTables), &s3Sel)
+				s3Map := make(map[string]bool)
+				for _, s := range s3Sel { s3Map[s] = true }
+				if !s3Map[key] { continue }
+			}
 			if strings.HasSuffix(key, ".csv") || strings.HasSuffix(key, ".json") {
 				fid := downloadS3File(s3Client, conn.Bucket, key, userID)
 				if fid != "" { fileIDs = append(fileIDs, fid) }
@@ -752,11 +820,13 @@ func fetchConnectionData(conn Connection, userID string) []string {
 
 	case "rest_api", "rest":
 		if conn.Endpoint == "" { return nil }
+		if conn.RateLimit != "" { log.Printf("⚡ Rate limited API refresh: %s (%s)", conn.Name, conn.RateLimit) }
 		fid := fetchAPIToCSV(conn, userID)
 		if fid != "" { fileIDs = append(fileIDs, fid) }
 
 	case "graphql":
 		if conn.Endpoint == "" { return nil }
+		if conn.RateLimit != "" { log.Printf("⚡ Rate limited GraphQL refresh: %s (%s)", conn.Name, conn.RateLimit) }
 		fid := fetchGraphQLToCSV(conn, userID)
 		if fid != "" { fileIDs = append(fileIDs, fid) }
 
@@ -902,6 +972,19 @@ func fetchAPIToCSV(conn Connection, userID string) string {
 	resp, err := client.Do(req)
 	if err != nil { return "" }
 	defer resp.Body.Close()
+	if resp.StatusCode == 429 {
+		log.Printf("⚠️ REST API rate limited during refresh: %s", conn.Name)
+		DB.Model(&conn).Update("rate_limit", "Rate limited")
+		return ""
+	}
+	// Update rate limit from headers
+	rlLimit := resp.Header.Get("X-RateLimit-Limit")
+	rlRemaining := resp.Header.Get("X-RateLimit-Remaining")
+	if rlLimit != "" {
+		rlStr := rlLimit + " req limit"
+		if rlRemaining != "" { rlStr = rlRemaining + "/" + rlLimit }
+		DB.Model(&conn).Update("rate_limit", rlStr)
+	}
 
 	body, _ := io.ReadAll(resp.Body)
 
@@ -983,6 +1066,9 @@ func fetchGraphQLToCSV(conn Connection, userID string) string {
 
 // fetchVectorDBToCSV - fetches vector DB data
 func fetchVectorDBToCSV(conn Connection, userID string) string {
+	if conn.SelectedTables != "" {
+		log.Printf("📊 VectorDB fetch with selected: %s", conn.SelectedTables)
+	}
 	var url string
 	var headerKey, headerVal string
 
@@ -1046,8 +1132,16 @@ func fetchGCSToCSV(conn Connection, userID string) string {
 	json.NewDecoder(resp.Body).Decode(&result)
 
 	var fileIDs []string
+	var gcsSelMap map[string]bool
+	if conn.SelectedTables != "" {
+		var sel []string
+		json.Unmarshal([]byte(conn.SelectedTables), &sel)
+		gcsSelMap = make(map[string]bool)
+		for _, s := range sel { gcsSelMap[s] = true }
+	}
 	for _, item := range result.Items {
 		if !strings.HasSuffix(item.Name, ".csv") && !strings.HasSuffix(item.Name, ".json") { continue }
+		if gcsSelMap != nil && !gcsSelMap[item.Name] { continue }
 		objURL := fmt.Sprintf("https://storage.googleapis.com/storage/v1/b/%s/o/%s?alt=media", conn.Bucket, item.Name)
 		req2, _ := http.NewRequest("GET", objURL, nil)
 		req2.Header.Set("Authorization", "Bearer "+conn.APIKey)
