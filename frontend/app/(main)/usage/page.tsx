@@ -126,13 +126,13 @@ export default function UsagePage() {
     
     models.forEach(m => {
       const d = safeDate(m.created_at)
-      const modelUsage = getUsageData(m.id, "model_building", (m.epochs || 5) * 0.5, (m.epochs || 5) * 2500)
+      const modelUsage = getUsageData(m.id, "train", (m.epochs || 5) * 0.5, (m.epochs || 5) * 2500)
       events.push({
         id: `model-${m.id}`,
         date: d.toISOString().split("T")[0],
         time: d.toTimeString().split(" ")[0],
         event: "Model training completed",
-        kind: "model_building",
+        kind: "train",
         model: process.env.NEXT_PUBLIC_BASE_MODEL || "schema-v0",
         builtModel: m.name,
         credits: modelUsage.credits,
@@ -153,7 +153,7 @@ export default function UsagePage() {
       
       // Determine event type based on source
       const source = q.source || "playground"
-      const eventKind = source === "api" ? "api" : source === "endpoint" ? "endpoint" : "query"
+      const eventKind = source === "api" ? "api" : source === "endpoint" ? "endpoint" : "chat"
       const eventName = eventKind === "api" ? "API request" : eventKind === "endpoint" ? "Endpoint called" : "Query executed"
       
       const usage = getUsageData(q.id, eventKind, 0.12, 250)
@@ -171,6 +171,40 @@ export default function UsagePage() {
       })
     })
     
+    // Upload, predict, analyze, sync events from usage logs
+    usageLogs.filter(l => ["upload", "predict", "analyze", "endpoint"].includes(l.event_type)).forEach(l => {
+      const d = safeDate(l.created_at)
+      events.push({
+        id: `${l.event_type}-${l.id}`,
+        date: d.toISOString().split("T")[0],
+        time: d.toTimeString().split(" ")[0],
+        event: l.event_name || l.event_type,
+        kind: l.event_type,
+        model: l.model_used || "-",
+        builtModel: l.resource_name || "-",
+        credits: l.credits_used || 0,
+        baseTokens: l.tokens_used || 0,
+        endpointCalls: 0
+      })
+    })
+
+    // Sync events from usage logs
+    usageLogs.filter(l => l.event_type === "sync").forEach(l => {
+      const d = safeDate(l.created_at)
+      events.push({
+        id: `sync-${l.id}`,
+        date: d.toISOString().split("T")[0],
+        time: d.toTimeString().split(" ")[0],
+        event: l.event_name || "Data Sync",
+        kind: "sync",
+        model: "-",
+        builtModel: l.resource_name || "-",
+        credits: l.credits_used || 0,
+        baseTokens: 0,
+        endpointCalls: 0
+      })
+    })
+
     endpoints.forEach(e => {
       const d = safeDate(e.created_at)
       // Find the model this endpoint is for
@@ -198,7 +232,7 @@ export default function UsagePage() {
     // Data Generation events from dataset uploads
     datasets.forEach(ds => {
       const d = safeDate(ds.created_at || ds.uploaded_at)
-      const dataUsage = getUsageData(ds.id || ds.file_id, "data_generation", 0.05, Math.floor((ds.size || 0) / 1024))
+      const dataUsage = getUsageData(ds.id || ds.file_id, "generate", 0.05, Math.floor((ds.size || 0) / 1024))
       events.push({
         id: `data-file-${ds.id || ds.file_id}`,
         date: d.toISOString().split("T")[0],
@@ -216,7 +250,7 @@ export default function UsagePage() {
     // Data Generation events from database connections
     connections.forEach(conn => {
       const d = safeDate(conn.created_at)
-      const connUsage = getUsageData(conn.id, "data_generation", 0.10, 0)
+      const connUsage = getUsageData(conn.id, "sync", 0.10, 0)
       events.push({
         id: `data-conn-${conn.id}`,
         date: d.toISOString().split("T")[0],
@@ -376,20 +410,33 @@ export default function UsagePage() {
   })
 
   // Usage by type pie chart
-  const queryCount = usageEvents.filter(e => e.kind === "query").length
-  const modelCount = usageEvents.filter(e => e.kind === "model_building").length
-  const apiCount = usageEvents.filter(e => e.kind === "api").length
-  const endpointCount = usageEvents.filter(e => e.kind === "endpoint").length
-  const dataGenCount = usageEvents.filter(e => e.kind === "data_generation").length
-  const total = queryCount + modelCount + apiCount + endpointCount + dataGenCount || 1
+  const kindCounts: Record<string, number> = {}
+  usageEvents.forEach(e => { kindCounts[e.kind] = (kindCounts[e.kind] || 0) + 1 })
+  const totalEvents = usageEvents.length || 1
 
-  const usageByKind = [
-    { name: "Queries", value: Math.round(queryCount / total * 100), color: "#0052CC" },
-    { name: "Model Building", value: Math.round(modelCount / total * 100), color: "#2684FF" },
-    { name: "API Calls", value: Math.round(apiCount / total * 100), color: "#4C9AFF" },
-    { name: "Endpoints", value: Math.round(endpointCount / total * 100), color: "#B3D4FF" },
-    { name: "Data Generation", value: Math.round(dataGenCount / total * 100), color: "#7C3AED" },
-  ]
+  const kindConfig: Record<string, { name: string; color: string }> = {
+    query: { name: "Queries", color: "#0052CC" },
+    model_building: { name: "Model Building", color: "#7C3AED" },
+    api: { name: "API Calls", color: "#4C9AFF" },
+    endpoint: { name: "Endpoints", color: "#B3D4FF" },
+    data_generation: { name: "Data Generation", color: "#8B5CF6" },
+    sync: { name: "Sync", color: "#F59E0B" },
+    upload: { name: "Upload", color: "#06B6D4" },
+    predict: { name: "Prediction", color: "#14B8A6" },
+    analyze: { name: "Analysis", color: "#6366F1" },
+    chat: { name: "Chat", color: "#2684FF" },
+    train: { name: "Training", color: "#7C3AED" },
+    generate: { name: "Generation", color: "#8B5CF6" },
+  }
+
+  const usageByKind = Object.entries(kindCounts)
+    .filter(([_, count]) => count > 0)
+    .map(([kind, count]) => ({
+      name: kindConfig[kind]?.name || kind,
+      value: Math.round(count / totalEvents * 100),
+      color: kindConfig[kind]?.color || "#94A3B8",
+    }))
+    .sort((a, b) => b.value - a.value)
 
   const getEventBadge = (kind: string) => {
     const styles: Record<string, string> = {
@@ -398,6 +445,11 @@ export default function UsagePage() {
       api: "bg-green-500/10 text-green-500",
       endpoint: "bg-orange-500/10 text-orange-500",
       data_generation: "bg-violet-500/10 text-violet-500",
+      sync: "bg-amber-500/10 text-amber-500",
+      upload: "bg-cyan-500/10 text-cyan-500",
+      predict: "bg-teal-500/10 text-teal-500",
+      analyze: "bg-indigo-500/10 text-indigo-500",
+      connection: "bg-emerald-500/10 text-emerald-500",
     }
     const labels: Record<string, string> = {
       query: "Query",
@@ -405,6 +457,11 @@ export default function UsagePage() {
       api: "API",
       endpoint: "Endpoint",
       data_generation: "Data Generation",
+      sync: "Sync",
+      upload: "Upload",
+      predict: "Prediction",
+      analyze: "Analysis",
+      connection: "Connection",
     }
     return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${styles[kind] || "bg-muted"}`}>{labels[kind] || kind}</span>
   }
@@ -448,6 +505,7 @@ export default function UsagePage() {
                   {quota?.plan === "alpha_unlimited" ? "\u221e" : (quota?.credits_used || 0).toFixed(1)}
                   {quota?.plan !== "alpha_unlimited" && <span className="text-sm font-normal text-muted-foreground"> / {quota?.credits_total || 5}</span>}
                 </p>
+                <p className="text-xs text-muted-foreground">{(quota?.credits_used || 0).toFixed(2)} credits used</p>
               </div>
               <div className="h-10 w-10 rounded-full bg-[#0052CC]/10 flex items-center justify-center">
                 <CreditCard className="h-5 w-5 text-[#0052CC] dark:text-[#2684FF]" />
@@ -457,7 +515,7 @@ export default function UsagePage() {
               <div className="h-2 rounded-full bg-muted overflow-hidden">
                 <div className="h-full bg-[#0052CC] rounded-full" style={{ width: quota?.plan === "alpha_unlimited" ? "5%" : `${Math.min(((quota?.credits_used || 0) / (quota?.credits_total || 5)) * 100, 100)}%` }} />
               </div>
-              <p className="text-xs text-muted-foreground mt-1">{quota?.plan === "alpha_unlimited" ? "Unlimited" : `${Math.round(((quota?.credits_used || 0) / (quota?.credits_total || 5)) * 100)}% used`} · Resets in {quota?.days_until_reset || 0} days</p>
+              <p className="text-xs text-muted-foreground mt-1">{quota?.plan === "alpha_unlimited" ? "Unlimited" : `${Math.round(((quota?.credits_used || 0) / (quota?.credits_total || 5)) * 100)}% used`} · Resets in {quota?.days_until_reset || 0} days · {totalTokens >= 1000000 ? (totalTokens/1000000).toFixed(1)+"M" : totalTokens >= 1000 ? (totalTokens/1000).toFixed(1)+"K" : totalTokens} tokens</p>
             </div>
           </CardContent>
         </Card>
@@ -493,11 +551,13 @@ export default function UsagePage() {
               <div>
                 <p className="text-sm text-muted-foreground">Database Storage</p>
                 <p className="text-2xl font-semibold text-foreground mt-1">
-                  {((quota?.storage_used_mb || 0) / 1024).toFixed(1)} GB
+                  {(quota?.storage_used_mb || 0) >= 1024 
+                    ? ((quota.storage_used_mb / 1024).toFixed(1) + " GB")
+                    : ((quota?.storage_used_mb || 0).toFixed(1) + " MB")}
                   <span className="text-sm font-normal text-muted-foreground">
                     {quota?.storage_limit_mb === -1 || !quota?.storage_limit_mb || quota?.storage_limit_mb >= 99999
                       ? '' 
-                      : ` / ${(quota.storage_limit_mb / 1024).toFixed(0)} GB`}
+                      : ` / ${quota.storage_limit_mb >= 1024 ? (quota.storage_limit_mb / 1024).toFixed(0) + " GB" : quota.storage_limit_mb + " MB"}`}
                   </span>
                 </p>
               </div>
@@ -510,13 +570,13 @@ export default function UsagePage() {
                 <div className="h-full bg-purple-500 rounded-full" style={{ 
                   width: quota?.storage_limit_mb === -1 || !quota?.storage_limit_mb || quota?.storage_limit_mb >= 99999
                     ? '0%' 
-                    : `${Math.min(((quota?.storage_used_mb || 0) / quota.storage_limit_mb) * 100, 100)}%` 
+                    : `${Math.max(Math.min(((quota?.storage_used_mb || 0) / quota.storage_limit_mb) * 100, 100), quota?.storage_used_mb > 0 ? 2 : 0)}%` 
                 }} />
               </div>
               <p className="text-xs text-muted-foreground mt-1">
                 {quota?.storage_limit_mb === -1 || !quota?.storage_limit_mb || quota?.storage_limit_mb >= 99999
                   ? 'Unlimited'
-                  : `${Math.round(((quota?.storage_used_mb || 0) / quota.storage_limit_mb) * 100)}% used`} · {quota?.datasets_connected || 0} datasets
+                  : `${(quota?.storage_used_mb || 0).toFixed(1)} MB / ${quota.storage_limit_mb >= 1024 ? (quota.storage_limit_mb/1024).toFixed(0)+"GB" : quota.storage_limit_mb+"MB"} used`} · {quota?.datasets_connected || 0} datasets
               </p>
             </div>
           </CardContent>
@@ -546,6 +606,7 @@ export default function UsagePage() {
           </CardContent>
         </Card>
       </div>
+
       {/* Charts Row */}
       <div id="charts-section" className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card className="border-border bg-card lg:col-span-2">

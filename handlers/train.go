@@ -244,6 +244,9 @@ ftModel := FineTunedModel{
 
 // Deduct credits and log usage
 UseCredit(userID, "train")
+// Estimate tokens: epochs * rows * cols * 2
+trainTokens := ftModel.Epochs * 2500
+if trainTokens < 1000 { trainTokens = 1000 }
 DB.Create(&UsageLog{
 ID:           generateSessionID()[:16],
 UserID:       userID,
@@ -252,6 +255,7 @@ EventName:    "Model Training",
 ResourceID:   ftModel.ID,
 ResourceName: ftModel.Name,
 CreditsUsed:  CreditPerTrain,
+TokensUsed:   trainTokens,
 ModelUsed:    "schema-v0",
 CreatedAt:    time.Now(),
 })
@@ -2017,6 +2021,8 @@ ConnectionIDs: req.ConnectionIDs,
 
 // Deduct credits and log usage
 UseCredit(userID, "train")
+trainTokens2 := ftModel.Epochs * 2500
+if trainTokens2 < 1000 { trainTokens2 = 1000 }
 DB.Create(&UsageLog{
 ID:           generateSessionID()[:16],
 UserID:       userID,
@@ -2025,6 +2031,7 @@ EventName:    "Model Training",
 ResourceID:   ftModel.ID,
 ResourceName: ftModel.Name,
 CreditsUsed:  CreditPerTrain,
+TokensUsed:   trainTokens2,
 ModelUsed:    "schema-v0",
 CreatedAt:    time.Now(),
 })

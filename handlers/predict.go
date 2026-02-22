@@ -35,7 +35,11 @@ func PredictHandler(w http.ResponseWriter, r *http.Request) {
 
 	userID := r.Header.Get("X-User-ID")
 	if userID != "" {
-		if ok, reason := CheckCredits(userID, 0.05); !ok {
+		if ok, reason := CheckQuota(userID, "query"); !ok {
+http.Error(w, reason, http.StatusForbidden)
+return
+}
+if ok, reason := CheckCredits(userID, 0.05); !ok {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
 			json.NewEncoder(w).Encode(map[string]string{"error": reason})

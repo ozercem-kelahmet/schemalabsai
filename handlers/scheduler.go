@@ -14,6 +14,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -169,9 +170,13 @@ func (s *Scheduler) ExecuteJob(job *ScheduledJob) {
 		newFileIDs := refreshDataFromConnections(model)
 		if len(newFileIDs) > 0 {
 			job.FileIDs = newFileIDs
-			// Update model's source files
 			DB.Model(&FineTunedModel{}).Where("id = ?", job.ModelID).Update("source_files", strings.Join(newFileIDs, ","))
 			log.Printf("📥 Refreshed %d data files from connections", len(newFileIDs))
+			// Update storage usage
+			var totalSize int64
+			DB.Model(&UploadedFile{}).Where("user_id = ?", job.UserID).Select("COALESCE(SUM(size), 0)").Scan(&totalSize)
+			storageMB := float64(totalSize) / (1024 * 1024)
+			DB.Model(&UserQuota{}).Where("user_id = ?", job.UserID).Update("storage_used_mb", storageMB)
 		}
 	}
 
@@ -820,13 +825,25 @@ if gdSelMap != nil && !gdSelMap[f.Name] { continue }
 
 	case "rest_api", "rest":
 		if conn.Endpoint == "" { return nil }
-		if conn.RateLimit != "" { log.Printf("⚡ Rate limited API refresh: %s (%s)", conn.Name, conn.RateLimit) }
+		if conn.RateLimitPaused {
+			if conn.RateLimitResetAt != nil && time.Now().Before(*conn.RateLimitResetAt) {
+				log.Printf("⏸️ Skipping refresh %s - rate limited until %s", conn.Name, conn.RateLimitResetAt.Format("15:04:05"))
+				return nil
+			}
+			DB.Model(&conn).Updates(map[string]interface{}{"rate_limit_paused": false, "rate_limit": "Resumed"})
+		}
 		fid := fetchAPIToCSV(conn, userID)
 		if fid != "" { fileIDs = append(fileIDs, fid) }
 
 	case "graphql":
 		if conn.Endpoint == "" { return nil }
-		if conn.RateLimit != "" { log.Printf("⚡ Rate limited GraphQL refresh: %s (%s)", conn.Name, conn.RateLimit) }
+		if conn.RateLimitPaused {
+			if conn.RateLimitResetAt != nil && time.Now().Before(*conn.RateLimitResetAt) {
+				log.Printf("⏸️ Skipping refresh %s - rate limited until %s", conn.Name, conn.RateLimitResetAt.Format("15:04:05"))
+				return nil
+			}
+			DB.Model(&conn).Updates(map[string]interface{}{"rate_limit_paused": false, "rate_limit": "Resumed"})
+		}
 		fid := fetchGraphQLToCSV(conn, userID)
 		if fid != "" { fileIDs = append(fileIDs, fid) }
 
@@ -965,26 +982,113 @@ func downloadS3File(s3Client *s3.S3, bucket, key, userID string) string {
 }
 
 // fetchAPIToCSV - fetches REST API data and saves as CSV
+
+// parseRateLimitReset parses reset time from response headers
+func parseRateLimitReset(resp *http.Response) *time.Time {
+	reset := resp.Header.Get("X-RateLimit-Reset")
+	if reset == "" { reset = resp.Header.Get("RateLimit-Reset") }
+	if reset == "" { reset = resp.Header.Get("Retry-After") }
+	if reset != "" {
+		// Try unix timestamp
+		if ts, err := strconv.ParseInt(reset, 10, 64); err == nil {
+			t := time.Unix(ts, 0)
+			return &t
+		}
+		// Try seconds
+		if secs, err := strconv.Atoi(reset); err == nil {
+			t := time.Now().Add(time.Duration(secs) * time.Second)
+			return &t
+		}
+	}
+	// Default: 1 hour from now
+	t := time.Now().Add(1 * time.Hour)
+	return &t
+}
+
 func fetchAPIToCSV(conn Connection, userID string) string {
+	// Check if rate limit paused - skip until reset time
+	if conn.RateLimitPaused {
+		if conn.RateLimitResetAt != nil && time.Now().Before(*conn.RateLimitResetAt) {
+			log.Printf("⏸️ Skipping %s - rate limited until %s", conn.Name, conn.RateLimitResetAt.Format("15:04:05"))
+			return ""
+		}
+		// Reset time passed, unpause
+		log.Printf("▶️ Rate limit reset, resuming: %s", conn.Name)
+		DB.Model(&conn).Updates(map[string]interface{}{
+			"rate_limit_paused": false, "rate_limit": "Resumed",
+			"rate_limit_remaining": conn.RateLimitDaily,
+		})
+		conn.RateLimitPaused = false
+	}
+
 	client := &http.Client{Timeout: 30 * time.Second}
 	req, _ := http.NewRequest("GET", conn.Endpoint, nil)
 	if conn.APIKey != "" { req.Header.Set("Authorization", "Bearer "+conn.APIKey) }
 	resp, err := client.Do(req)
 	if err != nil { return "" }
 	defer resp.Body.Close()
+
+	now := time.Now()
+	DB.Model(&conn).Updates(map[string]interface{}{"api_calls_count": gorm.Expr("api_calls_count + 1"), "last_poll_at": now})
+
 	if resp.StatusCode == 429 {
-		log.Printf("⚠️ REST API rate limited during refresh: %s", conn.Name)
-		DB.Model(&conn).Update("rate_limit", "Rate limited")
+		log.Printf("⚠️ Rate limited: %s - pausing polling", conn.Name)
+		resetAt := parseRateLimitReset(resp)
+		DB.Model(&conn).Updates(map[string]interface{}{
+			"rate_limit": "Rate limited - paused",
+			"rate_limit_paused": true,
+			"rate_limit_remaining": 0,
+			"rate_limit_reset_at": resetAt,
+		})
+		// Log to usage
+		DB.Create(&UsageLog{
+			ID: fmt.Sprintf("sync-%s-%d", conn.ID[:8], now.Unix()),
+			UserID: userID, EventType: "sync", EventName: "API Rate Limited: " + conn.Name,
+			ResourceID: conn.ID, ResourceName: conn.Name,
+			CreditsUsed: 0, CreatedAt: now,
+		})
 		return ""
 	}
+
 	// Update rate limit from headers
 	rlLimit := resp.Header.Get("X-RateLimit-Limit")
+	if rlLimit == "" { rlLimit = resp.Header.Get("RateLimit-Limit") }
 	rlRemaining := resp.Header.Get("X-RateLimit-Remaining")
+	if rlRemaining == "" { rlRemaining = resp.Header.Get("RateLimit-Remaining") }
+	rlReset := resp.Header.Get("X-RateLimit-Reset")
+	if rlReset == "" { rlReset = resp.Header.Get("RateLimit-Reset") }
+
 	if rlLimit != "" {
-		rlStr := rlLimit + " req limit"
-		if rlRemaining != "" { rlStr = rlRemaining + "/" + rlLimit }
-		DB.Model(&conn).Update("rate_limit", rlStr)
+		daily, _ := strconv.Atoi(rlLimit)
+		remaining, _ := strconv.Atoi(rlRemaining)
+		rlStr := rlRemaining + "/" + rlLimit
+		updates := map[string]interface{}{
+			"rate_limit": rlStr,
+			"rate_limit_daily": daily,
+			"rate_limit_remaining": remaining,
+		}
+		if rlReset != "" {
+			if resetUnix, err := strconv.ParseInt(rlReset, 10, 64); err == nil {
+				t := time.Unix(resetUnix, 0)
+				updates["rate_limit_reset_at"] = t
+			}
+		}
+		// Auto-pause if remaining < 5% of daily
+		if daily > 0 && remaining > 0 && remaining < daily/20 {
+			log.Printf("⚠️ Rate limit low (%d/%d), pausing: %s", remaining, daily, conn.Name)
+			updates["rate_limit_paused"] = true
+			updates["rate_limit"] = fmt.Sprintf("%d/%d - paused (low)", remaining, daily)
+		}
+		DB.Model(&conn).Updates(updates)
 	}
+
+	// Log sync event to usage
+	DB.Create(&UsageLog{
+		ID: fmt.Sprintf("sync-%s-%d", conn.ID[:8], now.Unix()),
+		UserID: userID, EventType: "sync", EventName: "Data Sync: " + conn.Name,
+		ResourceID: conn.ID, ResourceName: conn.Name,
+		CreditsUsed: 0.001, CreatedAt: now,
+	})
 
 	body, _ := io.ReadAll(resp.Body)
 

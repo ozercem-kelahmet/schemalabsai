@@ -33,7 +33,13 @@ func AnalyzeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check quota
-	if ok, reason := CheckCredits(userID, 0.10); !ok {
+	if ok, reason := CheckQuota(userID, "query"); !ok {
+w.Header().Set("Content-Type", "application/json")
+w.WriteHeader(http.StatusForbidden)
+json.NewEncoder(w).Encode(map[string]string{"error": reason})
+return
+}
+if ok, reason := CheckCredits(userID, 0.10); !ok {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
 		json.NewEncoder(w).Encode(map[string]string{"error": reason})

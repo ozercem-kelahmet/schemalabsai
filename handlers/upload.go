@@ -92,6 +92,19 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 	userID := r.Header.Get("X-User-ID")
 	folderID := r.FormValue("folder_id")
 
+// Check storage and credit quota before upload
+if userID != "" && DB != nil {
+	if ok, reason := CheckStorage(userID, float64(r.ContentLength)/(1024*1024)); !ok {
+		http.Error(w, reason, http.StatusForbidden)
+		return
+	}
+	if ok, reason := CheckCredits(userID, 0.01); !ok {
+		http.Error(w, reason, http.StatusForbidden)
+		return
+	}
+}
+
+
 	file, header, err := r.FormFile("file")
 	if err != nil {
 		http.Error(w, "Failed to read file", http.StatusBadRequest)
@@ -355,6 +368,24 @@ if strings.HasSuffix(strings.ToLower(finalFilename), ".json") || strings.HasSuff
 			FolderID:     func() *string { if folderID != "" { return &folderID }; return nil }(),
 		}
 		DB.Create(&uploadedFile)
+
+// Log upload to usage
+sizeMB := float64(uploadedFile.Size) / (1024 * 1024)
+storageCost := sizeMB * 0.01
+if storageCost < 0.01 { storageCost = 0.01 }
+if userID != "" {
+var q UserQuota
+if DB.Where("user_id = ?", userID).First(&q).Error == nil {
+q.CreditsUsed += storageCost
+q.StorageUsedMB += sizeMB
+DB.Save(&q)
+}
+DB.Create(&UsageLog{
+ID: uuid.New().String(), UserID: userID, EventType: "upload",
+EventName: "File Upload", ResourceID: fileID, ResourceName: finalFilename,
+CreditsUsed: storageCost, CreatedAt: time.Now(),
+})
+}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

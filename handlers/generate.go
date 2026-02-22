@@ -70,6 +70,13 @@ func GenerateDatasetHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": reason})
 		return
 	}
+estimatedMB := float64(req.Rows) * float64(req.Columns) * 100 / (1024 * 1024)
+if ok, reason := CheckStorage(userID, estimatedMB); !ok {
+w.Header().Set("Content-Type", "application/json")
+w.WriteHeader(http.StatusForbidden)
+json.NewEncoder(w).Encode(map[string]string{"error": reason})
+return
+}
 
 	fileID := uuid.New().String()
 	timestamp := time.Now().Format("20060102_150405")
@@ -100,7 +107,9 @@ func GenerateDatasetHandler(w http.ResponseWriter, r *http.Request) {
 		DB.Create(&UploadedFile{ID: fileID, Filename: filename, Path: destPath, Size: size, UserID: userID, CreatedAt: time.Now(), Columns: colNames, RowCount: rowCount, Vertical: req.Vertical, Source: "generated"})
 		var q UserQuota
 		if DB.Where("user_id = ?", userID).First(&q).Error == nil { q.CreditsUsed += creditCost; DB.Save(&q) }
-		DB.Create(&UsageLog{ID: uuid.New().String(), UserID: userID, EventType: "generate", EventName: "Synthetic Data Generation", ResourceID: fileID, ResourceName: filename, CreditsUsed: creditCost, ModelUsed: "synthetic", CreatedAt: time.Now()})
+		genTokens := rowCount * len(strings.Split(colNames, ",")) * 3
+		if genTokens < 500 { genTokens = 500 }
+		DB.Create(&UsageLog{ID: uuid.New().String(), UserID: userID, EventType: "generate", EventName: "Synthetic Data Generation", ResourceID: fileID, ResourceName: filename, CreditsUsed: creditCost, TokensUsed: genTokens, ModelUsed: "synthetic", CreatedAt: time.Now()})
 	}
 
 	w.Header().Set("Content-Type", "application/json")

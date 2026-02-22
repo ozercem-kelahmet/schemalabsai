@@ -661,6 +661,12 @@ func ChatHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Check quota before processing
 	if userID != "" {
+if ok, reason := CheckQuota(userID, "query"); !ok {
+w.Header().Set("Content-Type", "application/json")
+w.WriteHeader(http.StatusForbidden)
+json.NewEncoder(w).Encode(map[string]string{"error": reason, "status": "quota_exceeded"})
+return
+}
 		if ok, reason := CheckCredits(userID, 0.01); !ok {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)

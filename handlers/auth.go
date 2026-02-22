@@ -418,8 +418,14 @@ type Connection struct {
 	CachedTables   string     `json:"cached_tables"`
 	CachedAt       *time.Time `json:"cached_at"`
 	SelectedTables string     `json:"selected_tables"`
-RateLimit      string     `json:"rate_limit"`
-	UserID         string     `json:"user_id"`
+RateLimit         string     `json:"rate_limit"`
+	RateLimitDaily    int        `json:"rate_limit_daily"`
+	RateLimitRemaining int       `json:"rate_limit_remaining"`
+	RateLimitResetAt  *time.Time `json:"rate_limit_reset_at"`
+	RateLimitPaused   bool       `json:"rate_limit_paused"`
+	APICallsCount     int        `json:"api_calls_count"`
+	LastPollAt        *time.Time `json:"last_poll_at"`
+	UserID            string     `json:"user_id"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`
 }
@@ -451,6 +457,12 @@ func CreateConnectionHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid session", http.StatusUnauthorized)
 		return
 	}
+
+// Check storage quota
+if ok, reason := CheckStorage(session.UserID, 10); !ok {
+http.Error(w, reason, http.StatusForbidden)
+return
+}
 
 	var input struct {
 		Name     string `json:"name"`
@@ -496,6 +508,15 @@ if err := DB.Create(&conn).Error; err != nil {
 http.Error(w, err.Error(), http.StatusInternalServerError)
 return
 }
+
+// Log connection creation to usage
+DB.Create(&UsageLog{
+ID: fmt.Sprintf("conn-%s", conn.ID[:8]),
+UserID: session.UserID, EventType: "connection",
+EventName: "Connection Created: " + conn.Name,
+ResourceID: conn.ID, ResourceName: conn.Name,
+CreditsUsed: 0, CreatedAt: time.Now(),
+})
 
 // Auto-detect rate limit for REST API on create
 if (conn.SubType == "rest_api" || conn.SubType == "rest") && conn.Endpoint != "" {
@@ -567,6 +588,12 @@ func ListConnectionsHandler(w http.ResponseWriter, r *http.Request) {
 			"bucket":     c.Bucket,
 			"status":     c.Status,
 "rate_limit": c.RateLimit,
+			"rate_limit_daily": c.RateLimitDaily,
+			"rate_limit_remaining": c.RateLimitRemaining,
+			"rate_limit_reset_at": c.RateLimitResetAt,
+			"rate_limit_paused": c.RateLimitPaused,
+			"api_calls_count": c.APICallsCount,
+			"last_poll_at": c.LastPollAt,
 			"created_at": c.CreatedAt,
 		}
 		// Add cached rows/cols
@@ -1193,6 +1220,15 @@ func ListTablesHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid session", http.StatusUnauthorized)
 		return
 	}
+
+session2, _ := GetSession(cookie.Value)
+if session2 != nil {
+if ok, reason := CheckStorage(session2.UserID, 5); !ok {
+http.Error(w, reason, http.StatusForbidden)
+return
+}
+}
+
 
 	connID := r.URL.Query().Get("connection_id")
 	if connID == "" {

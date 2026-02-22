@@ -55,6 +55,7 @@ export function DatasetGrid() {
   const [searchQuery, setSearchQuery] = useState("")
   const [showMobileFilters, setShowMobileFilters] = useState(false)
   const [folders, setFolders] = useState<DataFolder[]>([])
+  const [rateLimitNotified, setRateLimitNotified] = useState<Set<string>>(new Set())
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -109,6 +110,12 @@ export function DatasetGrid() {
             schema: schemaDetails,
             sampleData: [],
             syncStatus: "synced", rateLimit: c.rate_limit || "",
+            rateLimitDaily: c.rate_limit_daily || 0,
+            rateLimitRemaining: c.rate_limit_remaining || 0,
+            rateLimitResetAt: c.rate_limit_reset_at || null,
+            rateLimitPaused: c.rate_limit_paused || false,
+            apiCallsCount: c.api_calls_count || 0,
+            lastPollAt: c.last_poll_at || null,
           })
         }
         setDatasets([...fileDatasets, ...connDatasets])
@@ -146,6 +153,24 @@ export function DatasetGrid() {
         console.error("Load error:", e)
       }
   }
+
+  
+  useEffect(() => {
+    const paused = datasets.filter((d: any) => d.rateLimitPaused && !rateLimitNotified.has(d.id))
+    if (paused.length > 0) {
+      paused.forEach((d: any) => {
+        toast.warning(`⏸️ ${d.name} - Rate limited`, {
+          description: d.rateLimitResetAt ? `Resumes at ${new Date(d.rateLimitResetAt).toLocaleTimeString()}` : "Polling paused",
+          duration: 8000,
+        })
+      })
+      setRateLimitNotified(prev => {
+        const next = new Set(prev)
+        paused.forEach((d: any) => next.add(d.id))
+        return next
+      })
+    }
+  }, [datasets])
 
   useEffect(() => {
     loadData().finally(() => setLoading(false))
