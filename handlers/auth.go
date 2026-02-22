@@ -492,18 +492,48 @@ func CreateConnectionHandler(w http.ResponseWriter, r *http.Request) {
 		UserID:   session.UserID,
 	}
 
-	if err := DB.Create(&conn).Error; err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+if err := DB.Create(&conn).Error; err != nil {
+http.Error(w, err.Error(), http.StatusInternalServerError)
+return
+}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"id":       conn.ID,
-		"name":     conn.Name,
-		"type":     conn.Type,
-		"sub_type": conn.SubType,
-		"status":   conn.Status,
-	})
+// Auto-detect rate limit for REST API on create
+if (conn.SubType == "rest_api" || conn.SubType == "rest") && conn.Endpoint != "" {
+client2 := &http.Client{Timeout: 10 * time.Second}
+req2, _ := http.NewRequest("GET", conn.Endpoint, nil)
+if conn.APIKey != "" { req2.Header.Set("Authorization", "Bearer "+conn.APIKey) }
+resp2, err2 := client2.Do(req2)
+if err2 == nil {
+rl := resp2.Header.Get("X-RateLimit-Limit")
+rem := resp2.Header.Get("X-RateLimit-Remaining")
+if rl != "" {
+s := rl + " req limit"
+if rem != "" { s = rem + "/" + rl }
+DB.Model(&Connection{}).Where("id = ?", conn.ID).Update("rate_limit", s)
+} else if resp2.StatusCode == 200 {
+body2, _ := io.ReadAll(io.LimitReader(resp2.Body, 10*1024*1024))
+var arr []interface{}
+if json.Unmarshal(body2, &arr) == nil {
+rc := len(arr)
+if rc == 1000 || rc == 500 || rc == 100 || rc == 10000 || rc == 5000 || rc == 2000 || rc == 50 || rc == 25 || rc == 200 {
+DB.Model(&Connection{}).Where("id = ?", conn.ID).Update("rate_limit", fmt.Sprintf("%d rows/request (API default limit)", rc))
+}
+}
+}
+if resp2.StatusCode == 429 {
+DB.Model(&Connection{}).Where("id = ?", conn.ID).Update("rate_limit", "Rate limited")
+}
+resp2.Body.Close()
+}
+}
+
+json.NewEncoder(w).Encode(map[string]interface{}{
+"id":       conn.ID,
+"name":     conn.Name,
+"type":     conn.Type,
+"sub_type": conn.SubType,
+"status":   conn.Status,
+})
 }
 
 func ListConnectionsHandler(w http.ResponseWriter, r *http.Request) {
