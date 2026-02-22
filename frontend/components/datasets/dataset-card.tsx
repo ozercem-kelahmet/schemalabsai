@@ -173,12 +173,12 @@ export function DatasetCard({ dataset, onViewSchema, onEdit, onDelete }: Dataset
             <span className="font-mono text-foreground">{dataset.columns}</span>
             <span className="text-muted-foreground">cols</span>
           </div>
-          {(dataset as any).rateLimit && (
-            <div className="flex items-center gap-1 text-xs text-amber-500">
-              <span>⚡ {(dataset as any).rateLimit} rows/day</span>
-            </div>
-          )}
         </div>
+        {(dataset as any).rateLimit && (
+          <div className="mt-2 flex items-center gap-1.5 rounded-md bg-amber-500/10 px-2 py-1">
+            <span className="text-xs text-amber-500">⚡ {(dataset as any).rateLimit}</span>
+          </div>
+        )}
 
         {/* Schema Preview */}
         <div className="mt-4 rounded-lg bg-muted/50 p-3">

@@ -2,6 +2,7 @@
 
 import React from "react"
 
+import { toast } from "sonner"
 import { useState, useCallback } from "react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
@@ -128,16 +129,16 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
       const maxFiles = 10
       const oversized = files.filter(f => f.size > maxSizeMB * 1024 * 1024)
       if (oversized.length > 0) {
-        alert("Files exceed " + maxSizeMB + "MB limit: " + oversized.map(f => f.name).join(", "))
+        toast.error("Files exceed " + maxSizeMB + "MB limit: " + oversized.map(f => f.name).join(", "))
         return
       }
       if (uploadedFiles.length + files.length > maxFiles) {
-        alert("Maximum " + maxFiles + " files allowed.")
+        toast.error("Maximum " + maxFiles + " files allowed.")
         return
       }
       setUploadedFiles(prev => [...prev, ...files])
     }
-  }, [])
+  }, [uploadedFiles])
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -148,13 +149,13 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
       // Check file sizes
       const oversized = files.filter(f => f.size > maxSizeMB * 1024 * 1024)
       if (oversized.length > 0) {
-        alert("Files exceed " + maxSizeMB + "MB limit: " + oversized.map(f => f.name).join(", "))
+        toast.error("Files exceed " + maxSizeMB + "MB limit: " + oversized.map(f => f.name).join(", "))
         return
       }
       
       const newTotal = uploadedFiles.length + files.length
       if (newTotal > maxFiles) {
-        alert("Maximum " + maxFiles + " files allowed. You have " + uploadedFiles.length + " files, trying to add " + files.length + ".")
+        toast.error("Maximum " + maxFiles + " files allowed. You have " + uploadedFiles.length + ", trying to add " + files.length + ".")
         return
       }
       

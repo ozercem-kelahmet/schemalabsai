@@ -1524,8 +1524,32 @@ log.Printf("🔍 REST API ListTables: endpoint=%s", conn.Endpoint)
 			if conn.APIKey != "" {
 				req.Header.Set("Authorization", "Bearer "+conn.APIKey)
 			}
-			resp, err := httpClient.Do(req)
-			if err == nil && resp.StatusCode == 200 {
+resp, err := httpClient.Do(req)
+if err == nil {
+rlLimit := resp.Header.Get("X-RateLimit-Limit")
+if rlLimit == "" { rlLimit = resp.Header.Get("X-Rate-Limit-Limit") }
+if rlLimit == "" { rlLimit = resp.Header.Get("RateLimit-Limit") }
+rlRemaining := resp.Header.Get("X-RateLimit-Remaining")
+if rlRemaining == "" { rlRemaining = resp.Header.Get("X-Rate-Limit-Remaining") }
+if rlRemaining == "" { rlRemaining = resp.Header.Get("RateLimit-Remaining") }
+rlTotal := resp.Header.Get("X-Total-Count")
+if rlTotal == "" { rlTotal = resp.Header.Get("X-Total") }
+if rlTotal != "" && rlLimit == "" {
+DB.Model(&conn).Update("rate_limit", rlTotal + " total records")
+log.Printf("📊 REST API total: %s", rlTotal)
+}
+if rlLimit != "" {
+rlStr := rlRemaining + "/" + rlLimit
+if rlRemaining == "" { rlStr = rlLimit + " req limit" }
+DB.Model(&conn).Update("rate_limit", rlStr)
+log.Printf("📊 REST API rate limit: %s", rlStr)
+}
+if resp.StatusCode == 429 {
+DB.Model(&conn).Update("rate_limit", "Rate limited")
+log.Printf("📊 REST API rate limited!")
+}
+}
+if err == nil && resp.StatusCode == 200 {
 				defer resp.Body.Close()
 				bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 				var jsonArray []interface{}
@@ -1536,6 +1560,13 @@ log.Printf("🔍 REST API ListTables: endpoint=%s", conn.Endpoint)
 						cols = len(first)
 					}
 					tableInfos = append(tableInfos, TableInfo{Name: "api_data", Rows: int64(len(jsonArray)), Columns: cols})
+rowCount := len(jsonArray)
+if rowCount == 1000 || rowCount == 500 || rowCount == 100 || rowCount == 10000 || rowCount == 5000 || rowCount == 2000 || rowCount == 50 || rowCount == 25 || rowCount == 200 {
+if conn.RateLimit == "" {
+DB.Model(&conn).Update("rate_limit", fmt.Sprintf("%d rows/request (API default limit)", rowCount))
+log.Printf("📊 REST API default limit detected: %d rows", rowCount)
+}
+}
 				} else {
 					var jsonObj map[string]interface{}
 					if json.Unmarshal(bodyBytes, &jsonObj) == nil {

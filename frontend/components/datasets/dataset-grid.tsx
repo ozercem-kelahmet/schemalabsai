@@ -108,7 +108,7 @@ export function DatasetGrid() {
             columns: totalCols,
             schema: schemaDetails,
             sampleData: [],
-            syncStatus: "synced",
+            syncStatus: "synced", rateLimit: c.rate_limit || "",
           })
         }
         setDatasets([...fileDatasets, ...connDatasets])
@@ -443,22 +443,39 @@ export function DatasetGrid() {
           }
           if ((connection as any).type === "upload" && connection.files) {
             try {
+              const files = connection.files as File[]
+              
+              // Check max 10 files
+              if (files.length > 10) {
+                toast.error("Maximum 10 files per upload. Please remove some files.")
+                return
+              }
+              
               // Get limits from API
               const limits = await api.getUploadLimits()
               const maxFileSize = (limits.max_file_size_mb || 50) * 1024 * 1024
               
-              for (const file of connection.files) {
+              for (const file of files) {
                 if (file.size > maxFileSize) {
-                  toast.error(`File "${file.name}" exceeds ${limits.max_file_size_mb || 50}MB limit`)
+                  toast.error("File " + file.name + " exceeds " + (limits.max_file_size_mb || 50) + "MB limit")
                   return
                 }
               }
-              // Upload all files in parallel
-              await Promise.all(connection.files.map((file: File) => api.upload(file, undefined)))
+              
+              // Upload files sequentially to avoid connection issues
+              toast.loading("Uploading " + files.length + " files...")
+              let uploaded = 0
+              for (const file of files) {
+                await api.upload(file, undefined)
+                uploaded++
+                toast.dismiss()
+                toast.loading("Uploaded " + uploaded + "/" + files.length + " files...")
+              }
               toast.dismiss()
-              toast.success("Files uploaded successfully!")
+              toast.success(uploaded + " files uploaded successfully!")
             } catch (error) {
-              toast.error("File upload failed")
+              toast.dismiss()
+              toast.error("File upload failed: " + (error instanceof Error ? error.message : "Unknown error"))
             }
           } else if ((connection as any).type === "database") {
             try {
