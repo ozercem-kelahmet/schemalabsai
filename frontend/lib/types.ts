@@ -51,6 +51,13 @@ export interface Dataset {
   syncStatus?: "synced" | "pending" | "outdated"
   folderId?: string
   connectionId?: string
+  rateLimit?: string
+  rateLimitDaily?: number
+  rateLimitRemaining?: number
+  rateLimitResetAt?: string | null
+  rateLimitPaused?: boolean
+  apiCallsCount?: number
+  lastPollAt?: string | null
 }
 
 export interface ColumnSchema {
