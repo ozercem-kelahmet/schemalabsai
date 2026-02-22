@@ -290,6 +290,7 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
       })
       setSaving(false)
     }
+    // Force refresh datasets
     onConnect?.({ type: "skip", name: "", config: {} } as any)
     handleClose()
 
