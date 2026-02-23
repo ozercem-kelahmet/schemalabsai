@@ -380,6 +380,7 @@ SyncMode      string   `json:"sync_mode"`
 ScheduleCron  string   `json:"schedule_cron"`
 ScheduleDesc  string   `json:"schedule_desc"`
 ConnectionIDs string   `json:"connection_ids"`
+SelectedTables string   `json:"selected_tables"`
 }
 
 
@@ -1225,6 +1226,11 @@ if req.ConnectionIDs != "" {
 		if err := DB.First(&conn, "id = ?", connID).Error; err != nil {
 			log.Printf("Connection %s not found: %v", connID, err)
 			continue
+		}
+		// Override with request-level selected_tables if provided
+		if req.SelectedTables != "" {
+			conn.SelectedTables = req.SelectedTables
+			log.Printf("Using request-level selected_tables for conn %s: %s", connID, req.SelectedTables)
 		}
 
 		// REST API connection - fetch JSON, convert to CSV

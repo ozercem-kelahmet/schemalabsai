@@ -141,33 +141,20 @@ export default function UsagePage() {
       })
     })
     
-    queries.forEach(q => {
-      const d = safeDate(q.created_at)
-      const model = models.find(m => m.id === q.training_model_id || m.name === q.modelName)
-      
-      // If no model info, show "No Model" instead of "Unknown"
-      let modelName = "No Model"
-      if (q.modelName) modelName = q.modelName
-      else if (model?.name) modelName = model.name
-      else if (q.training_model_id) modelName = String(q.training_model_id).replace("model_finetuned_", "").replace(/_\d{8}_\d{6}/, "")
-      
-      // Determine event type based on source
-      const source = q.source || "playground"
-      const eventKind = source === "api" ? "api" : source === "endpoint" ? "endpoint" : "chat"
-      const eventName = eventKind === "api" ? "API request" : eventKind === "endpoint" ? "Endpoint called" : "Query executed"
-      
-      const usage = getUsageData(q.id, eventKind, 0.12, 250)
+    // Chat/API/Endpoint events from usage_logs (not queries - queries are just objects)
+    usageLogs.filter(l => l.event_type === "chat").forEach(l => {
+      const d = safeDate(l.created_at)
       events.push({
-        id: `${eventKind}-${q.id}`,
+        id: `chat-${l.id}`,
         date: d.toISOString().split("T")[0],
         time: d.toTimeString().split(" ")[0],
-        event: eventName,
-        kind: eventKind,
-        model: model?.base_model || "-",
-        builtModel: modelName,
-        credits: usage.credits,
-        baseTokens: usage.tokens,
-        endpointCalls: eventKind === "query" || eventKind === "endpoint" ? 1 : 0
+        event: l.event_name || "Chat Query",
+        kind: "chat",
+        model: l.model_used || "-",
+        builtModel: l.resource_name || "-",
+        credits: l.credits_used || 0,
+        baseTokens: l.tokens_used || 0,
+        endpointCalls: 0
       })
     })
     
@@ -238,7 +225,7 @@ export default function UsagePage() {
         date: d.toISOString().split("T")[0],
         time: d.toTimeString().split(" ")[0],
         event: "Data uploaded",
-        kind: "data_generation",
+        kind: "upload",
         model: "-",
         builtModel: "-",
         credits: dataUsage.credits,
@@ -250,13 +237,13 @@ export default function UsagePage() {
     // Data Generation events from database connections
     connections.forEach(conn => {
       const d = safeDate(conn.created_at)
-      const connUsage = getUsageData(conn.id, "sync", 0.10, 0)
+      const connUsage = getUsageData(conn.id, "connection", 0, 0)
       events.push({
         id: `data-conn-${conn.id}`,
         date: d.toISOString().split("T")[0],
         time: d.toTimeString().split(" ")[0],
-        event: "Database connected",
-        kind: "data_generation",
+        event: "Connection: " + conn.name,
+        kind: "connection",
         model: "-",
         builtModel: "-",
         credits: connUsage.credits,

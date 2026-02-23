@@ -41,7 +41,8 @@ func GetOrCreateQuota(userID string) (*UserQuota, error) {
 if err == nil && quota.ID != "" {
 return &quota, nil
 }
-	if err != nil {
+// Quota not found, create new one
+{
 		// Check if existing user (created before 2026-02-04)
 		var user User
 		DB.Where("id = ?", userID).First(&user)
@@ -68,7 +69,7 @@ return &quota, nil
 	creditsTotal := getEnvFloat("ALPHA_CREDITS_TOTAL", 5.0)
 	modelsLimit := getEnvInt("ALPHA_MODELS_LIMIT", 5)
 	queriesDaily := getEnvInt("ALPHA_QUERIES_DAILY", 10)
-	storageLimitMB := getEnvFloat("MAX_TOTAL_STORAGE_MB", 1024.0)
+	storageLimitMB := getEnvFloat("ALPHA_STORAGE_LIMIT_MB", 100.0)
 	plan := "alpha"
 	
 	if isExisting {

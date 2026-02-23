@@ -1785,21 +1785,77 @@ def analyze():
             except Exception as e:
                 print(f"Could not load model for source_file_id: {e}")
         
+        # === ROBUST FILE SEARCH (6 methods) ===
+        
+        # Method 1: DB source_name from fine_tuned_models
+        if not file_path and model_id and not use_base_model:
+            try:
+                import psycopg2
+                db_url = os.environ.get('DATABASE_URL', 'postgresql://schemalabs:schemalabs@localhost:5432/schemalabs')
+                conn = psycopg2.connect(db_url)
+                cur = conn.cursor()
+                # Get source_name from fine_tuned_models
+                cur.execute("SELECT source_name, source_file_id FROM fine_tuned_models WHERE id=%s", (model_id,))
+                row = cur.fetchone()
+                if row:
+                    src_name, src_file_id = row[0], row[1]
+                    # Try direct source_name match
+                    if src_name:
+                        direct_path = os.path.join(uploads_dir, src_name)
+                        if os.path.exists(direct_path):
+                            file_path = direct_path
+                            print(f"[FILE SEARCH] Method 1a: DB source_name direct: {file_path}")
+                        else:
+                            for fname in os.listdir(uploads_dir):
+                                if src_name in fname:
+                                    file_path = os.path.join(uploads_dir, fname)
+                                    print(f"[FILE SEARCH] Method 1b: DB source_name partial: {file_path}")
+                                    break
+                    # Try uploaded_files table with source_file_id
+                    if not file_path and src_file_id:
+                        cur.execute("SELECT filename, path FROM uploaded_files WHERE id=%s", (src_file_id,))
+                        frow = cur.fetchone()
+                        if frow:
+                            uf_filename, uf_path = frow[0], frow[1]
+                            # Try path from DB
+                            for try_path in [
+                                os.path.join('..', uf_path) if uf_path else None,
+                                os.path.join(uploads_dir, uf_filename) if uf_filename else None,
+                            ]:
+                                if try_path and os.path.exists(try_path):
+                                    file_path = try_path
+                                    print(f"[FILE SEARCH] Method 2: uploaded_files table: {file_path}")
+                                    break
+                            # Partial filename match
+                            if not file_path and uf_filename:
+                                for fname in os.listdir(uploads_dir):
+                                    if uf_filename in fname or fname in uf_filename:
+                                        file_path = os.path.join(uploads_dir, fname)
+                                        print(f"[FILE SEARCH] Method 2b: uploaded_files partial: {file_path}")
+                                        break
+                cur.close()
+                conn.close()
+            except Exception as e:
+                print(f"[FILE SEARCH] DB lookup failed: {e}")
+
+        # Method 3: file_id prefix match in uploads dir
         if not file_path and os.path.exists(uploads_dir):
-            # Find matching file - try exact match first, then prefix match
             matching_files = []
             for f in os.listdir(uploads_dir):
                 # Exact match with full file_id
                 if file_id and (f.startswith(file_id + "_") or f.startswith(file_id + ".")):
                     full_path = os.path.join(uploads_dir, f)
                     matching_files.append((full_path, os.path.getmtime(full_path), 'exact'))
-                # Fallback: prefix match with first 8 chars
-                elif len(file_id) >= 8 and f.startswith(file_id[:8]):
+                # Prefix match with first 8 chars
+                elif file_id and len(file_id) >= 8 and f.startswith(file_id[:8]):
                     full_path = os.path.join(uploads_dir, f)
                     matching_files.append((full_path, os.path.getmtime(full_path), 'prefix'))
+                # Method 4: file_id anywhere in filename
+                elif file_id and file_id in f:
+                    full_path = os.path.join(uploads_dir, f)
+                    matching_files.append((full_path, os.path.getmtime(full_path), 'contains'))
             
             if matching_files:
-                # Prefer exact matches, then sort by time
                 exact = [m for m in matching_files if m[2] == 'exact']
                 if exact:
                     exact.sort(key=lambda x: x[1], reverse=True)
@@ -1966,7 +2022,7 @@ def analyze():
                     # Store structured data for response
                     ft_structured = {
                         "model_id": model_id,
-                        "training_accuracy": round(float(accuracy), 4),
+                        "training_accuracy": round(float(accuracy)/100, 4) if accuracy > 1 else round(float(accuracy), 4),
                         "classes": class_names[:20],
                         "total_predictions": len(preds),
                         "predictions": structured_predictions,
@@ -1976,7 +2032,7 @@ def analyze():
                     # Also keep text version for backward compatibility
                     ft_prediction_text = f"\n=== FINE-TUNED MODEL PREDICTIONS ===\n"
                     ft_prediction_text += f"Model: {model_id}\n"
-                    ft_prediction_text += f"Training Accuracy: {accuracy*100:.1f}%\n"
+                    ft_prediction_text += f"Training Accuracy: {accuracy:.1f}%\n" if accuracy > 1 else f"Training Accuracy: {accuracy*100:.1f}%\n"
                     ft_prediction_text += f"Classes: {', '.join(class_names[:10])}{'...' if len(class_names) > 10 else ''}\n"
                     ft_prediction_text += f"Total Predictions: {len(preds)}\n"
                     

@@ -815,7 +815,18 @@ api.getMessages(sessionId)
       })
 
       const results = await Promise.all(promises)
-      setMessages(prev => {
+      if (response.error) {
+          toast.error(response.error)
+          setMessages(prev => {
+            const newMessages = [...prev]
+            const lastIdx = newMessages.length - 1
+            newMessages[lastIdx] = { ...newMessages[lastIdx], content: "⚠️ " + response.error, tokens: 0, time: "0s", isLoading: false }
+            return newMessages
+          })
+          setIsLoading(false)
+          return
+        }
+        setMessages(prev => {
         const newMessages = [...prev]
         results.forEach(result => {
           const msgIdx = newMessages.findIndex(m => m.modelId === result.modelId && m.groupId === groupId)
@@ -957,6 +968,24 @@ api.getMessages(sessionId)
         
         const endTime = Date.now()
         const timeTaken = ((endTime - startTime) / 1000).toFixed(1)
+        
+        if (response.error) {
+          toast.error(response.error)
+          setMessages(prev => {
+            const newMessages = [...prev]
+            const lastIdx = newMessages.length - 1
+            newMessages[lastIdx] = {
+              ...newMessages[lastIdx],
+              content: "⚠️ " + response.error,
+              tokens: 0,
+              time: "0s",
+              isLoading: false,
+            }
+            return newMessages
+          })
+          setIsLoading(false)
+          return
+        }
         
         setMessages(prev => {
           const newMessages = [...prev]

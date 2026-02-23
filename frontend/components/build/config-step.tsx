@@ -154,30 +154,61 @@ export function ConfigStep({
       sources.forEach(s => { expanded[s] = true })
       setExpandedSources(expanded)
       
-      // Background: fetch table details for connections
+      // Progressive table loading: cache hits instant, misses in background
       if (connections.length > 0) {
-        Promise.allSettled(
-          connections.map((c: any) => api.listTables(c.id).catch(() => ({ table_details: [] })))
-        ).then(tableResults => {
+        const expandTables = (conns: any[], tableData: any[]) => {
           setAllDatasets(prev => {
             const updated = [...prev]
-            for (let ci = 0; ci < connections.length; ci++) {
-              const result = tableResults[ci]
-              if (result.status === "fulfilled") {
-                const tables = result.value.table_details || result.value.tables || []
-                const totalRows = tables.reduce((sum: number, t: any) => sum + (t.rows || 0), 0)
-                const totalCols = tables.reduce((sum: number, t: any) => sum + (t.columns || 0), 0)
-                const schemaItems = tables.map((t: any) => ({ name: t.name, type: "string" as const, description: `${t.rows} rows, ${t.columns} cols` }))
-                const idx = updated.findIndex(d => d.id === connections[ci].id)
-                if (idx >= 0 && totalRows > updated[idx].rows) {
-                  updated[idx] = { ...updated[idx], rows: totalRows, columns: totalCols, schema: schemaItems,
-                    rowCount: (totalRows > 10000 ? "large" : totalRows > 1000 ? "medium" : "small") as any }
+            for (let i = 0; i < conns.length; i++) {
+              const tables = tableData[i] || []
+              if (tables.length > 0) {
+                const parentIdx = updated.findIndex(d => d.id === conns[i].id)
+                if (parentIdx >= 0) updated.splice(parentIdx, 1)
+                const src = (conns[i].sub_type === "postgresql" ? "postgresql" : conns[i].sub_type === "mongodb" ? "mongodb" : conns[i].sub_type || "api") as any
+                for (const t of tables) {
+                  const tid = conns[i].id + "::" + t.name
+                  if (!updated.find(d => d.id === tid)) {
+                    updated.push({
+                      id: tid, name: t.name, description: conns[i].name + " \u2192 " + t.name,
+                      source: src, vertical: "" as any,
+                      complexity: ((t.columns || 0) > 25 ? "advanced" : (t.columns || 0) > 10 ? "medium" : "simple") as any,
+                      rowCount: ((t.rows || 0) > 10000 ? "large" : (t.rows || 0) > 1000 ? "medium" : "small") as any,
+                      rows: t.rows || 0, columns: t.columns || 0,
+                      schema: (t.column_names || []).map((col: string) => ({ name: col, type: "string" as const })),
+                      sampleData: [], syncStatus: "synced" as const, connectionId: conns[i].id,
+                    })
+                  }
                 }
               }
             }
             return updated
           })
+        }
+
+        const cached: any[] = []
+        const cachedTables: any[][] = []
+        const uncached: any[] = []
+        connections.forEach((c: any) => {
+          if (c.table_details && c.table_details.length > 0) {
+            cached.push(c)
+            cachedTables.push(c.table_details)
+          } else {
+            uncached.push(c)
+          }
         })
+
+        // INSTANT: apply cached
+        if (cached.length > 0) expandTables(cached, cachedTables)
+
+        // BACKGROUND: fetch uncached
+        if (uncached.length > 0) {
+          Promise.allSettled(
+            uncached.map((c: any) => api.listTables(c.id).catch(() => ({ table_details: [] })))
+          ).then(results => {
+            const tables = results.map(r => r.status === "fulfilled" ? (r.value.table_details || r.value.tables || []) : [])
+            expandTables(uncached, tables)
+          })
+        }
       }
       
     } catch (e) {

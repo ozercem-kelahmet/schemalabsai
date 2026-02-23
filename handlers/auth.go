@@ -617,6 +617,7 @@ func ListConnectionsHandler(w http.ResponseWriter, r *http.Request) {
 			result[i]["total_rows"] = totalRows
 			result[i]["total_cols"] = totalCols
 			result[i]["schema"] = schemaNames
+result[i]["table_details"] = cached.TableDetails
 		}
 	}
 

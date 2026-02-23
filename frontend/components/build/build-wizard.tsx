@@ -141,9 +141,20 @@ export function BuildWizard() {
       const connDatasets = selectedDatasets.filter(d => d.syncStatus === "synced")
       const fileIds = fileDatasets.map((ds) => ds.id)
       
-      const connectionIds = connectionIDs || connDatasets
-        .map(d => d.id)
-        .join(",")
+      // Extract connection IDs and selected tables from table-level datasets
+      const tableDatasets = connDatasets.filter(d => d.id.includes("::"))
+      const plainConnDatasets = connDatasets.filter(d => !d.id.includes("::"))
+      
+      // Get unique connection IDs from table datasets
+      const tableConnIds = [...new Set(tableDatasets.map(d => d.id.split("::")[0]))]
+      const plainConnIds = plainConnDatasets.map(d => d.id)
+      const allConnIds = [...new Set([...tableConnIds, ...plainConnIds])]
+      
+      const connectionIds = connectionIDs || allConnIds.join(",")
+      
+      // Build selected_tables JSON: ["table1", "table2", ...]
+      const selectedTableNames = tableDatasets.map(d => d.id.split("::")[1])
+      const selectedTablesStr = selectedTableNames.length > 0 ? JSON.stringify(selectedTableNames) : ""
 
       // Start training - show UI immediately, handle result async
       const trainPromise = api.multiTrain(
@@ -157,7 +168,8 @@ export function BuildWizard() {
         syncMode,
         scheduleCron,
         scheduleDesc,
-        connectionIds
+        connectionIds,
+        selectedTablesStr
       )
 
       setCurrentStep("training")
