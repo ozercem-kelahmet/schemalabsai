@@ -202,7 +202,7 @@ export function BuildWizard() {
           setTrainingStatus("idle")
           return
         }
-        console.log("TRAIN_PROMISE_RESOLVED", result); if (completedByPollingRef.current) return // polling already handled
+        console.log("TRAIN_PROMISE_RESOLVED", result); if (completedByPollingRef.current || currentStep === "evaluate") { console.log("SKIP - already completed by polling"); return } // polling already handled
         handleTrainResult(result)
       }).catch((err: any) => {
         toast.error("Training Failed", { description: err.message, duration: 10000 })
@@ -218,6 +218,7 @@ export function BuildWizard() {
   }
 
   const handleTrainResult = async (result: any) => {
+      if (completedByPollingRef.current || currentStep === "evaluate") return
       if (result.queued || result.status === "queued") {
         addLog(`⏳ Server busy - Training queued at position ${result.queue_position || 0}`)
         addLog(`Active trainings: ${result.active_trainings || 0}/${result.max_concurrent || 1}`)
