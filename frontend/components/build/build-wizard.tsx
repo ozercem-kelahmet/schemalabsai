@@ -50,7 +50,7 @@ export function BuildWizard() {
   const skipCheckRef = useRef(false)
   const completedByPollingRef = useRef(false)
 
-  // Load metrics history from localStorage on mount
+  // Load metrics history and logs from localStorage on mount
   useEffect(() => {
     const saved = localStorage.getItem("trainingMetricsHistory")
     if (saved) {
@@ -58,6 +58,14 @@ export function BuildWizard() {
         setMetricsHistory(JSON.parse(saved))
       } catch (e) {
         console.log("Failed to load metrics history")
+      }
+    }
+    const savedLogs = localStorage.getItem("trainingLogs")
+    if (savedLogs) {
+      try {
+        setLogs(JSON.parse(savedLogs))
+      } catch (e) {
+        console.log("Failed to load training logs")
       }
     }
   }, [])
@@ -69,9 +77,17 @@ export function BuildWizard() {
     }
   }, [metricsHistory])
 
+  // Save logs to localStorage when they change
+  useEffect(() => {
+    if (logs.length > 0) {
+      localStorage.setItem("trainingLogs", JSON.stringify(logs))
+    }
+  }, [logs])
+
   // Clear localStorage when training completes
   const clearTrainingStorage = () => {
     localStorage.removeItem("trainingMetricsHistory")
+    localStorage.removeItem("trainingLogs")
   }
 
   const handleDatasetToggle = (dataset: Dataset) => {
