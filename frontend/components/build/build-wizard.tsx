@@ -193,10 +193,10 @@ export function BuildWizard() {
         selectedTablesStr
       )
 
+      trainingStartedRef.current = true
       setCurrentStep("training")
       setTrainingStatus("training")
       setMetricsHistory([])
-      setLogs([])
       setElapsedTime(0)
       setCurrentMetrics(null)
 
@@ -213,8 +213,6 @@ export function BuildWizard() {
       addLog("Data preprocessing complete")
       addLog("Building knowledge base...")
       addLog("Training neural architecture...")
-      setTrainingStatus("training")
-      trainingStartedRef.current = true
 
       trainPromise.then((result: any) => {
         if (result.error) {
