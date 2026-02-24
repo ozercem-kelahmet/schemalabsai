@@ -151,7 +151,7 @@ export function AdvancedChart({ type, labels, values, values2, values3, title, x
   // 1. HORIZONTAL BAR CHART
   if (type === 'hbar' || type === 'bar') {
     return (
-      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative">
+      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative max-w-full overflow-x-auto">
         {title && <p className="text-sm font-semibold mb-3 text-gray-700 dark:text-gray-300">{title}</p>}
         <div className="space-y-2">
           {labels.map((label, i) => (
@@ -180,7 +180,7 @@ export function AdvancedChart({ type, labels, values, values2, values3, title, x
     const seriesNames = series || ['Series 1', 'Series 2']
     const hasValues2 = values2 && values2.length > 0
     return (
-      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative">
+      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative max-w-full overflow-x-auto">
         {title && <p className="text-sm font-semibold mb-3 text-gray-700 dark:text-gray-300">{title}</p>}
         <div className="flex items-end gap-4 h-36 px-2">
           {labels.map((label, i) => (
@@ -214,7 +214,7 @@ export function AdvancedChart({ type, labels, values, values2, values3, title, x
     const hasValues2 = values2 && values2.length > 0
     if (!hasValues2) {
       return (
-        <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative">
+        <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative max-w-full overflow-x-auto">
           {title && <p className="text-sm font-semibold mb-3 text-gray-700 dark:text-gray-300">{title}</p>}
           <div className="space-y-2">
             {labels.map((label, i) => (
@@ -232,7 +232,7 @@ export function AdvancedChart({ type, labels, values, values2, values3, title, x
       )
     }
     return (
-      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative">
+      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative max-w-full overflow-x-auto">
         {title && <p className="text-sm font-semibold mb-3 text-gray-700 dark:text-gray-300">{title}</p>}
         <div className="flex items-end gap-2 h-36 px-2">
           {labels.map((label, i) => {
@@ -266,7 +266,7 @@ export function AdvancedChart({ type, labels, values, values2, values3, title, x
 
   // 4. LINE CHART
   if (type === 'line') {
-    const width = 450, height = 180, padding = 45
+    const width = Math.min(450, typeof window !== "undefined" ? window.innerWidth - 80 : 450), height = 180, padding = 45
     const chartWidth = width - padding * 2, chartHeight = height - padding * 2
     const range = maxValue - minValue || 1
     const points = values.map((v, i) => ({
@@ -277,9 +277,9 @@ export function AdvancedChart({ type, labels, values, values2, values3, title, x
     const pathD = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ')
     
     return (
-      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative">
+      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative max-w-full overflow-x-auto">
         {title && <p className="text-sm font-semibold mb-3 text-gray-700 dark:text-gray-300">{title}</p>}
-        <svg width={width} height={height} className="overflow-visible">
+        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto">
           <defs>
             <linearGradient id="lineGrad" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.3" />
@@ -316,9 +316,9 @@ export function AdvancedChart({ type, labels, values, values2, values3, title, x
       const lineMax = Math.max(...values)
       const points = values.map((v, i) => ({ x: (i / (values.length - 1)) * 280 + 20, y: 120 - (v / lineMax) * 100 }))
       return (
-        <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative">
+        <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative max-w-full overflow-x-auto">
           {title && <p className="text-sm font-semibold mb-3 text-gray-700 dark:text-gray-300">{title}</p>}
-          <svg width="320" height="140" className="w-full">
+          <svg viewBox="0 0 320 140" className="w-full h-auto">
             <polyline fill="none" stroke="#3b82f6" strokeWidth="2" points={points.map(p => `${p.x},${p.y}`).join(' ')} />
             {points.map((p, i) => (
               <circle key={i} cx={p.x} cy={p.y} r="4" fill="#3b82f6" className="cursor-pointer"
@@ -330,7 +330,7 @@ export function AdvancedChart({ type, labels, values, values2, values3, title, x
         </div>
       )
     }
-    const width = 450, height = 180, padding = 45
+    const width = Math.min(450, typeof window !== "undefined" ? window.innerWidth - 80 : 450), height = 180, padding = 45
     const chartWidth = width - padding * 2, chartHeight = height - padding * 2
     const allMax = Math.max(...values, ...values2)
     const allMin = Math.min(...values, ...values2)
@@ -341,9 +341,9 @@ export function AdvancedChart({ type, labels, values, values2, values3, title, x
     const points2 = values2.map((v, i) => ({ x: padding + (i / Math.max(values2.length - 1, 1)) * chartWidth, y: height - padding - ((v - allMin) / range) * chartHeight, value: v }))
     
     return (
-      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative">
+      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative max-w-full overflow-x-auto">
         {title && <p className="text-sm font-semibold mb-3 text-gray-700 dark:text-gray-300">{title}</p>}
-        <svg width={width} height={height}>
+        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto">
           {[0, 0.5, 1].map((t, i) => <line key={i} x1={padding} x2={width-padding} y1={height-padding-t*chartHeight} y2={height-padding-t*chartHeight} stroke="#e5e7eb" strokeDasharray="4" />)}
           <path d={points1.map((p,i) => `${i===0?'M':'L'} ${p.x} ${p.y}`).join(' ')} fill="none" stroke="#3b82f6" strokeWidth="2" />
           <path d={points2.map((p,i) => `${i===0?'M':'L'} ${p.x} ${p.y}`).join(' ')} fill="none" stroke="#10b981" strokeWidth="2" />
@@ -362,7 +362,7 @@ export function AdvancedChart({ type, labels, values, values2, values3, title, x
 
   // 6. AREA CHART
   if (type === 'area') {
-    const width = 450, height = 160, padding = 45
+    const width = Math.min(450, typeof window !== "undefined" ? window.innerWidth - 80 : 450), height = 160, padding = 45
     const chartWidth = width - padding * 2, chartHeight = height - padding * 2
     const range = maxValue - minValue || 1
     const points = values.map((v, i) => ({
@@ -371,9 +371,9 @@ export function AdvancedChart({ type, labels, values, values2, values3, title, x
     }))
     
     return (
-      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative">
+      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative max-w-full overflow-x-auto">
         {title && <p className="text-sm font-semibold mb-3 text-gray-700 dark:text-gray-300">{title}</p>}
-        <svg width={width} height={height}>
+        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto">
           <defs>
             <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="#10b981" stopOpacity="0.6" />
@@ -401,10 +401,10 @@ export function AdvancedChart({ type, labels, values, values2, values3, title, x
     })
     
     return (
-      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative">
+      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative max-w-full overflow-x-auto">
         {title && <p className="text-sm font-semibold mb-3 text-gray-700 dark:text-gray-300">{title}</p>}
         <div className="flex items-center justify-center gap-6">
-          <svg width="150" height="150" viewBox="0 0 150 150">
+          <svg viewBox="0 0 150 150" className="w-full h-auto max-w-[150px] mx-auto">
             {slices.map((s, i) => {
               const x1 = 75 + 65 * Math.cos((s.startAngle - 90) * Math.PI / 180)
               const y1 = 75 + 65 * Math.sin((s.startAngle - 90) * Math.PI / 180)
@@ -441,10 +441,10 @@ export function AdvancedChart({ type, labels, values, values2, values3, title, x
     const outerR = 65, innerR = 40
     
     return (
-      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative">
+      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative max-w-full overflow-x-auto">
         {title && <p className="text-sm font-semibold mb-3 text-gray-700 dark:text-gray-300">{title}</p>}
         <div className="flex items-center justify-center gap-6">
-          <svg width="150" height="150" viewBox="0 0 150 150">
+          <svg viewBox="0 0 150 150" className="w-full h-auto max-w-[150px] mx-auto">
             {values.map((v, i) => {
               const angle = (v / total) * 360
               const start = currentAngle
@@ -489,7 +489,7 @@ export function AdvancedChart({ type, labels, values, values2, values3, title, x
     const angle = (pct / 100) * 180 - 90
     
     return (
-      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative">
+      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative max-w-full overflow-x-auto">
         {title && <p className="text-sm font-semibold mb-3 text-gray-700 dark:text-gray-300">{title}</p>}
         <svg width="280" height="110" viewBox="0 0 180 110" className="mx-auto">
           <path d="M 20 90 A 70 70 0 0 1 160 90" fill="none" stroke="#e5e7eb" strokeWidth="14" strokeLinecap="round" />
@@ -507,7 +507,7 @@ export function AdvancedChart({ type, labels, values, values2, values3, title, x
     const hasValues2 = values2 && values2.length > 0
     if (!hasValues2) {
       return (
-        <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative">
+        <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative max-w-full overflow-x-auto">
           {title && <p className="text-sm font-semibold mb-3 text-gray-700 dark:text-gray-300">{title}</p>}
           <div className="space-y-2">
             {labels.map((label, i) => (
@@ -524,15 +524,15 @@ export function AdvancedChart({ type, labels, values, values2, values3, title, x
         </div>
       )
     }
-    const width = 420, height = 200, padding = 40
+    const width = Math.min(420, typeof window !== "undefined" ? window.innerWidth - 80 : 420), height = 200, padding = 40
     const xMax = Math.max(...values), xMin = Math.min(...values)
     const yMax = Math.max(...values2), yMin = Math.min(...values2)
     const xRange = xMax - xMin || 1, yRange = yMax - yMin || 1
     
     return (
-      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative">
+      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative max-w-full overflow-x-auto">
         {title && <p className="text-sm font-semibold mb-3 text-gray-700 dark:text-gray-300">{title}</p>}
-        <svg width={width} height={height}>
+        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto">
           {[0, 0.5, 1].map((t, i) => (
             <g key={i}>
               <line x1={padding} x2={width-padding} y1={height-padding-t*(height-2*padding)} y2={height-padding-t*(height-2*padding)} stroke="#e5e7eb" strokeDasharray="4" />
@@ -571,7 +571,7 @@ export function AdvancedChart({ type, labels, values, values2, values3, title, x
     })
     
     return (
-      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative">
+      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative max-w-full overflow-x-auto">
         {title && <p className="text-sm font-semibold mb-3 text-gray-700 dark:text-gray-300">{title}</p>}
         <svg width="240" height="200">
           {[0.25, 0.5, 0.75, 1].map((t, i) => (
@@ -641,7 +641,7 @@ export function AdvancedChart({ type, labels, values, values2, values3, title, x
     const range = wfMax - wfMin || 1
     
     return (
-      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative">
+      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative max-w-full overflow-x-auto">
         {title && <p className="text-sm font-semibold mb-3 text-gray-700 dark:text-gray-300">{title}</p>}
         <div className="flex items-end gap-1 h-40 px-2">
           {bars.map((b, i) => (
@@ -669,7 +669,7 @@ export function AdvancedChart({ type, labels, values, values2, values3, title, x
   if (type === 'funnel') {
     const maxWidth = 200
     return (
-      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative">
+      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative max-w-full overflow-x-auto">
         {title && <p className="text-sm font-semibold mb-3 text-gray-700 dark:text-gray-300">{title}</p>}
         <div className="flex flex-col items-center gap-1">
           {values.map((v, i) => {
@@ -696,7 +696,7 @@ export function AdvancedChart({ type, labels, values, values2, values3, title, x
   if (type === 'treemap') {
     const sorted = values.map((v, i) => ({ value: v, label: labels[i], color: colors[i % colors.length] })).sort((a, b) => b.value - a.value)
     return (
-      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative">
+      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative max-w-full overflow-x-auto">
         {title && <p className="text-sm font-semibold mb-3 text-gray-700 dark:text-gray-300">{title}</p>}
         <div className="flex flex-wrap gap-1" style={{ width: 280, height: 160 }}>
           {sorted.map((item, i) => {
@@ -727,9 +727,9 @@ export function AdvancedChart({ type, labels, values, values2, values3, title, x
     const width = 200, height = 100, padding = 30
     
     return (
-      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative">
+      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative max-w-full overflow-x-auto">
         {title && <p className="text-sm font-semibold mb-3 text-gray-700 dark:text-gray-300">{title}</p>}
-        <svg width={width} height={height}>
+        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto">
           <line x1={padding + ((min - min) / range) * (width - 2*padding)} y1={50} x2={padding + ((q1 - min) / range) * (width - 2*padding)} y2={50} stroke="#6b7280" strokeWidth="2" />
           <line x1={padding + ((q3 - min) / range) * (width - 2*padding)} y1={50} x2={padding + ((max - min) / range) * (width - 2*padding)} y2={50} stroke="#6b7280" strokeWidth="2" />
           <rect x={padding + ((q1 - min) / range) * (width - 2*padding)} y={30} width={((q3 - q1) / range) * (width - 2*padding)} height={40}
@@ -749,7 +749,7 @@ export function AdvancedChart({ type, labels, values, values2, values3, title, x
   // 17. HISTOGRAM
   if (type === 'histogram') {
     return (
-      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative">
+      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative max-w-full overflow-x-auto">
         {title && <p className="text-sm font-semibold mb-3 text-gray-700 dark:text-gray-300">{title}</p>}
         <div className="flex items-end gap-0.5 h-32 px-2">
           {values.map((v, i) => (
@@ -774,7 +774,7 @@ export function AdvancedChart({ type, labels, values, values2, values3, title, x
     const hasValues2 = values2 && values2.length > 0
     if (!hasValues2) {
       return (
-        <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative">
+        <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative max-w-full overflow-x-auto">
           {title && <p className="text-sm font-semibold mb-3 text-gray-700 dark:text-gray-300">{title}</p>}
           <div className="space-y-2">
             {labels.map((label, i) => (
@@ -796,7 +796,7 @@ export function AdvancedChart({ type, labels, values, values2, values3, title, x
     const max = Math.max(target, actual) * 1.2
     
     return (
-      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative">
+      <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative max-w-full overflow-x-auto">
         {title && <p className="text-sm font-semibold mb-3 text-gray-700 dark:text-gray-300">{title}</p>}
         <div className="relative h-10 bg-gray-200 dark:bg-gray-700 rounded overflow-hidden">
           <div className="absolute inset-y-0 left-0 bg-gray-300 dark:bg-gray-600" style={{ width: '60%' }} />
@@ -845,7 +845,7 @@ export function AdvancedChart({ type, labels, values, values2, values3, title, x
 
   // DEFAULT - horizontal bar fallback
   return (
-    <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative">
+    <div className="my-4 p-4 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-sm relative max-w-full overflow-x-auto">
       {title && <p className="text-sm font-semibold mb-3 text-gray-700 dark:text-gray-300">{title}</p>}
       <div className="space-y-2">
         {labels.map((label, i) => (

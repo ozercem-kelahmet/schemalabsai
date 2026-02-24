@@ -181,3 +181,10 @@
   color: hsl(var(--foreground)) !important;
 }
 
+
+/* Mobile responsive fix */
+@media (max-width: 640px) {
+  main { max-width: 100vw !important; overflow-x: hidden !important; }
+  main * { max-width: 100% !important; }
+  svg { max-width: 100% !important; height: auto !important; }
+}

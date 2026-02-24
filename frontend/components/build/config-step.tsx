@@ -257,8 +257,8 @@ export function ConfigStep({
   }
 
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
-      <Card className="border-border bg-card flex flex-col h-[700px]">
+    <div className="grid gap-6 lg:grid-cols-2 w-full max-w-full">
+      <Card className="border-border bg-card flex flex-col h-[500px] lg:h-[700px] max-w-full overflow-hidden">
         <CardHeader className="shrink-0">
           <CardTitle className="flex items-center gap-2 text-base text-foreground">
             <Database className="h-4 w-4 text-[#2684FF]" />
@@ -373,7 +373,7 @@ export function ConfigStep({
                                 className="pointer-events-none shrink-0 border-border data-[state=checked]:bg-[#0052CC] data-[state=checked]:border-[#0052CC]"
                               />
                               <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium text-foreground truncate">{ds.name}</p>
+                                <p className="text-sm font-medium text-foreground truncate max-w-[250px] sm:max-w-none">{ds.name}</p>
                                 <div className="flex items-center gap-3 mt-0.5 text-[11px] text-muted-foreground">
                                   {ds.vertical && <span className="capitalize">{ds.vertical}</span>}
                                   <span>{ds.rows.toLocaleString()} rows</span>
@@ -410,7 +410,7 @@ export function ConfigStep({
       </Card>
 
       {/* Right side - Model Configuration */}
-      <Card className="border-border bg-card">
+      <Card className="border-border bg-card max-w-full overflow-hidden">
         <CardHeader>
           <CardTitle className="text-base text-foreground">Model Configuration</CardTitle>
           <p className="text-sm text-muted-foreground">Configure your AI model</p>
@@ -422,7 +422,7 @@ export function ConfigStep({
               id="model-name"
               value={modelName}
               onChange={(e) => onModelNameChange(e.target.value)}
-              placeholder="e.g., Customer Intelligence Model"
+              placeholder="e.g., Customer Intelligence Model" className="w-full"
               className="border-border bg-background text-foreground"
             />
           </div>
@@ -458,7 +458,7 @@ export function ConfigStep({
           <div className="space-y-2">
             <Label className="text-sm text-foreground">Data Sync Mode</Label>
             <p className="text-xs text-muted-foreground">How should the model stay updated with data changes?</p>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {[
                 { mode: "real-time" as SyncMode, label: "Real-time", icon: Zap, desc: "Auto-sync" },
                 { mode: "scheduled" as SyncMode, label: "Scheduled", icon: Clock, desc: "Timed sync" },

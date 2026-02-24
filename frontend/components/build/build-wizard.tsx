@@ -459,9 +459,9 @@ export function BuildWizard() {
                   <div className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-medium transition-colors ${isComplete ? "bg-emerald-500 text-white" : isCurrent ? "bg-[#0052CC] text-white" : "bg-white/10 text-gray-400"}`}>
                     {isComplete ? <Check className="h-4 w-4" /> : index + 1}
                   </div>
-                  <span className={`text-sm font-medium ${isCurrent ? "text-white" : "text-gray-400"}`}>{step.label}</span>
+                  <span className={`text-[10px] sm:text-sm font-medium ${isCurrent ? "text-white" : "text-gray-400"}`}>{step.label}</span>
                 </div>
-                {index < steps.length - 1 && <div className="mx-4 h-px w-16 bg-white/10" />}
+                {index < steps.length - 1 && <div className="mx-2 sm:mx-4 h-px w-8 sm:w-16 bg-white/10" />}
               </div>
             )
           })}
