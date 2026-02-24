@@ -140,6 +140,10 @@ export function BuildWizard() {
   const startTraining = async () => {
     trainingStartedRef.current = false
     completedByPollingRef.current = false
+    setCurrentStep("training")
+    setLogs([])
+    setEvalMetrics(null)
+    setBuiltModel(null)
 
     if (selectedDatasets.length === 0) {
       toast.error("No Data Selected", { description: "Please select at least one dataset or connection to train on.", duration: 5000 })
