@@ -151,7 +151,7 @@ export default function UsagePage() {
         event: l.event_name || "Chat Query",
         kind: "chat",
         model: l.model_used || "-",
-        builtModel: l.resource_name || "-",
+        builtModel: (l.resource_name && l.resource_name !== l.model_used) ? l.resource_name : "-",
         credits: l.credits_used || 0,
         baseTokens: l.tokens_used || 0,
         endpointCalls: 0

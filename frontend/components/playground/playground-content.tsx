@@ -106,13 +106,18 @@ function adaptBackendModel(m: BackendModel): AdaptedModel {
     datasets = sourceFiles.map((file, idx) => ({
       datasetId: file.trim(),
       datasetName: (sourceFileNames[idx] || file).trim().replace(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}[_.]?/, "").replace(/_\d{8}_\d{6}/, "").replace(/\.csv$/, ""),
-      source: "upload" as DataSource,
+      source: (file.trim().startsWith("conn_") ? "connection" : "upload") as DataSource,
     }))
   } else if (sourceFileId) {
     datasets = [{ datasetId: sourceFileId, datasetName: sourceCsvName || sourceFileId, source: "upload" as DataSource }]
   } else if (sourceCsvName) {
     datasets = [{ datasetId: m.id, datasetName: sourceCsvName, source: "upload" as DataSource }]
+  } else if (m.source_name && m.source_name !== "0 files merged") {
+    datasets = [{ datasetId: m.id, datasetName: m.source_name, source: "upload" as DataSource }]
   }
+  
+  const connectionIds = m.connection_ids || m.connectionIds || ""
+  const isConnectionBased = connectionIds !== ""
 
   return {
     id: m.id,
@@ -121,6 +126,8 @@ function adaptBackendModel(m: BackendModel): AdaptedModel {
     datasets,
     sourceFiles: sourceFilesStr,
     modelPath: m.model_path || m.modelPath || "",
+    isConnectionBased,
+    connectionName: m.connection_names || m.connectionNames || "",
   }
 }
 
@@ -1303,7 +1310,7 @@ api.getMessages(sessionId)
                         {compareMode && <div className={cn("flex h-4 w-4 shrink-0 items-center justify-center rounded border", isSelected ? "bg-[#0052CC] border-[#0052CC] dark:bg-[#2684FF] dark:border-[#2684FF]" : "border-muted-foreground/30")}>{isSelected && <Check className="h-3 w-3 text-white" />}</div>}
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium truncate">{model.name}</p>
-                          <p className="text-xs text-muted-foreground">{model.datasets.length} sources</p>
+                          <p className="text-xs text-muted-foreground">{model.datasets.length > 0 ? `${model.datasets.length} source${model.datasets.length !== 1 ? "s" : ""}` : (model as any).isConnectionBased ? ((model as any).connectionName || "connection") : "no sources"}</p>
                         </div>
                         {!compareMode && isSelected && <Check className="h-4 w-4 text-[#0052CC] dark:text-[#2684FF]" />}
                       </div>

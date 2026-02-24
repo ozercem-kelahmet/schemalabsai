@@ -352,6 +352,22 @@ func ListFineTunedModelsHandler(w http.ResponseWriter, r *http.Request) {
 "connection_ids": m.ConnectionIDs,
 		}
 
+		// Resolve connection names
+		if m.ConnectionIDs != "" && DB != nil {
+			var connNames []string
+			for _, cid := range strings.Split(m.ConnectionIDs, ",") {
+				cid = strings.TrimSpace(cid)
+				if cid == "" { continue }
+				var conn Connection
+				if DB.Where("id = ?", cid).First(&conn).Error == nil {
+					connNames = append(connNames, conn.Name)
+				}
+			}
+			if len(connNames) > 0 {
+				mr["connection_names"] = strings.Join(connNames, ",")
+			}
+		}
+
 		if m.SourceFiles != "" {
 			var fileNames []string
 			for _, fid := range strings.Split(m.SourceFiles, ",") {
@@ -1853,6 +1869,23 @@ if req.ConnectionIDs != "" {
 			dataRows.Close()
 			filePaths = append(filePaths, csvPath)
 			log.Printf("Exported connection %s table %s to %s", connID, tableName, csvPath)
+			// Save connection CSV to uploaded_files and track ID
+			connFileID := fmt.Sprintf("conn_%s_%s", connID, tableName)
+			if DB != nil && userID != "" {
+				fileInfo, _ := os.Stat(csvPath)
+				fileSize := int64(0)
+				if fileInfo != nil { fileSize = fileInfo.Size() }
+				DB.Create(&UploadedFile{
+					ID: connFileID,
+					UserID: userID,
+					Filename: fmt.Sprintf("%s_%s.csv", connID[:8], tableName),
+					Path: csvPath,
+					Size: fileSize,
+					CreatedAt: time.Now(),
+				})
+				req.FileIDs = append(req.FileIDs, connFileID)
+				log.Printf("Saved connection CSV as uploaded file: %s", connFileID)
+			}
 		}
 		sqlDB.Close()
 	}
