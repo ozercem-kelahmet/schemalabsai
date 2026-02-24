@@ -1,4 +1,3 @@
-
 "use client"
 import { useEffect, useRef } from "react"
 
@@ -8,28 +7,25 @@ export function VersionChecker() {
   useEffect(() => {
     const checkVersion = async () => {
       try {
-        const res = await fetch("/api/version", { cache: "no-store" })
+        const res = await fetch("/api/version?t=" + Date.now(), { cache: "no-store" })
         const data = await res.json()
         if (versionRef.current === null) {
           versionRef.current = data.version
         } else if (versionRef.current !== data.version) {
-          // New version available - reload
-          window.location.reload()
+          // Force reload bypassing cache
+          window.location.href = window.location.pathname + "?v=" + Date.now()
         }
       } catch {}
     }
     
-    // Check on mount
     checkVersion()
     
-    // Check when tab becomes visible
     const onVisibility = () => {
       if (document.visibilityState === "visible") checkVersion()
     }
     document.addEventListener("visibilitychange", onVisibility)
     
-    // Check every 60 seconds
-    const interval = setInterval(checkVersion, 60000)
+    const interval = setInterval(checkVersion, 15000)
     
     return () => {
       document.removeEventListener("visibilitychange", onVisibility)
