@@ -173,7 +173,7 @@ export function BuildWizard() {
       )
 
       setCurrentStep("training")
-      setTrainingStatus("initializing")
+      setTrainingStatus("training")
       setMetricsHistory([])
       setLogs([])
       setElapsedTime(0)
@@ -286,7 +286,7 @@ export function BuildWizard() {
   }
 
   useEffect(() => {
-    if (trainingStatus !== "training" || isPaused || !trainingStartedRef.current) return
+    if ((trainingStatus !== "training" && trainingStatus !== "initializing") || isPaused || !trainingStartedRef.current) return
 
     const pollProgress = async () => {
       try {
