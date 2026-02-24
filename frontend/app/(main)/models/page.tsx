@@ -18,6 +18,7 @@ interface FineTunedModel {
   source_files?: string
   source_file_names?: string
   source_name?: string
+  connection_names?: string
   epochs: number
   batch_size: number
   loss: number
@@ -244,25 +245,28 @@ export default function ModelsPage() {
   const cleanName = (s: string) => s.replace(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}[_.]?/, "").replace(/^\.csv_?/, "").replace(/_\d{8}_\d{6}/, "").replace(/\.(csv|json|jsonl)$/, "")
   const getSourceNames = (m: FineTunedModel): string[] => {
     const names: string[] = []
-    // Add connection names
+    // Add connection names from backend or lookup
     if (m.connection_ids) {
-      const connIds = m.connection_ids.split(",").filter(Boolean)
-      connIds.forEach(cid => {
-        const conn = syncConnections.find((c: any) => c.id === cid.trim())
-        names.push(conn ? conn.name || conn.sub_type : "Connection")
-      })
+      if (m.connection_names) {
+        m.connection_names.split(",").filter(Boolean).forEach(n => names.push(n.trim()))
+      } else {
+        const connIds = m.connection_ids.split(",").filter(Boolean)
+        connIds.forEach(cid => {
+          const conn = syncConnections.find((c: any) => c.id === cid.trim())
+          names.push(conn ? conn.name || conn.sub_type : "Connection")
+        })
+      }
     }
     // Add file names
     if (m.source_file_names) {
       const fileNames = m.source_file_names.split(",").map(s => cleanName(s.trim())).filter(Boolean)
-      // Skip merged file entries that look like IDs
       fileNames.forEach(n => { if (n && !n.match(/^[0-9]+$/) && n !== "0 files merged") names.push(n) })
-    } else if (m.source_name) {
+    } else if (m.source_name && m.source_name !== "0 files merged") {
       names.push(cleanName(m.source_name))
     } else if (m.source_files && !m.connection_ids) {
       m.source_files.split(",").filter(Boolean).forEach((_, i) => names.push("Dataset " + (i + 1)))
     }
-    return names.length > 0 ? names : ["Unknown source"]
+    return names.length > 0 ? names : []
   }
 
   const handleClick = async (m: FineTunedModel) => {

@@ -460,14 +460,22 @@ export function ConfigStep({
             <p className="text-xs text-muted-foreground">How should the model stay updated with data changes?</p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {[
-                { mode: "real-time" as SyncMode, label: "Real-time", icon: Zap, desc: "Auto-sync" },
-                { mode: "scheduled" as SyncMode, label: "Scheduled", icon: Clock, desc: "Timed sync" },
+                { mode: "real-time" as SyncMode, label: "Real-time", icon: Zap, desc: "Auto-sync", needsConnection: true },
+                { mode: "scheduled" as SyncMode, label: "Scheduled", icon: Clock, desc: "Timed sync", needsConnection: true },
                 { mode: "manual" as SyncMode, label: "Manual", icon: RefreshCw, desc: "On-demand" },
               ].map(option => (
                 <button
                   key={option.mode}
                   type="button"
                   onClick={() => {
+                    const hasConnections = selectedDatasets.some(d => d.syncStatus === "synced")
+                    if ((option as any).needsConnection && !hasConnections) return (
+                      <button key={option.mode} type="button" disabled className="flex flex-col items-center gap-1 rounded-lg border border-border p-3 flex-1 opacity-40 cursor-not-allowed">
+                        <option.icon className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-[10px] font-medium text-muted-foreground">{option.label}</span>
+                        <span className="text-[8px] text-muted-foreground">Needs connection</span>
+                      </button>
+                    )
                     if (syncMode === option.mode && option.mode !== "manual") {
                       onSyncModeChange("manual")
                       onScheduleChange?.("", "")
@@ -497,45 +505,41 @@ export function ConfigStep({
                   <Label className="text-xs font-medium text-foreground">Schedule Configuration</Label>
                 </div>
 
-                {/* Connection Selection */}
-                <div className="space-y-1.5">
-                  <Label className="text-[10px] text-muted-foreground uppercase tracking-wider">Data Source Connection</Label>
-                  {allConnections.length > 0 ? (
-                    <div className="space-y-1">
-                      {allConnections.map((c: any) => {
-                        const isSelected = selectedConnIDs.includes(c.id)
-                        const typeLabel = (c.sub_type || c.type || "").toUpperCase()
-                        const typeColor = c.sub_type === "postgresql" ? "text-[#336791]" : c.sub_type === "mongodb" ? "text-[#47A248]" : c.sub_type === "mysql" ? "text-[#4479A1]" : c.sub_type === "aws-s3" || c.sub_type === "aws_s3" ? "text-[#FF9900]" : c.sub_type === "pinecone" ? "text-[#7B61FF]" : "text-muted-foreground"
-                        return (
-                          <button key={c.id} type="button"
-                            onClick={() => {
-                              const newIDs = isSelected ? selectedConnIDs.filter((id: string) => id !== c.id) : [...selectedConnIDs, c.id]
-                              setSelectedConnIDs(newIDs)
-                              onConnectionIDsChange?.(newIDs.join(","))
-                            }}
-                            className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition-all ${
-                              isSelected ? "border-[#0052CC] bg-[#0052CC]/10" : "border-border hover:border-border/80 hover:bg-muted/30"
-                            }`}>
-                            <div className={`flex h-4 w-4 items-center justify-center rounded border ${isSelected ? "border-[#0052CC] bg-[#0052CC]" : "border-muted-foreground/30"}`}>
-                              {isSelected && <span className="text-white text-[8px]">✓</span>}
-                            </div>
-                            <Database className={`h-3.5 w-3.5 ${typeColor}`} />
-                            <div className="flex-1 min-w-0">
-                              <div className="text-xs font-medium text-foreground truncate">{c.name}</div>
-                              <div className="text-[10px] text-muted-foreground">{c.host ? `${c.host}:${c.port}` : c.endpoint || "Cloud"}</div>
-                            </div>
-                            <span className={`rounded-full px-1.5 py-0.5 text-[8px] font-semibold ${typeColor} bg-muted/50`}>{typeLabel}</span>
-                            <span className={`h-1.5 w-1.5 rounded-full ${c.status === "active" ? "bg-emerald-500" : "bg-red-500"}`} />
-                          </button>
-                        )
-                      })}
+                {/* Connected Sources Info */}
+                {(() => {
+                  const connDs = selectedDatasets.filter(d => d.syncStatus === "synced")
+                  const uploadDs = selectedDatasets.filter(d => d.syncStatus !== "synced")
+                  return (
+                    <div className="space-y-1.5">
+                      {connDs.length > 0 ? (
+                        <>
+                          <div className="rounded-md bg-[#0052CC]/10 px-3 py-2 text-xs text-[#2684FF]">
+                            <Database className="inline h-3 w-3 mr-1" />
+                            {connDs.length} connection source{connDs.length !== 1 ? "s" : ""} will be re-synced on schedule
+                          </div>
+                          <div className="space-y-1">
+                            {connDs.map((ds) => (
+                              <div key={ds.id} className="flex items-center gap-2 px-3 py-1.5 rounded bg-muted/30 text-xs">
+                                <Database className="h-3 w-3 text-[#2684FF]" />
+                                <span className="text-foreground">{ds.name}</span>
+                                <span className="text-muted-foreground ml-auto">{ds.rows.toLocaleString()} rows</span>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="rounded-md bg-amber-500/10 px-3 py-2.5 text-xs text-amber-600 dark:text-amber-400">
+                          <span className="font-medium">No connection sources selected.</span> Select connected databases or APIs from the left panel for scheduled sync.
+                        </div>
+                      )}
+                      {uploadDs.length > 0 && (
+                        <div className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                          {uploadDs.length} uploaded file{uploadDs.length !== 1 ? "s" : ""} will be included but won't update on schedule.
+                        </div>
+                      )}
                     </div>
-                  ) : (
-                    <div className="rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
-                      No connections found. Add connections from the Database page first.
-                    </div>
-                  )}
-                </div>
+                  )
+                })()}
 
                 {/* Schedule Mode */}
                 <div className="space-y-1.5">
@@ -632,69 +636,48 @@ export function ConfigStep({
               </div>
             )}
 
-            {/* Real-time Sync - Connection Selection */}
-            {syncMode === "real-time" && (
-              <div className="mt-3 space-y-3 rounded-lg border border-purple-500/20 bg-purple-500/5 p-4">
-                <div className="flex items-center justify-between">
+            {/* Real-time Sync Info */}
+            {syncMode === "real-time" && (() => {
+              const connDatasets = selectedDatasets.filter(d => d.syncStatus === "synced")
+              const uploadDatasets = selectedDatasets.filter(d => d.syncStatus !== "synced")
+              return (
+                <div className="mt-3 space-y-3 rounded-lg border border-purple-500/20 bg-purple-500/5 p-4">
                   <div className="flex items-center gap-2">
                     <Zap className="h-4 w-4 text-purple-500" />
                     <Label className="text-xs font-medium text-foreground">Real-time Sync</Label>
                   </div>
-
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Select connections to monitor. Model will auto-retrain when data changes are detected (checked every 60 seconds).
-                </p>
-
-                {allConnections.length > 0 ? (
-                  <div className="space-y-1.5">
-                    <Label className="text-[10px] text-muted-foreground uppercase tracking-wider">Available Connections</Label>
-                    <div className="space-y-1">
-                      {allConnections.map((c: any) => {
-                        const isSelected = selectedConnIDs.includes(c.id)
-                        const typeLabel = (c.sub_type || c.type || "").toUpperCase()
-                        const typeColor = c.sub_type === "postgresql" ? "text-[#336791]" : c.sub_type === "mongodb" ? "text-[#47A248]" : c.sub_type === "mysql" ? "text-[#4479A1]" : c.sub_type === "aws-s3" || c.sub_type === "aws_s3" ? "text-[#FF9900]" : c.sub_type === "pinecone" ? "text-[#7B61FF]" : "text-muted-foreground"
-                        return (
-                          <button
-                            key={c.id}
-                            type="button"
-                            onClick={() => {
-                              const newIDs = isSelected ? selectedConnIDs.filter(id => id !== c.id) : [...selectedConnIDs, c.id]
-                              setSelectedConnIDs(newIDs)
-                              onConnectionIDsChange?.(newIDs.join(","))
-                            }}
-                            className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-all ${
-                              isSelected ? "border-purple-500 bg-purple-500/10" : "border-border hover:border-border/80 hover:bg-muted/30"
-                            }`}
-                          >
-                            <div className={`flex h-5 w-5 items-center justify-center rounded border ${isSelected ? "border-purple-500 bg-purple-500" : "border-muted-foreground/30"}`}>
-                              {isSelected && <span className="text-white text-[10px]">✓</span>}
-                            </div>
-                            <Database className={`h-4 w-4 ${typeColor}`} />
-                            <div className="flex-1 min-w-0">
-                              <div className="text-xs font-medium text-foreground truncate">{c.name}</div>
-                              <div className="text-[10px] text-muted-foreground">{c.host ? `${c.host}:${c.port}` : c.endpoint || "Cloud"} · {c.database || c.bucket || ""}</div>
-                            </div>
-                            <span className={`rounded-full px-2 py-0.5 text-[9px] font-semibold ${typeColor} bg-muted/50`}>{typeLabel}</span>
-                            <span className={`h-2 w-2 rounded-full ${c.status === "active" ? "bg-emerald-500" : "bg-red-500"}`} />
-                          </button>
-                        )
-                      })}
-                    </div>
-                    {selectedConnIDs.length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    Model will auto-retrain when data changes are detected in your connected sources (checked every 60 seconds).
+                  </p>
+                  {connDatasets.length > 0 ? (
+                    <div className="space-y-1.5">
                       <div className="rounded-md bg-purple-500/10 px-3 py-2 text-xs text-purple-600 dark:text-purple-400">
                         <Zap className="inline h-3 w-3 mr-1" />
-                        {selectedConnIDs.length} connection(s) selected for real-time monitoring
+                        {connDatasets.length} connection source{connDatasets.length !== 1 ? "s" : ""} will be monitored for changes
                       </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="rounded-md bg-amber-500/10 px-3 py-2.5 text-xs text-amber-600 dark:text-amber-400">
-                    <span className="font-medium">No connections found.</span> Go to the Database page and use + Connect to add database, cloud storage, or API connections first.
-                  </div>
-                )}
-              </div>
-            )}
+                      <div className="space-y-1">
+                        {connDatasets.map((ds) => (
+                          <div key={ds.id} className="flex items-center gap-2 px-3 py-1.5 rounded bg-muted/30 text-xs">
+                            <Database className="h-3 w-3 text-purple-500" />
+                            <span className="text-foreground">{ds.name}</span>
+                            <span className="text-muted-foreground ml-auto">{ds.rows.toLocaleString()} rows</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-md bg-amber-500/10 px-3 py-2.5 text-xs text-amber-600 dark:text-amber-400">
+                      <span className="font-medium">No connection sources selected.</span> Select connected databases or APIs from the left panel to enable real-time sync.
+                    </div>
+                  )}
+                  {uploadDatasets.length > 0 && (
+                    <div className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                      {uploadDatasets.length} uploaded file{uploadDatasets.length !== 1 ? "s" : ""} will be included in training but cannot be monitored for changes.
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
           </div>
 
           <Button

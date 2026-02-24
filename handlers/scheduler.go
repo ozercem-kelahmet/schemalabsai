@@ -296,14 +296,24 @@ func calculateNextRun(cronExpr string) time.Time {
 		if next.Before(now) { next = next.AddDate(0, 1, 0) }
 		return next
 	default:
-		// Custom: "every Xh" or default daily
-		if strings.HasPrefix(cronExpr, "every ") {
-			parts := strings.TrimPrefix(cronExpr, "every ")
-			if strings.HasSuffix(parts, "h") {
-				var hours int
-				fmt.Sscanf(parts, "%dh", &hours)
-				if hours > 0 { return now.Add(time.Duration(hours) * time.Hour) }
-			}
+		// Custom intervals: "1h", "2d", "1w", "1m" or "every Xh/Xd/Xw/Xm"
+		expr := cronExpr
+		if strings.HasPrefix(expr, "every ") {
+			expr = strings.TrimSpace(strings.TrimPrefix(expr, "every "))
+		}
+		var val int
+		unit := expr[len(expr)-1:]
+		fmt.Sscanf(expr, "%d", &val)
+		if val <= 0 { val = 1 }
+		switch unit {
+		case "h":
+			return now.Add(time.Duration(val) * time.Hour)
+		case "d":
+			return now.Add(time.Duration(val) * 24 * time.Hour)
+		case "w":
+			return now.Add(time.Duration(val) * 7 * 24 * time.Hour)
+		case "m":
+			return now.AddDate(0, val, 0)
 		}
 		next := time.Date(now.Year(), now.Month(), now.Day(), 2, 0, 0, 0, now.Location())
 		if next.Before(now) { next = next.Add(24 * time.Hour) }
