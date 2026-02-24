@@ -175,7 +175,7 @@ export function DatasetCard({ dataset, onViewSchema, onEdit, onDelete }: Dataset
           )}
           <div className="flex items-center gap-1">
             <Table className="h-3.5 w-3.5 shrink-0" />
-            <span className="font-mono text-foreground">{dataset.rows >= 1000 ? (dataset.rows / 1000).toFixed(dataset.rows >= 10000 ? 0 : 1) + "K" : dataset.rows.toLocaleString()}</span>
+            <span className="font-mono text-foreground">{dataset.rows >= 10000 ? Math.round(dataset.rows / 1000) + "K" : dataset.rows >= 1000 ? (dataset.rows % 1000 === 0 ? (dataset.rows / 1000) + "K" : (dataset.rows / 1000).toFixed(1) + "K") : dataset.rows.toLocaleString()}</span>
             <span>rows</span>
           </div>
           <div className="flex items-center gap-1">
