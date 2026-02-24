@@ -138,13 +138,6 @@ export function BuildWizard() {
     checkOngoingTraining()
   }, [addLog])
   const startTraining = async () => {
-    trainingStartedRef.current = false
-    completedByPollingRef.current = false
-    setCurrentStep("training")
-    setLogs([])
-    setEvalMetrics(null)
-    setBuiltModel(null)
-
     if (selectedDatasets.length === 0) {
       toast.error("No Data Selected", { description: "Please select at least one dataset or connection to train on.", duration: 5000 })
       return
@@ -154,6 +147,14 @@ export function BuildWizard() {
       toast.error("Model Name Required", { description: "Please enter a name for your model.", duration: 5000 })
       return
     }
+
+    // Reset state for new training
+    trainingStartedRef.current = false
+    completedByPollingRef.current = false
+    skipCheckRef.current = false
+    setLogs([])
+    setEvalMetrics(null)
+    setBuiltModel(null)
 
     try {
       // Separate files from connections (connections have syncStatus "synced")
@@ -222,7 +223,7 @@ export function BuildWizard() {
           setTrainingStatus("idle")
           return
         }
-        console.log("TRAIN_PROMISE_RESOLVED", result); if (completedByPollingRef.current || currentStep === "evaluate") { console.log("SKIP - already completed by polling"); return } // polling already handled
+        console.log("TRAIN_PROMISE_RESOLVED", result); if (completedByPollingRef.current) { console.log("SKIP - already completed by polling"); return } // polling already handled
         handleTrainResult(result)
       }).catch((err: any) => {
         toast.error("Training Failed", { description: err.message, duration: 10000 })
@@ -238,7 +239,7 @@ export function BuildWizard() {
   }
 
   const handleTrainResult = async (result: any) => {
-      if (completedByPollingRef.current || currentStep === "evaluate") return
+      if (completedByPollingRef.current) return
       if (result.queued || result.status === "queued") {
         addLog(`⏳ Server busy - Training queued at position ${result.queue_position || 0}`)
         addLog(`Active trainings: ${result.active_trainings || 0}/${result.max_concurrent || 1}`)

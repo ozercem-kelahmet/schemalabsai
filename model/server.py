@@ -2955,6 +2955,12 @@ def finetune(bypass_queue=False):
         
         return jsonify(error_response), 500
 
+@app.route('/training/reset', methods=['POST'])
+def reset_training_progress():
+    global training_progress
+    training_progress = {"epoch": 0, "epochs": 0, "accuracy": 0.0, "loss": 0.0, "status": "idle", "eta": "0%", "start_time": 0}
+    return jsonify({"status": "reset"})
+
 @app.route('/training/progress', methods=['GET'])
 def get_training_progress():
     _load_sessions()

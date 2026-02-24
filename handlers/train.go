@@ -1174,6 +1174,11 @@ func MultiTrainHandler(w http.ResponseWriter, r *http.Request) {
 	trainingProgress.Loss = 0
 	trainingProgress.ModelID = ""
 	trainingProgress.ModelName = ""
+	// Reset Flask progress too
+	go func() {
+		client := &http.Client{Timeout: 3 * time.Second}
+		client.Post(GetFlaskURL()+"/training/reset", "application/json", nil)
+	}()
 
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -2118,11 +2123,14 @@ emailService.SendTrainingComplete(user.Email, modelName, accuracy)
 	trainingProgress.ModelName = modelName
 
 	// Reset progress after delay so polling can catch "completed"
+	currentModelID := dbModelID
 	defer func() {
-		time.Sleep(5 * time.Second)
-		trainingProgress.Status = "idle"
-		trainingProgress.Epoch = 0
-		trainingProgress.Accuracy = 0
+		time.Sleep(8 * time.Second)
+		if trainingProgress.ModelID == currentModelID {
+			trainingProgress.Status = "idle"
+			trainingProgress.Epoch = 0
+			trainingProgress.Accuracy = 0
+		}
 	}()
 
 	json.NewEncoder(w).Encode(TrainResponse{
@@ -2252,6 +2260,8 @@ var trainingProgress = struct {
 func TrainingProgressHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
+	// If Go-side says "training" but Flask says "completed", Flask has stale data
+	// Trust Go-side status when a new training just started
 	queryID := r.URL.Query().Get("query_id")
 	flaskURL := GetFlaskURL() + "/training/progress"
 	if queryID != "" {
@@ -2266,7 +2276,10 @@ func TrainingProgressHandler(w http.ResponseWriter, r *http.Request) {
 		var flaskProgress map[string]interface{}
 		if json.Unmarshal(body, &flaskProgress) == nil {
 			status, _ := flaskProgress["status"].(string)
-			if status != "idle" || status == "completed" {
+			// If Flask says completed but Go says training, ignore Flask (stale result)
+			if status == "completed" && trainingProgress.Status == "training" && trainingProgress.Epoch == 0 {
+				// New training just started, Flask has old completed status - skip
+			} else if status != "idle" {
 				w.Write(body)
 				return
 			}
