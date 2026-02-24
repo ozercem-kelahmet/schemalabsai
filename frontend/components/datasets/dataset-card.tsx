@@ -138,9 +138,8 @@ export function DatasetCard({ dataset, onViewSchema, onEdit, onDelete }: Dataset
 
         {/* Tags */}
         <div className="mt-4 flex flex-wrap items-center gap-2">
-          {(dataset as any).sizeMB > 0 && (
-            <span className="rounded-md bg-red-500/10 px-2 py-1 text-xs font-medium text-red-500 whitespace-nowrap">{(dataset as any).sizeMB < 1 ? ((dataset as any).sizeMB).toFixed(2) : ((dataset as any).sizeMB).toFixed(1)} MB</span>
-          )}
+
+
           {verticalLabels[dataset.vertical] && (
             <span className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
               {verticalLabels[dataset.vertical]}
@@ -167,18 +166,23 @@ export function DatasetCard({ dataset, onViewSchema, onEdit, onDelete }: Dataset
         </div>
 
         {/* Stats */}
-        <div className="mt-4 flex items-center gap-4 border-t border-border pt-4">
-          <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
-            <Table className="h-4 w-4" />
-            <span className="font-mono text-foreground">{dataset.rows.toLocaleString()}</span>
-            <span className="text-muted-foreground">rows</span>
+        <div className="mt-4 flex items-center gap-2 border-t border-border pt-4 text-xs text-muted-foreground">
+          {(dataset as any).sizeMB > 0 && (
+            <div className="flex items-center gap-1">
+              <span className="font-mono text-foreground">{(dataset as any).sizeMB < 1 ? ((dataset as any).sizeMB).toFixed(2) : ((dataset as any).sizeMB).toFixed(1)}</span>
+              <span>MB</span>
+            </div>
+          )}
+          <div className="flex items-center gap-1">
+            <Table className="h-3.5 w-3.5 shrink-0" />
+            <span className="font-mono text-foreground">{dataset.rows >= 1000 ? (dataset.rows / 1000).toFixed(dataset.rows >= 10000 ? 0 : 1) + "K" : dataset.rows.toLocaleString()}</span>
+            <span>rows</span>
           </div>
-          <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
-            <Columns className="h-4 w-4" />
+          <div className="flex items-center gap-1">
+            <Columns className="h-3.5 w-3.5 shrink-0" />
             <span className="font-mono text-foreground">{dataset.columns}</span>
-            <span className="text-muted-foreground">cols</span>
+            <span>cols</span>
           </div>
-
         </div>
         {(dataset as any).rateLimit && (
           <div className="mt-2 flex items-center gap-1.5 rounded-md bg-amber-500/10 px-2 py-1">

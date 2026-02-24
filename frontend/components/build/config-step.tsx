@@ -90,6 +90,17 @@ export function ConfigStep({
       onScheduleChange?.(cron, desc)
     }, 0)
   }
+  // Auto-revert to manual if no connection datasets selected
+  useEffect(() => {
+    if (syncMode !== "manual") {
+      const hasConns = selectedDatasets.some(d => d.syncStatus === "synced")
+      if (!hasConns) {
+        onSyncModeChange("manual")
+        onScheduleChange?.("", "")
+      }
+    }
+  }, [selectedDatasets, syncMode])
+
   const [allConnections, setAllConnections] = useState<any[]>([])
   const [selectedConnIDs, setSelectedConnIDs] = useState<string[]>([])
 
@@ -469,13 +480,7 @@ export function ConfigStep({
                   type="button"
                   onClick={() => {
                     const hasConnections = selectedDatasets.some(d => d.syncStatus === "synced")
-                    if ((option as any).needsConnection && !hasConnections) return (
-                      <button key={option.mode} type="button" disabled className="flex flex-col items-center gap-1 rounded-lg border border-border p-3 flex-1 opacity-40 cursor-not-allowed">
-                        <option.icon className="h-4 w-4 text-muted-foreground" />
-                        <span className="text-[10px] font-medium text-muted-foreground">{option.label}</span>
-                        <span className="text-[8px] text-muted-foreground">Needs connection</span>
-                      </button>
-                    )
+                    if ((option as any).needsConnection && !hasConnections) return
                     if (syncMode === option.mode && option.mode !== "manual") {
                       onSyncModeChange("manual")
                       onScheduleChange?.("", "")
@@ -485,9 +490,11 @@ export function ConfigStep({
                     }
                   }}
                   className={`flex flex-col items-center justify-center gap-1 rounded-lg border px-3 py-3 transition-all ${
-                    syncMode === option.mode
-                      ? "border-[#0052CC] bg-[#0052CC]/10 text-[#2684FF]"
-                      : "border-border bg-muted/50 text-muted-foreground hover:border-border/80"
+                    (option as any).needsConnection && !selectedDatasets.some(d => d.syncStatus === "synced")
+                      ? "border-border bg-muted/50 text-muted-foreground opacity-40 cursor-not-allowed"
+                      : syncMode === option.mode
+                        ? "border-[#0052CC] bg-[#0052CC]/10 text-[#2684FF]"
+                        : "border-border bg-muted/50 text-muted-foreground hover:border-border/80"
                   }`}
                 >
                   <option.icon className="h-4 w-4" />

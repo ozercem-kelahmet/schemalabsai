@@ -45,7 +45,10 @@ export function DatasetSchemaModal({ dataset, open, onOpenChange }: DatasetSchem
             </span>
           )}
           {(dataset as any).sizeMB > 0 && (
-            <span className="rounded-md bg-red-500/10 px-2 py-1 text-xs font-medium text-red-500 whitespace-nowrap">{(dataset as any).sizeMB < 1 ? ((dataset as any).sizeMB).toFixed(2) : ((dataset as any).sizeMB).toFixed(1)} MB</span>
+            <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+              <span className="font-mono text-foreground">{(dataset as any).sizeMB < 1 ? ((dataset as any).sizeMB).toFixed(2) : ((dataset as any).sizeMB).toFixed(1)}</span>
+              <span className="text-muted-foreground">MB</span>
+            </div>
           )}
           <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
             <Table className="h-4 w-4" />
