@@ -137,10 +137,15 @@ export function DatasetCard({ dataset, onViewSchema, onEdit, onDelete }: Dataset
         </div>
 
         {/* Tags */}
-        <div className="mt-4 flex flex-wrap gap-2">
-          <span className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
-            {verticalLabels[dataset.vertical]}
-          </span>
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          {(dataset as any).sizeMB > 0 && (
+            <span className="rounded-md bg-red-500/10 px-2 py-1 text-xs font-medium text-red-500 whitespace-nowrap">{(dataset as any).sizeMB < 1 ? ((dataset as any).sizeMB).toFixed(2) : ((dataset as any).sizeMB).toFixed(1)} MB</span>
+          )}
+          {verticalLabels[dataset.vertical] && (
+            <span className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
+              {verticalLabels[dataset.vertical]}
+            </span>
+          )}
           <span className="rounded-md bg-muted px-2 py-1 text-xs capitalize text-muted-foreground">
             {dataset.complexity}
           </span>
@@ -173,6 +178,7 @@ export function DatasetCard({ dataset, onViewSchema, onEdit, onDelete }: Dataset
             <span className="font-mono text-foreground">{dataset.columns}</span>
             <span className="text-muted-foreground">cols</span>
           </div>
+
         </div>
         {(dataset as any).rateLimit && (
           <div className="mt-2 flex items-center gap-1.5 rounded-md bg-amber-500/10 px-2 py-1">

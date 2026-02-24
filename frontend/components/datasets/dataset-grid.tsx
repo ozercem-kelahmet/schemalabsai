@@ -87,7 +87,8 @@ export function DatasetGrid() {
     columns: cols.length,
     schema: cols.map((col: string) => ({ name: col.trim(), type: "string", nullable: true, description: "" })),
     sampleData: [],
-    syncStatus: "outdated",
+    syncStatus: "synced",
+    sizeMB: (f.size || 0) / (1024 * 1024),
   }
         })
         const connDatasets: Dataset[] = []
@@ -96,7 +97,20 @@ export function DatasetGrid() {
           const c = connections[ci]
           let totalRows = c.total_rows || 0
           let totalCols = c.total_cols || 0
-          let schemaDetails: any[] = (c.schema || []).map((s: string) => ({ name: s, type: "string" as const, description: "" }))
+          let schemaDetails: any[] = []
+          if (c.table_details && c.table_details.length > 0) {
+            schemaDetails = c.table_details.map((t: any) => {
+              const estMB = ((t.rows || 0) * Math.max(t.columns || 1, 10) * 20) / (1024 * 1024)
+              const mbStr = estMB > 0 ? (estMB < 1 ? estMB.toFixed(2) : estMB.toFixed(1)) + " MB" : ""
+              const parts = []
+              if (t.rows > 0) parts.push(t.rows.toLocaleString() + " rows")
+              if (t.columns > 0) parts.push(t.columns + " cols")
+              if (mbStr) parts.push(mbStr)
+              return { name: t.name, type: "string" as const, description: parts.join(", ") }
+            })
+          } else {
+            schemaDetails = (c.schema || []).map((s: string) => ({ name: s, type: "string" as const, description: "" }))
+          }
           connDatasets.push({
             id: c.id,
             name: c.name,
@@ -109,6 +123,7 @@ export function DatasetGrid() {
             columns: totalCols,
             schema: schemaDetails,
             sampleData: [],
+            sizeMB: (totalRows * Math.max(totalCols || 1, 10) * 20) / (1024 * 1024),
             syncStatus: "synced", rateLimit: c.rate_limit || "",
             rateLimitDaily: c.rate_limit_daily || 0,
             rateLimitRemaining: c.rate_limit_remaining || 0,

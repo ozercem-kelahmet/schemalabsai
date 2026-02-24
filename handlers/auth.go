@@ -1051,7 +1051,12 @@ func UpdateConnectionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(req.SelectedTables) > 0 {
-		tablesJSON, _ := json.Marshal(req.SelectedTables)
+		// Filter out empty strings from selected tables
+var cleanTables []string
+for _, t := range req.SelectedTables {
+if strings.TrimSpace(t) != "" { cleanTables = append(cleanTables, t) }
+}
+tablesJSON, _ := json.Marshal(cleanTables)
 		// Build cache from old cache filtered by selected tables
 		var oldCache struct {
 			Tables       []string `json:"tables"`
@@ -1257,7 +1262,7 @@ if conn.SubType == "rest_api" || conn.SubType == "graphql" {
 		w.Write([]byte(conn.CachedTables))
 		return
 	}
-if time.Since(*conn.CachedAt) < 5*time.Minute {
+if time.Since(*conn.CachedAt) < 24*time.Hour {
 w.Header().Set("Content-Type", "application/json")
 w.Write([]byte(conn.CachedTables))
 return
@@ -1266,6 +1271,8 @@ return
 
 	var tableInfos []TableInfo
 	var tables []string
+
+	log.Printf("🔍 Tables request: conn=%s type=%s sub_type=%s endpoint=%s host=%s", conn.ID, conn.Type, conn.SubType, conn.Endpoint, conn.Host)
 
 	switch conn.SubType {
 	case "postgresql", "supabase":
@@ -1353,23 +1360,61 @@ return
 		}
 		sfDsn, _ := sf.DSN(cfg)
 		sfDB, err := sql.Open("snowflake", sfDsn)
+log.Printf("🔍 Snowflake open: err=%v account=%s db=%s", err, conn.Host, conn.Database)
 		if err != nil {
 			http.Error(w, "Connection failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		defer sfDB.Close()
-		sfRows, err := sfDB.Query("SHOW TABLES")
+		// Try SHOW TABLES with schema
+sfQuery := "SHOW TABLES IN DATABASE " + conn.Database
+sfRows, err := sfDB.Query(sfQuery)
+log.Printf("🔍 Snowflake query: %s err=%v", sfQuery, err)
+if err != nil {
+sfQuery = "SHOW TABLES"
+sfRows, err = sfDB.Query(sfQuery)
+log.Printf("🔍 Snowflake fallback query: %s err=%v", sfQuery, err)
+}
+// Also try listing schemas
+schRows, schErr := sfDB.Query("SHOW SCHEMAS IN DATABASE " + conn.Database)
+if schErr == nil {
+for schRows.Next() {
+var schVals [11]string
+schRows.Scan(&schVals[0],&schVals[1],&schVals[2],&schVals[3],&schVals[4],&schVals[5],&schVals[6],&schVals[7],&schVals[8],&schVals[9],&schVals[10])
+log.Printf("🔍 Snowflake schema: %s", schVals[1])
+}
+schRows.Close()
+}
+log.Printf("🔍 Snowflake SHOW TABLES: err=%v", err)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		defer sfRows.Close()
 		for sfRows.Next() {
-			var createdOn, name, kind, dbName, schemaName string
-			sfRows.Scan(&createdOn, &name, &kind, &dbName, &schemaName)
+			sfCols, _ := sfRows.Columns()
+			vals := make([]interface{}, len(sfCols))
+			for i := range vals { vals[i] = new(sql.NullString) }
+			scanErr := sfRows.Scan(vals...)
+			if scanErr != nil { log.Printf("❌ Snowflake scan error: %v", scanErr); continue }
+			name := ""
+			var sfRowsFromMeta int64
+			for i, col := range sfCols {
+				v := vals[i].(*sql.NullString)
+				if !v.Valid { continue }
+				switch strings.ToLower(col) {
+				case "name": name = v.String
+				case "rows":
+					if rc, e := strconv.ParseInt(v.String, 10, 64); e == nil { sfRowsFromMeta = rc }
+				}
+			}
+			log.Printf("🔍 Snowflake table: %s rows=%d", name, sfRowsFromMeta)
+			if name == "" { continue }
 			tables = append(tables, name)
-			var rowCount int64
-			sfDB.QueryRow("SELECT COUNT(*) FROM \"" + name + "\"").Scan(&rowCount)
+			rowCount := sfRowsFromMeta
+			if rowCount == 0 {
+				sfDB.QueryRow("SELECT COUNT(*) FROM \"" + name + "\"").Scan(&rowCount)
+			}
 			var colCount int
 			sfDB.QueryRow("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ?", name).Scan(&colCount)
 			tableInfos = append(tableInfos, TableInfo{Name: name, Rows: rowCount, Columns: colCount})
@@ -1454,7 +1499,28 @@ return
 					for _, t := range tResult.Tables {
 						tableFull := schema + "." + t.Name
 						tables = append(tables, tableFull)
-						tableInfos = append(tableInfos, TableInfo{Name: tableFull, Rows: 0, Columns: len(t.Columns)})
+						// Try to get row count via SQL API
+dbRowCount := int64(0)
+wID := conn.Endpoint
+if strings.Contains(wID, "/") { pp := strings.Split(wID, "/"); wID = pp[len(pp)-1] }
+if wID != "" {
+countQ := fmt.Sprintf("SELECT COUNT(*) as cnt FROM %s.%s", catalog, tableFull)
+cBody, _ := json.Marshal(map[string]interface{}{"statement": countQ, "warehouse_id": wID, "wait_timeout": "30s"})
+cReq, _ := http.NewRequest("POST", workspaceURL+"/api/2.0/sql/statements", bytes.NewReader(cBody))
+cReq.Header.Set("Authorization", "Bearer "+conn.APIKey)
+cReq.Header.Set("Content-Type", "application/json")
+cResp, cErr := httpClient.Do(cReq)
+if cErr == nil && cResp.StatusCode == 200 {
+var cResult struct { Result struct { DataArray [][]string `json:"data_array"` } `json:"result"` }
+json.NewDecoder(cResp.Body).Decode(&cResult)
+cResp.Body.Close()
+if len(cResult.Result.DataArray) > 0 && len(cResult.Result.DataArray[0]) > 0 {
+if v, e := strconv.ParseInt(cResult.Result.DataArray[0][0], 10, 64); e == nil { dbRowCount = v }
+}
+} else if cErr == nil { cResp.Body.Close() }
+}
+tableInfos = append(tableInfos, TableInfo{Name: tableFull, Rows: dbRowCount, Columns: len(t.Columns)})
+log.Printf("📡 Databricks table refresh: %s = %d rows, %d cols", tableFull, dbRowCount, len(t.Columns))
 					}
 				} else if terr == nil {
 					tResp.Body.Close()
@@ -1469,6 +1535,7 @@ return
 			req.Header.Set("Api-Key", conn.APIKey)
 			req.Header.Set("Content-Type", "application/json")
 			resp, err := httpClient.Do(req)
+log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if resp != nil { return resp.StatusCode }; return 0 }())
 			if err == nil && resp.StatusCode == 200 {
 				defer resp.Body.Close()
 				var stats struct {
@@ -1505,6 +1572,7 @@ return
 				req.Header.Set("Authorization", "Bearer "+conn.APIKey)
 			}
 			resp, err := httpClient.Do(req)
+log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if resp != nil { return resp.StatusCode }; return 0 }())
 			if err == nil && resp.StatusCode == 200 {
 				defer resp.Body.Close()
 				var schema struct {
@@ -1528,11 +1596,20 @@ return
 	case "chroma":
 		if conn.Endpoint != "" {
 			httpClient := &http.Client{Timeout: 15 * time.Second}
-			req, _ := http.NewRequest("GET", strings.TrimRight(conn.Endpoint, "/")+"/api/v1/collections", nil)
+			// Build Chroma URL with tenant/database for Cloud (v2 API)
+chromaBase := strings.TrimRight(conn.Endpoint, "/")
+chromaTenant := "default_tenant"
+if conn.Database != "" { chromaTenant = conn.Database }
+chromaDB := "default_database"
+if conn.Bucket != "" { chromaDB = conn.Bucket }
+collectionsURL := chromaBase + "/api/v2/tenants/" + chromaTenant + "/databases/" + chromaDB + "/collections"
+log.Printf("🔍 Chroma collections URL: %s", collectionsURL)
+req, _ := http.NewRequest("GET", collectionsURL, nil)
 			if conn.APIKey != "" {
-				req.Header.Set("Authorization", "Bearer "+conn.APIKey)
+				req.Header.Set("X-Chroma-Token", conn.APIKey)
 			}
 			resp, err := httpClient.Do(req)
+log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if resp != nil { return resp.StatusCode }; return 0 }())
 			if err == nil && resp.StatusCode == 200 {
 				defer resp.Body.Close()
 				var collections []struct {
@@ -1543,9 +1620,9 @@ return
 				for _, coll := range collections {
 					tables = append(tables, coll.Name)
 					// Get count per collection
-					countReq, _ := http.NewRequest("GET", strings.TrimRight(conn.Endpoint, "/")+"/api/v1/collections/"+coll.ID+"/count", nil)
+					countReq, _ := http.NewRequest("GET", chromaBase+"/api/v2/tenants/"+chromaTenant+"/databases/"+chromaDB+"/collections/"+coll.ID+"/count", nil)
 					if conn.APIKey != "" {
-						countReq.Header.Set("Authorization", "Bearer "+conn.APIKey)
+						countReq.Header.Set("X-Chroma-Token", conn.APIKey)
 					}
 					countResp, cerr := httpClient.Do(countReq)
 					var count int64
@@ -1570,6 +1647,7 @@ return
 				req.Header.Set("x-api-key", conn.APIKey)
 			}
 			resp, err := httpClient.Do(req)
+log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if resp != nil { return resp.StatusCode }; return 0 }())
 			if err == nil && resp.StatusCode == 200 {
 				defer resp.Body.Close()
 				var tableNames []string
@@ -1592,6 +1670,7 @@ log.Printf("🔍 REST API ListTables: endpoint=%s", conn.Endpoint)
 				req.Header.Set("Authorization", "Bearer "+conn.APIKey)
 			}
 resp, err := httpClient.Do(req)
+log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if resp != nil { return resp.StatusCode }; return 0 }())
 if err == nil {
 rlLimit := resp.Header.Get("X-RateLimit-Limit")
 if rlLimit == "" { rlLimit = resp.Header.Get("X-Rate-Limit-Limit") }
@@ -1666,6 +1745,7 @@ log.Printf("📊 REST API default limit detected: %d rows", rowCount)
 				req.Header.Set("Authorization", "Bearer "+conn.APIKey)
 			}
 			resp, err := httpClient.Do(req)
+log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if resp != nil { return resp.StatusCode }; return 0 }())
 			if err == nil && resp.StatusCode == 200 {
 				defer resp.Body.Close()
 				respBytes, _ := io.ReadAll(resp.Body)
@@ -1835,6 +1915,7 @@ log.Printf("📊 REST API default limit detected: %d rows", rowCount)
 			req, _ := http.NewRequest("GET", "https://www.googleapis.com/drive/v3/files?q=mimeType%3D'application/vnd.google-apps.spreadsheet'+or+mimeType%3D'text/csv'&fields=files(id,name,mimeType)&pageSize=100", nil)
 			req.Header.Set("Authorization", "Bearer "+conn.APIKey)
 			resp, err := httpClient.Do(req)
+log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if resp != nil { return resp.StatusCode }; return 0 }())
 			if err == nil && resp.StatusCode == 200 {
 				defer resp.Body.Close()
 				var result struct {
@@ -1866,6 +1947,7 @@ log.Printf("📊 REST API default limit detected: %d rows", rowCount)
 			req, _ := http.NewRequest("GET", s3URL, nil)
 			// For public buckets or pre-signed - try without auth first
 			resp, err := httpClient.Do(req)
+log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if resp != nil { return resp.StatusCode }; return 0 }())
 			if err == nil && resp.StatusCode == 200 {
 				defer resp.Body.Close()
 				bodyBytes, _ := io.ReadAll(resp.Body)
@@ -1903,6 +1985,7 @@ log.Printf("📊 REST API default limit detected: %d rows", rowCount)
 			req, _ := http.NewRequest("GET", "https://storage.googleapis.com/storage/v1/b/"+conn.Bucket+"/o?maxResults=100", nil)
 			req.Header.Set("Authorization", "Bearer "+conn.APIKey)
 			resp, err := httpClient.Do(req)
+log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if resp != nil { return resp.StatusCode }; return 0 }())
 			if err == nil && resp.StatusCode == 200 {
 				defer resp.Body.Close()
 				var result struct {
@@ -1928,6 +2011,12 @@ log.Printf("📊 REST API default limit detected: %d rows", rowCount)
 	if conn.SelectedTables != "" {
 		var selectedList []string
 		json.Unmarshal([]byte(conn.SelectedTables), &selectedList)
+		// Remove empty strings
+		var cleanSelected []string
+		for _, s := range selectedList {
+			if strings.TrimSpace(s) != "" { cleanSelected = append(cleanSelected, s) }
+		}
+		selectedList = cleanSelected
 		if len(selectedList) > 0 {
 			selectedMap := make(map[string]bool)
 			for _, s := range selectedList {
@@ -1947,6 +2036,36 @@ log.Printf("📊 REST API default limit detected: %d rows", rowCount)
 			}
 			tables = filteredTables
 			tableInfos = filteredInfos
+		}
+	}
+	// Preserve old row counts if new query returned 0
+	if conn.CachedTables != "" && len(tableInfos) > 0 {
+		var prevCache struct {
+			TableDetails []struct {
+				Name    string `json:"name"`
+				Rows    int64  `json:"rows"`
+				Columns int    `json:"columns"`
+			} `json:"table_details"`
+		}
+		json.Unmarshal([]byte(conn.CachedTables), &prevCache)
+		prevMap := make(map[string]int64)
+		prevColMap := make(map[string]int)
+		for _, pt := range prevCache.TableDetails {
+			if pt.Rows > 0 { prevMap[pt.Name] = pt.Rows }
+			if pt.Columns > 0 { prevColMap[pt.Name] = pt.Columns }
+		}
+		for idx, ti := range tableInfos {
+			if ti.Rows == 0 {
+				if oldRows, ok := prevMap[ti.Name]; ok {
+					tableInfos[idx] = TableInfo{Name: ti.Name, Rows: oldRows, Columns: ti.Columns}
+					log.Printf("🔒 Preserved cached row count for %s: %d rows", ti.Name, oldRows)
+				}
+			}
+			if ti.Columns == 0 {
+				if oldCols, ok := prevColMap[ti.Name]; ok {
+					tableInfos[idx] = TableInfo{Name: tableInfos[idx].Name, Rows: tableInfos[idx].Rows, Columns: oldCols}
+				}
+			}
 		}
 	}
 	// Cache results to DB
@@ -2148,6 +2267,7 @@ func ExportTableHandler(w http.ResponseWriter, r *http.Request) {
 			req.Header.Set("Authorization", "Bearer "+conn.APIKey)
 			req.Header.Set("Content-Type", "application/json")
 			resp, err := httpClient.Do(req)
+log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if resp != nil { return resp.StatusCode }; return 0 }())
 			if err != nil {
 				http.Error(w, "Databricks query failed: "+err.Error(), http.StatusInternalServerError)
 				return
@@ -2205,6 +2325,7 @@ func ExportTableHandler(w http.ResponseWriter, r *http.Request) {
 			req, _ := http.NewRequest("GET", listURL, nil)
 			req.Header.Set("Api-Key", conn.APIKey)
 			resp, err := httpClient.Do(req)
+log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if resp != nil { return resp.StatusCode }; return 0 }())
 			if err != nil {
 				http.Error(w, "Pinecone query failed: "+err.Error(), http.StatusInternalServerError)
 				return
@@ -2255,6 +2376,7 @@ func ExportTableHandler(w http.ResponseWriter, r *http.Request) {
 				req.Header.Set("Authorization", "Bearer "+conn.APIKey)
 			}
 			resp, err := httpClient.Do(req)
+log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if resp != nil { return resp.StatusCode }; return 0 }())
 			if err != nil {
 				http.Error(w, "Weaviate query failed: "+err.Error(), http.StatusInternalServerError)
 				return
@@ -2281,6 +2403,7 @@ func ExportTableHandler(w http.ResponseWriter, r *http.Request) {
 				req.Header.Set("Authorization", "Bearer "+conn.APIKey)
 			}
 			resp, err := httpClient.Do(req)
+log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if resp != nil { return resp.StatusCode }; return 0 }())
 			if err != nil {
 				http.Error(w, "Chroma query failed: "+err.Error(), http.StatusInternalServerError)
 				return
@@ -2366,6 +2489,7 @@ func ExportTableHandler(w http.ResponseWriter, r *http.Request) {
 				req.Header.Set("x-api-key", conn.APIKey)
 			}
 			resp, err := httpClient.Do(req)
+log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if resp != nil { return resp.StatusCode }; return 0 }())
 			if err != nil {
 				http.Error(w, "LanceDB query failed: "+err.Error(), http.StatusInternalServerError)
 				return
@@ -2391,6 +2515,7 @@ func ExportTableHandler(w http.ResponseWriter, r *http.Request) {
 				req.Header.Set("Authorization", "Bearer "+conn.APIKey)
 			}
 			resp, err := httpClient.Do(req)
+log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if resp != nil { return resp.StatusCode }; return 0 }())
 			if err != nil {
 				http.Error(w, "API request failed: "+err.Error(), http.StatusInternalServerError)
 				return
@@ -2476,6 +2601,7 @@ func ExportTableHandler(w http.ResponseWriter, r *http.Request) {
 				req.Header.Set("Authorization", "Bearer "+conn.APIKey)
 			}
 			resp, err := httpClient.Do(req)
+log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if resp != nil { return resp.StatusCode }; return 0 }())
 			if err != nil {
 				http.Error(w, "GraphQL query failed: "+err.Error(), http.StatusInternalServerError)
 				return
@@ -2501,6 +2627,7 @@ func ExportTableHandler(w http.ResponseWriter, r *http.Request) {
 			req, _ := http.NewRequest("GET", exportURL, nil)
 			req.Header.Set("Authorization", "Bearer "+conn.APIKey)
 			resp, err := httpClient.Do(req)
+log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if resp != nil { return resp.StatusCode }; return 0 }())
 			if err != nil {
 				http.Error(w, "Google Drive export failed: "+err.Error(), http.StatusInternalServerError)
 				return
@@ -2529,6 +2656,7 @@ func ExportTableHandler(w http.ResponseWriter, r *http.Request) {
 			objURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", conn.Bucket, region, input.TableName)
 			req, _ := http.NewRequest("GET", objURL, nil)
 			resp, err := httpClient.Do(req)
+log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if resp != nil { return resp.StatusCode }; return 0 }())
 			if err != nil {
 				http.Error(w, "S3 download failed: "+err.Error(), http.StatusInternalServerError)
 				return
@@ -2554,6 +2682,7 @@ func ExportTableHandler(w http.ResponseWriter, r *http.Request) {
 			req, _ := http.NewRequest("GET", objURL, nil)
 			req.Header.Set("Authorization", "Bearer "+conn.APIKey)
 			resp, err := httpClient.Do(req)
+log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if resp != nil { return resp.StatusCode }; return 0 }())
 			if err != nil {
 				http.Error(w, "GCS download failed: "+err.Error(), http.StatusInternalServerError)
 				return

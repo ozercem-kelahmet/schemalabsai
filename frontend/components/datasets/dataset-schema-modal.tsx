@@ -39,12 +39,14 @@ export function DatasetSchemaModal({ dataset, open, onOpenChange }: DatasetSchem
 
         {/* Dataset Info */}
         <div className="flex flex-wrap items-center gap-3 border-b border-border pb-4">
-          <span className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
-            {verticalLabels[dataset.vertical]}
-          </span>
-          <span className="rounded-md bg-muted px-2 py-1 text-xs capitalize text-muted-foreground">
-            {dataset.complexity}
-          </span>
+          {verticalLabels[dataset.vertical] && (
+            <span className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
+              {verticalLabels[dataset.vertical]}
+            </span>
+          )}
+          {(dataset as any).sizeMB > 0 && (
+            <span className="rounded-md bg-red-500/10 px-2 py-1 text-xs font-medium text-red-500 whitespace-nowrap">{(dataset as any).sizeMB < 1 ? ((dataset as any).sizeMB).toFixed(2) : ((dataset as any).sizeMB).toFixed(1)} MB</span>
+          )}
           <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
             <Table className="h-4 w-4" />
             <span className="font-mono text-foreground">{dataset.rows.toLocaleString()}</span>
@@ -100,15 +102,22 @@ export function DatasetSchemaModal({ dataset, open, onOpenChange }: DatasetSchem
               {dataset.schema.map((col) => (
                 <div
                   key={col.name}
-                  className="flex items-center justify-between rounded-md bg-background px-3 py-2 border border-border"
+                  className="flex items-center justify-between gap-2 rounded-md bg-background px-3 py-2 border border-border"
                 >
-                  <div className="flex items-center gap-3">
-                    <span className="font-mono text-sm text-foreground">{col.name}</span>
-                    {col.description && <span className="text-xs text-muted-foreground">{col.description}</span>}
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <span className="font-mono text-sm text-foreground truncate">{col.name}</span>
+                    {col.description && <span className="text-xs text-muted-foreground whitespace-nowrap">{col.description.replace(/,\s*[\d.]+\s*MB$/, '')}</span>}
                   </div>
-                  <span className="rounded bg-[#0052CC]/20 px-2 py-0.5 text-xs font-medium text-[#2684FF]">
-                    {col.type}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {col.description?.includes('MB') && (
+                      <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-xs font-medium text-emerald-500 whitespace-nowrap shrink-0">
+                        {col.description.match(/([\d.]+\s*MB)/)?.[1] || ''}
+                      </span>
+                    )}
+                    <span className="rounded bg-[#0052CC]/20 px-2 py-0.5 text-xs font-medium text-[#2684FF]">
+                      {col.type}
+                    </span>
+                  </div>
                 </div>
               ))}
             </div>

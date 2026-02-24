@@ -1928,7 +1928,7 @@ queryIDField.Write([]byte(req.QueryID))
 	httpReq.Header.Set("Content-Type", writer.FormDataContentType())
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
-		http.Error(w, "Flask server error", http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json"); w.WriteHeader(http.StatusInternalServerError); json.NewEncoder(w).Encode(map[string]string{"status": "failed", "error": "ML server unavailable. Please try again."})
 		return
 	}
 	defer resp.Body.Close()
@@ -2196,7 +2196,7 @@ func AnalyzeFilesHandler(w http.ResponseWriter, r *http.Request) {
 		body,
 	)
 	if err != nil {
-		http.Error(w, "Flask server error", http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json"); w.WriteHeader(http.StatusInternalServerError); json.NewEncoder(w).Encode(map[string]string{"status": "failed", "error": "ML server unavailable. Please try again."})
 		return
 	}
 	defer resp.Body.Close()

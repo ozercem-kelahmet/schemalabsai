@@ -286,6 +286,38 @@ maxFileSize := int64(maxFileSizeMB) * 1024 * 1024
 						uniqueValues = strings.Join(uniqueList, ",")
 					}
 				}
+
+// Export additional sheets as separate CSV files
+if len(sheets) > 1 {
+baseName := strings.TrimSuffix(strings.TrimSuffix(finalFilename, ".xlsx"), ".xls")
+for si := 1; si < len(sheets); si++ {
+sheetRows, serr := xlFile.GetRows(sheets[si])
+if serr != nil || len(sheetRows) < 2 { continue }
+sheetFileID := uuid.New().String()[:8]
+sheetFilename := fmt.Sprintf("%s_%s.csv", baseName, sanitizeFilename(sheets[si]))
+sheetPath := fmt.Sprintf("./uploads/%s_%s", sheetFileID, sheetFilename)
+sheetFile, ferr := os.Create(sheetPath)
+if ferr != nil { continue }
+sheetWriter := csv.NewWriter(sheetFile)
+for _, row := range sheetRows {
+sheetWriter.Write(row)
+}
+sheetWriter.Flush()
+sheetInfo, _ := sheetFile.Stat()
+sheetSize := sheetInfo.Size()
+sheetFile.Close()
+sheetCols := ""
+sheetRowCount := len(sheetRows) - 1
+if len(sheetRows) > 0 { sheetCols = strings.Join(sheetRows[0], ",") }
+DB.Create(&UploadedFile{
+ID: sheetFileID, Filename: sheetFilename, Path: sheetPath,
+Size: sheetSize, UserID: userID, CreatedAt: time.Now(),
+Columns: sheetCols, RowCount: sheetRowCount,
+FolderID: func() *string { if folderID != "" { return &folderID }; return nil }(),
+})
+log.Printf("Excel sheet %d/%d exported: %s (%d rows)", si+1, len(sheets), sheetFilename, sheetRowCount)
+}
+}
 				xlFile.Close()
 			}
 		}

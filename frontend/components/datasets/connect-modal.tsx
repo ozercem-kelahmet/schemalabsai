@@ -56,6 +56,8 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
   const [endpoint, setEndpoint] = useState("")
   const [authToken, setAuthToken] = useState("")
   const [apiKey, setApiKey] = useState("")
+  const [chromaTenant, setChromaTenant] = useState("")
+  const [chromaDatabase, setChromaDatabase] = useState("")
   const [bucket, setBucket] = useState("")
   const [region, setRegion] = useState("")
   const [projectId, setProjectId] = useState("")
@@ -185,6 +187,8 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
         connection.config = { host: dbHost, port: dbPort, database: dbName, username: dbUser, password: dbPassword, ssl: selectedProvider === "supabase" }
       } else if (isMongoOrAdvanced) {
         connection.config = { endpoint, authToken, host: dbHost, port: dbPort, database: dbName, username: dbUser, password: dbPassword }
+      } else if (selectedProvider === "chroma") {
+        connection.config = { apiKey, endpoint, host: endpoint.replace("https://","").replace("http://",""), database: chromaTenant || "default_tenant", bucket: chromaDatabase || "default_database" }
       } else {
         connection.config = { apiKey, endpoint }
       }
@@ -236,7 +240,7 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
           const tables = tablesData.table_details || tablesData.tables?.map((t: string) => ({ name: t, rows: 0, columns: 0 })) || []
           if (tables.length > 0) {
             setAvailableTables(tables)
-            setSelectedTables(tables.map((t: any) => t.name || t))
+            setSelectedTables(tables.map((t: any) => t.name || t).filter((n: string) => n && n.trim() !== ""))
             setStep("tables")
             setIsLoadingTables(false)
             return
@@ -246,6 +250,10 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
         console.error("Table fetch failed:", e)
       }
       setIsLoadingTables(false)
+      // Connection already created in multi-table path, just refresh and close
+      onConnect?.({ type: "skip", name: "", config: {} } as any)
+      handleClose()
+      return
     }
     // Non-multi-table: create here too
     setIsLoadingTables(true)
@@ -286,7 +294,7 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: connectionId, selected_tables: selectedTables }),
+        body: JSON.stringify({ id: connectionId, selected_tables: selectedTables.filter(t => t && t.trim() !== "") }),
       })
       setSaving(false)
     }
@@ -375,7 +383,10 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
             <>
               <div className="space-y-1">
                 <Label className="text-foreground text-xs">Connection Method</Label>
-                <div className="text-xs text-muted-foreground bg-muted/50 rounded px-2 py-1.5">MongoDB Driver (python)</div>
+                <div className="flex items-center gap-2">
+                  <div className="text-xs text-muted-foreground bg-muted/50 rounded px-2 py-1.5 flex-1">MongoDB Driver (python)</div>
+                  <a href="https://www.mongodb.com/docs/atlas/troubleshoot-connection/" target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline shrink-0">Learn more</a>
+                </div>
               </div>
               <div className="space-y-1">
                 <Label className="text-foreground text-xs">Connection String <span className="text-red-500">*</span></Label>
@@ -424,7 +435,10 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
             <>
               <div className="space-y-1">
                 <Label className="text-foreground text-xs">Connection Method</Label>
-                <div className="text-xs text-muted-foreground bg-muted/50 rounded px-2 py-1.5">Snowflake Connector</div>
+                <div className="flex items-center gap-2">
+                  <div className="text-xs text-muted-foreground bg-muted/50 rounded px-2 py-1.5 flex-1">Snowflake Connector</div>
+                  <a href="https://docs.snowflake.com/en/user-guide/gen-conn-config" target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline shrink-0">Learn more</a>
+                </div>
               </div>
               <div className="space-y-1">
                 <Label className="text-foreground text-xs">Account Identifier <span className="text-red-500">*</span></Label>
@@ -496,10 +510,11 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
                 <div className="flex items-center gap-2">
                   <input type="checkbox" id="ssl-toggle" checked={true} readOnly className="rounded" />
                   <Label htmlFor="ssl-toggle" className="text-xs text-muted-foreground">SSL Required (Supabase)</Label>
+                  <a href="https://supabase.com/docs/guides/database/connecting-to-postgres" target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline ml-auto">Learn more</a>
                 </div>
               )}
               <Button onClick={() => handleConnect("database")}
-                disabled={!connectionName || !dbHost || !dbName}
+                disabled={!connectionName || !dbHost || !dbName || !dbUser || !dbPassword}
                 className="w-full bg-[#0052CC] hover:bg-[#003D99] text-white">
                 Connect {dbProvider.name}
               </Button>
@@ -507,17 +522,31 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
           ) : (
             <>
               <div className="space-y-1">
-                <Label className="text-foreground text-xs">{isVectorDB ? "API Key" : "API Key / Token"}</Label>
+                <Label className="text-foreground text-xs">{isVectorDB ? "API Key" : "API Key / Token"} <span className="text-red-500">*</span></Label>
                 <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)}
                   placeholder="Enter your API key" className="bg-card border-border text-foreground" />
               </div>
               <div className="space-y-1">
-                <Label className="text-foreground text-xs">Endpoint URL</Label>
+                <Label className="text-foreground text-xs">Endpoint URL <span className="text-red-500">*</span></Label>
                 <Input value={endpoint} onChange={(e) => setEndpoint(e.target.value)}
-                  placeholder={selectedProvider === "pinecone" ? "https://index-xxx.svc.xxx.pinecone.io" : "https://your-endpoint.com"} className="bg-card border-border text-foreground" />
+                  placeholder={selectedProvider === "pinecone" ? "https://index-xxx.svc.xxx.pinecone.io" : selectedProvider === "chroma" ? "https://api.trychroma.com" : "https://your-endpoint.com"} className="bg-card border-border text-foreground" />
               </div>
+              {selectedProvider === "chroma" && (
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-foreground text-xs">Tenant ID</Label>
+                    <Input value={chromaTenant} onChange={(e) => setChromaTenant(e.target.value)}
+                      placeholder="default_tenant" className="bg-card border-border text-foreground text-xs" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-foreground text-xs">Database</Label>
+                    <Input value={chromaDatabase} onChange={(e) => setChromaDatabase(e.target.value)}
+                      placeholder="default_database" className="bg-card border-border text-foreground text-xs" />
+                  </div>
+                </div>
+              )}
               <Button onClick={() => handleConnect("database")}
-                disabled={!connectionName || !apiKey}
+                disabled={!connectionName || !apiKey || !endpoint}
                 className="w-full bg-[#0052CC] hover:bg-[#003D99] text-white">
                 Connect {dbProvider.name}
               </Button>
