@@ -1237,7 +1237,7 @@ api.getMessages(sessionId)
                         </span>
                       )}
                       {model.datasets.length === 0 && (
-                        <span className="text-[10px] text-muted-foreground">No data sources</span>
+                        <span className="text-[10px] text-muted-foreground">{(model as any).connectionName || "No data sources"}</span>
                       )}
                     </div>
                   </button>

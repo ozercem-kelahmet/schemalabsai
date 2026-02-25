@@ -14,6 +14,7 @@ interface Model {
   epochs: number
   created_at: string
   source_name?: string
+  connection_names?: string
   source_file_names?: string
 }
 
@@ -99,8 +100,9 @@ export default function DashboardPage() {
   }
 
   const getSourceNames = (model: Model): string[] => {
-    if (model.source_file_names) return model.source_file_names.split(",").map(s => s.trim()).filter(Boolean)
-    if (model.source_name) return [model.source_name]
+    if (model.connection_names) return model.connection_names.split(",").map(s => s.trim()).filter(Boolean)
+    if (model.source_file_names) return model.source_file_names.split(",").map(s => s.trim()).filter(n => n && n !== "0 files merged")
+    if (model.source_name && model.source_name !== "0 files merged") return [model.source_name]
     return []
   }
 
