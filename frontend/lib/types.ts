@@ -58,6 +58,7 @@ export interface Dataset {
   rateLimitPaused?: boolean
   apiCallsCount?: number
   lastPollAt?: string | null
+  sizeMB?: number
 }
 
 export interface ColumnSchema {

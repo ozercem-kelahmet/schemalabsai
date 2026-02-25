@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"net/http"
 	"time"
 )
@@ -175,11 +176,15 @@ func CheckQuota(userID string, creditType string) (bool, string) {
 			return false, "Insufficient credits"
 		}
 	case "train":
+		var errors []string
 		if quota.ModelsUsed >= quota.ModelsLimit {
-			return false, fmt.Sprintf("Model limit reached (%d/%d)", quota.ModelsUsed, quota.ModelsLimit)
+			errors = append(errors, fmt.Sprintf("Model limit reached (%d/%d)", quota.ModelsUsed, quota.ModelsLimit))
 		}
 		if remaining < CreditPerTrain {
-			return false, "Insufficient credits for training"
+			errors = append(errors, fmt.Sprintf("Insufficient credits. Remaining: %.2f, Required: %.2f", remaining, CreditPerTrain))
+		}
+		if len(errors) > 0 {
+			return false, strings.Join(errors, " | ")
 		}
 	}
 
