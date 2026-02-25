@@ -3,6 +3,7 @@ package handlers
 import (
 "math"
 	"os"
+"path/filepath"
 	"strconv"
 	"encoding/json"
 	"fmt"
@@ -208,7 +209,17 @@ func CheckStorage(userID string, additionalMB float64) (bool, string) {
 	if err != nil { return true, "" }
 	var totalSize int64
 	DB.Model(&UploadedFile{}).Where("user_id = ?", userID).Select("COALESCE(SUM(size), 0)").Scan(&totalSize)
-	usedMB := float64(totalSize) / (1024 * 1024)
+usedMB := float64(totalSize) / (1024 * 1024)
+var connFiles []Connection
+DB.Where("user_id = ?", userID).Find(&connFiles)
+for _, c := range connFiles {
+if len(c.ID) >= 16 {
+matches, _ := filepath.Glob(fmt.Sprintf("./uploads/conn_%s_*", c.ID[:16]))
+for _, m := range matches {
+if info, err := os.Stat(m); err == nil { usedMB += float64(info.Size()) / (1024 * 1024) }
+}
+}
+}
 	if usedMB + additionalMB > quota.StorageLimitMB {
 		return false, fmt.Sprintf("Storage limit exceeded. Used: %.0fMB / %.0fMB", usedMB, quota.StorageLimitMB)
 	}
@@ -247,7 +258,19 @@ quota.CreditsUsed = totalCreditsFromLogs
 
 	var totalSize int64
 	DB.Model(&UploadedFile{}).Where("user_id = ?", userID).Select("COALESCE(SUM(size), 0)").Scan(&totalSize)
-	quota.StorageUsedMB = float64(totalSize) / (1024 * 1024)
+// Also count connection CSV files on disk
+var connFiles []Connection
+DB.Where("user_id = ?", userID).Find(&connFiles)
+var connSize int64
+for _, c := range connFiles {
+if len(c.ID) >= 16 {
+matches, _ := filepath.Glob(fmt.Sprintf("./uploads/conn_%s_*", c.ID[:16]))
+for _, m := range matches {
+if info, err := os.Stat(m); err == nil { connSize += info.Size() }
+}
+}
+}
+quota.StorageUsedMB = float64(totalSize + connSize) / (1024 * 1024)
 
 	// Count today's queries
 	today := time.Now().Truncate(24 * time.Hour)
