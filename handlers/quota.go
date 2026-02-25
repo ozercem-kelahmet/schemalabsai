@@ -181,7 +181,7 @@ func CheckQuota(userID string, creditType string) (bool, string) {
 			errors = append(errors, fmt.Sprintf("Model limit reached (%d/%d)", quota.ModelsUsed, quota.ModelsLimit))
 		}
 		if remaining < CreditPerTrain {
-			errors = append(errors, fmt.Sprintf("Insufficient credits. Remaining: %.2f, Required: %.2f", remaining, CreditPerTrain))
+			dr := remaining; if dr < 0 { dr = 0 }; errors = append(errors, fmt.Sprintf("Insufficient credits. Remaining: %.2f, Required: %.2f", dr, CreditPerTrain))
 		}
 		if len(errors) > 0 {
 			return false, strings.Join(errors, " | ")
@@ -197,7 +197,7 @@ func CheckCredits(userID string, cost float64) (bool, string) {
 	if err != nil { return true, "" }
 	remaining := quota.CreditsTotal - quota.CreditsUsed
 	if remaining < cost {
-		return false, fmt.Sprintf("Insufficient credits. Remaining: %.2f, Required: %.2f", remaining, cost)
+		dr := remaining; if dr < 0 { dr = 0 }; return false, fmt.Sprintf("Insufficient credits. Remaining: %.2f, Required: %.2f", dr, cost)
 	}
 	return true, ""
 }
