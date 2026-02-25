@@ -910,6 +910,12 @@ func exportTableToCSV(sqlDB *sql.DB, table string, conn Connection, userID strin
 	if rowCount == 0 { os.Remove(filepath); return "" }
 
 	fileInfo, _ := os.Stat(filepath)
+fileSizeMB := float64(fileInfo.Size()) / (1024 * 1024)
+if ok, _ := CheckStorage(userID, fileSizeMB); !ok {
+os.Remove(filepath)
+log.Printf("⚠️ Storage limit exceeded, skipping %s (%.1f MB)", filepath, fileSizeMB)
+return ""
+}
 	DB.Create(&UploadedFile{
 		ID: fileID, Filename: filename, Path: filepath,
 		Size: fileInfo.Size(), UserID: userID, CreatedAt: time.Now(),
@@ -956,6 +962,12 @@ func exportMongoToCSV(ctx context.Context, db *mongo.Database, collection string
 	writer.Flush()
 
 	fileInfo, _ := os.Stat(filepath)
+fileSizeMB := float64(fileInfo.Size()) / (1024 * 1024)
+if ok, _ := CheckStorage(userID, fileSizeMB); !ok {
+os.Remove(filepath)
+log.Printf("⚠️ Storage limit exceeded, skipping %s (%.1f MB)", filepath, fileSizeMB)
+return ""
+}
 	DB.Create(&UploadedFile{
 		ID: fileID, Filename: filename, Path: filepath,
 		Size: fileInfo.Size(), UserID: userID, CreatedAt: time.Now(),
@@ -1143,6 +1155,12 @@ func fetchAPIToCSV(conn Connection, userID string) string {
 	writer.Flush()
 
 	fileInfo, _ := os.Stat(filepath)
+fileSizeMB := float64(fileInfo.Size()) / (1024 * 1024)
+if ok, _ := CheckStorage(userID, fileSizeMB); !ok {
+os.Remove(filepath)
+log.Printf("⚠️ Storage limit exceeded, skipping %s (%.1f MB)", filepath, fileSizeMB)
+return ""
+}
 	DB.Create(&UploadedFile{
 		ID: fileID, Filename: filename, Path: filepath,
 		Size: fileInfo.Size(), UserID: userID, CreatedAt: time.Now(),
@@ -1171,6 +1189,12 @@ func fetchGraphQLToCSV(conn Connection, userID string) string {
 	os.WriteFile(filepath, respBody, 0644)
 
 	fileInfo, _ := os.Stat(filepath)
+fileSizeMB := float64(fileInfo.Size()) / (1024 * 1024)
+if ok, _ := CheckStorage(userID, fileSizeMB); !ok {
+os.Remove(filepath)
+log.Printf("⚠️ Storage limit exceeded, skipping %s (%.1f MB)", filepath, fileSizeMB)
+return ""
+}
 	DB.Create(&UploadedFile{
 		ID: fileID, Filename: filename, Path: filepath,
 		Size: fileInfo.Size(), UserID: userID, CreatedAt: time.Now(),
@@ -1221,6 +1245,12 @@ func fetchVectorDBToCSV(conn Connection, userID string) string {
 	os.WriteFile(filepath, body, 0644)
 
 	fileInfo, _ := os.Stat(filepath)
+fileSizeMB := float64(fileInfo.Size()) / (1024 * 1024)
+if ok, _ := CheckStorage(userID, fileSizeMB); !ok {
+os.Remove(filepath)
+log.Printf("⚠️ Storage limit exceeded, skipping %s (%.1f MB)", filepath, fileSizeMB)
+return ""
+}
 	DB.Create(&UploadedFile{
 		ID: fileID, Filename: filename, Path: filepath,
 		Size: fileInfo.Size(), UserID: userID, CreatedAt: time.Now(),

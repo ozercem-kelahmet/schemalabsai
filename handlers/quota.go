@@ -1,6 +1,7 @@
 package handlers
 
 import (
+"math"
 	"os"
 	"strconv"
 	"encoding/json"
@@ -228,6 +229,12 @@ func QuotaHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+// Sync credits from usage_logs
+var totalCreditsFromLogs float64
+DB.Model(&UsageLog{}).Where("user_id = ?", userID).Select("COALESCE(SUM(credits_used), 0)").Scan(&totalCreditsFromLogs)
+if totalCreditsFromLogs > quota.CreditsUsed {
+quota.CreditsUsed = totalCreditsFromLogs
+}
 	// Count actual models and storage from DB
 	var modelCount int64
 	DB.Model(&FineTunedModel{}).Where("user_id = ?", userID).Count(&modelCount)
@@ -253,14 +260,16 @@ func QuotaHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Count connected datasets
 	var datasetCount int64
+var connCount int64
+DB.Model(&Connection{}).Where("user_id = ?", userID).Count(&connCount)
 	DB.Model(&UploadedFile{}).Where("user_id = ? AND (is_merged = ? OR is_merged IS NULL)", userID, false).Count(&datasetCount)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"plan":             quota.Plan,
 		"credits_total":    quota.CreditsTotal,
-		"credits_used":     quota.CreditsUsed,
-		"credits_remaining": quota.CreditsTotal - quota.CreditsUsed,
+		"credits_used":     math.Min(quota.CreditsUsed, quota.CreditsTotal),
+		"credits_remaining": math.Max(0, quota.CreditsTotal - quota.CreditsUsed),
 		"models_limit":     quota.ModelsLimit,
 		"models_used":      quota.ModelsUsed,
 		"queries_daily":    quota.QueriesDaily,
@@ -269,6 +278,6 @@ func QuotaHandler(w http.ResponseWriter, r *http.Request) {
 		"storage_used_mb":  quota.StorageUsedMB,
 		"reset_date":       quota.ResetDate,
 		"days_until_reset": daysUntilReset,
-		"datasets_connected": datasetCount,
+		"datasets_connected": datasetCount + connCount,
 	})
 }

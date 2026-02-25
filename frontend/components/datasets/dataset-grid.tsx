@@ -101,7 +101,7 @@ export function DatasetGrid() {
           if (c.table_details && c.table_details.length > 0) {
             schemaDetails = c.table_details.map((t: any) => {
               const estMB = ((t.rows || 0) * Math.max(t.columns || 1, 10) * 20) / (1024 * 1024)
-              const mbStr = estMB > 0 ? (estMB < 1 ? estMB.toFixed(2) : estMB.toFixed(1)) + " MB" : ""
+              const mbStr = estMB >= 0.005 ? (estMB < 1 ? estMB.toFixed(2) : estMB.toFixed(1)) + " MB" : ""
               const parts = []
               if (t.rows > 0) parts.push(t.rows.toLocaleString() + " rows")
               if (t.columns > 0) parts.push(t.columns + " cols")
@@ -123,7 +123,13 @@ export function DatasetGrid() {
             columns: totalCols,
             schema: schemaDetails,
             sampleData: [],
-            sizeMB: (totalRows * Math.max(totalCols || 1, 10) * 20) / (1024 * 1024),
+            sizeMB: c.table_details && c.table_details.length > 0
+              ? c.table_details.reduce((sum: number, t: any) => {
+                  const raw = ((t.rows || 0) * Math.max(t.columns || 1, 10) * 20) / (1024 * 1024)
+                  const rounded = raw < 1 ? parseFloat(raw.toFixed(2)) : parseFloat(raw.toFixed(1))
+                  return sum + rounded
+                }, 0)
+              : (totalRows * Math.max(totalCols || 1, 10) * 20) / (1024 * 1024),
             syncStatus: "synced", rateLimit: c.rate_limit || "",
             rateLimitDaily: c.rate_limit_daily || 0,
             rateLimitRemaining: c.rate_limit_remaining || 0,
@@ -332,11 +338,11 @@ export function DatasetGrid() {
         setPythonScript("")
         loadData()
       } else {
-        toast.error("Generation failed")
+        toast.error(response.error || "Generation failed")
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Generate error:", error)
-      toast.error("Generation failed")
+      toast.error(error?.message || error?.error || "Generation failed")
     } finally {
       setIsGenerating(false)
     }

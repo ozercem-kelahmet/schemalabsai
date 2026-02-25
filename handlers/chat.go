@@ -501,7 +501,7 @@ FineTunedModelID: ftModelID,
 		EventType:    "chat",
 		EventName:    eventName,
 		ResourceID:   queryID,
-		ResourceName: model,
+		ResourceName: ftModelID,
 		CreditsUsed:  creditCost,
 		TokensUsed:   tokens,
 		ModelUsed:    model,
@@ -659,21 +659,22 @@ func ChatHandler(w http.ResponseWriter, r *http.Request) {
 	// Get user ID and API key settings from auth middleware
 	userID := r.Header.Get("X-User-ID")
 
-	// Check quota before processing
-	if userID != "" {
+// Check quota before processing
+if userID != "" {
+var chatErrors []string
 if ok, reason := CheckQuota(userID, "query"); !ok {
+chatErrors = append(chatErrors, reason)
+}
+if ok, reason := CheckCredits(userID, 0.01); !ok {
+chatErrors = append(chatErrors, reason)
+}
+if len(chatErrors) > 0 {
 w.Header().Set("Content-Type", "application/json")
 w.WriteHeader(http.StatusForbidden)
-json.NewEncoder(w).Encode(map[string]string{"error": reason, "status": "quota_exceeded"})
+json.NewEncoder(w).Encode(map[string]string{"error": strings.Join(chatErrors, " | "), "status": "quota_exceeded"})
 return
 }
-		if ok, reason := CheckCredits(userID, 0.01); !ok {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusForbidden)
-			json.NewEncoder(w).Encode(map[string]string{"error": reason, "status": "quota_exceeded"})
-			return
-		}
-	}
+}
 	apiKeyLLMModel := r.Header.Get("X-LLM-Model")
 	apiKeyFineTunedModel := r.Header.Get("X-FineTuned-Model")
 

@@ -64,17 +64,18 @@ func GenerateDatasetHandler(w http.ResponseWriter, r *http.Request) {
 	creditCost := math.Round((0.50+float64(req.Rows)/1000.0*0.10+float64(req.Columns)/10.0*0.05)*100) / 100
 	if creditCost < 0.50 { creditCost = 0.50 }
 	if creditCost > 10.0 { creditCost = 10.0 }
-	if ok, reason := CheckCredits(userID, creditCost); !ok {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusForbidden)
-		json.NewEncoder(w).Encode(map[string]string{"error": reason})
-		return
-	}
+var genErrors []string
+if ok, reason := CheckCredits(userID, creditCost); !ok {
+genErrors = append(genErrors, reason)
+}
 estimatedMB := float64(req.Rows) * float64(req.Columns) * 100 / (1024 * 1024)
 if ok, reason := CheckStorage(userID, estimatedMB); !ok {
+genErrors = append(genErrors, reason)
+}
+if len(genErrors) > 0 {
 w.Header().Set("Content-Type", "application/json")
 w.WriteHeader(http.StatusForbidden)
-json.NewEncoder(w).Encode(map[string]string{"error": reason})
+json.NewEncoder(w).Encode(map[string]string{"error": strings.Join(genErrors, " | ")})
 return
 }
 

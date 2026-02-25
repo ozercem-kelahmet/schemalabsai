@@ -1,6 +1,7 @@
 package handlers
 
 import (
+"strings"
 	"bytes"
 	"encoding/json"
 	"io"
@@ -32,19 +33,21 @@ func AnalyzeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check quota
-	if ok, reason := CheckQuota(userID, "query"); !ok {
-w.Header().Set("Content-Type", "application/json")
-w.WriteHeader(http.StatusForbidden)
-json.NewEncoder(w).Encode(map[string]string{"error": reason})
-return
+
+// Check quota
+var analyzeErrors []string
+if ok, reason := CheckQuota(userID, "query"); !ok {
+analyzeErrors = append(analyzeErrors, reason)
 }
 if ok, reason := CheckCredits(userID, 0.10); !ok {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusForbidden)
-		json.NewEncoder(w).Encode(map[string]string{"error": reason})
-		return
-	}
+analyzeErrors = append(analyzeErrors, reason)
+}
+if len(analyzeErrors) > 0 {
+w.Header().Set("Content-Type", "application/json")
+w.WriteHeader(http.StatusForbidden)
+json.NewEncoder(w).Encode(map[string]string{"error": strings.Join(analyzeErrors, " | ")})
+return
+}
 
 	query := r.FormValue("query")
 	if query == "" {

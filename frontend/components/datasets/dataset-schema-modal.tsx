@@ -112,7 +112,7 @@ export function DatasetSchemaModal({ dataset, open, onOpenChange }: DatasetSchem
                     {col.description && <span className="text-xs text-muted-foreground whitespace-nowrap">{col.description.replace(/,\s*[\d.]+\s*MB$/, '')}</span>}
                   </div>
                   <div className="flex items-center gap-2">
-                    {col.description?.includes('MB') && (
+                    {col.description?.match(/([\d.]+)\s*MB/) && parseFloat(col.description.match(/([\d.]+)\s*MB/)?.[1] || "0") >= 0.01 && (
                       <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-xs font-medium text-emerald-500 whitespace-nowrap shrink-0">
                         {col.description.match(/([\d.]+\s*MB)/)?.[1] || ''}
                       </span>

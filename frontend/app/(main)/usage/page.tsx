@@ -502,7 +502,7 @@ export default function UsagePage() {
               <div className="h-2 rounded-full bg-muted overflow-hidden">
                 <div className="h-full bg-[#0052CC] rounded-full" style={{ width: quota?.plan === "alpha_unlimited" ? "5%" : `${Math.min(((quota?.credits_used || 0) / (quota?.credits_total || 5)) * 100, 100)}%` }} />
               </div>
-              <p className="text-xs text-muted-foreground mt-1">{quota?.plan === "alpha_unlimited" ? "Unlimited" : `${Math.round(((quota?.credits_used || 0) / (quota?.credits_total || 5)) * 100)}% used`} · Resets in {quota?.days_until_reset || 0} days · {totalTokens >= 1000000 ? (totalTokens/1000000).toFixed(1)+"M" : totalTokens >= 1000 ? (totalTokens/1000).toFixed(1)+"K" : totalTokens} tokens</p>
+              <p className="text-xs text-muted-foreground mt-1">{quota?.plan === "alpha_unlimited" ? "Unlimited" : `${Math.min(100, Math.round(((quota?.credits_used || 0) / (quota?.credits_total || 5)) * 100))}% used`} · Resets in {quota?.days_until_reset || 0} days · {totalTokens >= 1000000 ? (totalTokens/1000000).toFixed(1)+"M" : totalTokens >= 1000 ? (totalTokens/1000).toFixed(1)+"K" : totalTokens} tokens</p>
             </div>
           </CardContent>
         </Card>
@@ -526,7 +526,7 @@ export default function UsagePage() {
               <div className="h-2 rounded-full bg-muted overflow-hidden">
                 <div className="h-full bg-green-500 rounded-full" style={{ width: quota?.plan === "alpha_unlimited" ? "5%" : `${Math.min(((quota?.models_used || 0) / (quota?.models_limit || 5)) * 100, 100)}%` }} />
               </div>
-              <p className="text-xs text-muted-foreground mt-1">{quota?.plan === "alpha_unlimited" ? "Unlimited" : `${(quota?.models_limit || 5) - (quota?.models_used || 0)} remaining`}</p>
+              <p className="text-xs text-muted-foreground mt-1">{quota?.plan === "alpha_unlimited" ? "Unlimited" : `${Math.max(0, (quota?.models_limit || 5) - (quota?.models_used || 0))} remaining`}</p>
             </div>
           </CardContent>
         </Card>
@@ -588,7 +588,7 @@ export default function UsagePage() {
               <div className="h-2 rounded-full bg-muted overflow-hidden">
                 <div className="h-full bg-orange-500 rounded-full" style={{ width: quota?.plan === "alpha_unlimited" ? "5%" : `${Math.min(((quota?.queries_used || 0) / (quota?.queries_daily || 10)) * 100, 100)}%` }} />
               </div>
-              <p className="text-xs text-muted-foreground mt-1">{quota?.plan === "alpha_unlimited" ? "Unlimited" : `${(quota?.queries_daily || 10) - (quota?.queries_used || 0)} remaining today`}</p>
+              <p className="text-xs text-muted-foreground mt-1">{quota?.plan === "alpha_unlimited" ? "Unlimited" : `${Math.max(0, (quota?.queries_daily || 10) - (quota?.queries_used || 0))} remaining today`}</p>
             </div>
           </CardContent>
         </Card>

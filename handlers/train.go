@@ -633,7 +633,7 @@ if mongoSelMap != nil && !mongoSelMap[collName] { continue }
 		if conn.Endpoint != "" {
 			httpClient := &http.Client{Timeout: 30 * time.Second}
 			req, _ := http.NewRequest("GET", strings.TrimRight(conn.Endpoint, "/")+"/api/v1/collections", nil)
-			if conn.APIKey != "" { req.Header.Set("Authorization", "Bearer "+conn.APIKey) }
+			if conn.APIKey != "" { req.Header.Set("X-Chroma-Token", conn.APIKey) }
 			resp, err := httpClient.Do(req)
 			if err != nil { return nil, fmt.Errorf("chroma failed: %v", err) }
 			defer resp.Body.Close()
@@ -643,7 +643,7 @@ if mongoSelMap != nil && !mongoSelMap[collName] { continue }
 				getBody, _ := json.Marshal(map[string]interface{}{"limit": 10000, "include": []string{"documents", "metadatas"}})
 				getReq, _ := http.NewRequest("POST", strings.TrimRight(conn.Endpoint, "/")+"/api/v1/collections/"+coll.ID+"/get", bytes.NewReader(getBody))
 				getReq.Header.Set("Content-Type", "application/json")
-				if conn.APIKey != "" { getReq.Header.Set("Authorization", "Bearer "+conn.APIKey) }
+				if conn.APIKey != "" { getReq.Header.Set("X-Chroma-Token", conn.APIKey) }
 				getResp, gerr := httpClient.Do(getReq)
 				if gerr != nil { continue }
 				var getResult struct {
@@ -682,7 +682,7 @@ if mongoSelMap != nil && !mongoSelMap[collName] { continue }
 			httpClient := &http.Client{Timeout: 30 * time.Second}
 			// List tables
 			req, _ := http.NewRequest("GET", strings.TrimRight(conn.Endpoint, "/")+"/v1/table", nil)
-			if conn.APIKey != "" { req.Header.Set("Authorization", "Bearer "+conn.APIKey) }
+			if conn.APIKey != "" { req.Header.Set("X-Chroma-Token", conn.APIKey) }
 			resp, err := httpClient.Do(req)
 			if err != nil { return nil, fmt.Errorf("lancedb failed: %v", err) }
 			defer resp.Body.Close()
@@ -1196,12 +1196,18 @@ func MultiTrainHandler(w http.ResponseWriter, r *http.Request) {
 
 // Check quota before training
 log.Printf("🔍 QUOTA CHECK: userID=%s", userID)
-allowed, reason := CheckQuota(userID, "train")
-log.Printf("🔍 QUOTA RESULT: allowed=%v, reason=%s", allowed, reason)
-if !allowed {
+var trainErrors2 []string
+if allowed, reason := CheckQuota(userID, "train"); !allowed {
+trainErrors2 = append(trainErrors2, reason)
+}
+if ok, cr := CheckCredits(userID, 0.50); !ok {
+trainErrors2 = append(trainErrors2, cr)
+}
+if len(trainErrors2) > 0 {
+log.Printf("🔍 QUOTA ERRORS: %v", trainErrors2)
 w.Header().Set("Content-Type", "application/json")
 w.WriteHeader(http.StatusForbidden)
-json.NewEncoder(w).Encode(map[string]string{"error": reason})
+json.NewEncoder(w).Encode(map[string]string{"error": strings.Join(trainErrors2, " | ")})
 return
 }
 
@@ -1390,10 +1396,20 @@ if req.ConnectionIDs != "" {
 				continue
 			}
 			var sfTableNames []string
+			sfCols, _ := sfRows.Columns()
 			for sfRows.Next() {
-				var createdOn, name, kind, dbName, schemaName string
-				sfRows.Scan(&createdOn, &name, &kind, &dbName, &schemaName)
-				sfTableNames = append(sfTableNames, name)
+				vals := make([]interface{}, len(sfCols))
+				for i := range vals { vals[i] = new(sql.NullString) }
+				if err := sfRows.Scan(vals...); err != nil { continue }
+				name := ""
+				for i, col := range sfCols {
+					if strings.ToLower(col) == "name" {
+						v := vals[i].(*sql.NullString)
+						if v.Valid { name = v.String }
+						break
+					}
+				}
+				if name != "" { sfTableNames = append(sfTableNames, name) }
 			}
 			sfRows.Close()
 			for _, tableName := range sfTableNames {
@@ -1596,7 +1612,23 @@ if req.ConnectionIDs != "" {
 			}
 			_ = pineSelectedMap
 			httpClient := &http.Client{Timeout: 30 * time.Second}
-			req, _ := http.NewRequest("POST", conn.Endpoint+"/query", strings.NewReader(`{"topK":10000,"includeMetadata":true,"includeValues":true,"vector":[0]}`))
+			// Get index dimension first
+			descReq, _ := http.NewRequest("GET", conn.Endpoint+"/describe_index_stats", nil)
+			descReq.Header.Set("Api-Key", conn.APIKey)
+			descResp, descErr := httpClient.Do(descReq)
+			dim := 1536
+			if descErr == nil {
+				descBody, _ := io.ReadAll(descResp.Body)
+				descResp.Body.Close()
+				var descResult struct { Dimension int `json:"dimension"` }
+				json.Unmarshal(descBody, &descResult)
+				if descResult.Dimension > 0 { dim = descResult.Dimension }
+				log.Printf("Pinecone dimension: %d", dim)
+			}
+			zeroVec := make([]string, dim)
+			for i := range zeroVec { zeroVec[i] = "0" }
+			queryBody := fmt.Sprintf(`{"topK":10000,"includeMetadata":true,"vector":[%s]}`, strings.Join(zeroVec, ","))
+			req, _ := http.NewRequest("POST", conn.Endpoint+"/query", strings.NewReader(queryBody))
 			req.Header.Set("Api-Key", conn.APIKey)
 			req.Header.Set("Content-Type", "application/json")
 			resp, err := httpClient.Do(req)
@@ -1641,8 +1673,12 @@ if req.ConnectionIDs != "" {
 		if conn.SubType == "chroma" && conn.Endpoint != "" {
 			httpClient := &http.Client{Timeout: 30 * time.Second}
 			// List collections
-			listReq, _ := http.NewRequest("GET", strings.TrimRight(conn.Endpoint, "/")+"/api/v1/collections", nil)
-			if conn.APIKey != "" { listReq.Header.Set("Authorization", "Bearer "+conn.APIKey) }
+			chromaTenant := conn.Database
+			chromaDatabase := conn.Bucket
+			if chromaTenant == "" { chromaTenant = "default_tenant" }
+			if chromaDatabase == "" { chromaDatabase = "default_database" }
+			listReq, _ := http.NewRequest("GET", strings.TrimRight(conn.Endpoint, "/")+"/api/v2/tenants/"+chromaTenant+"/databases/"+chromaDatabase+"/collections", nil)
+			if conn.APIKey != "" { listReq.Header.Set("X-Chroma-Token", conn.APIKey) }
 			listResp, err := httpClient.Do(listReq)
 			if err != nil {
 				log.Printf("Chroma list failed for %s: %v", connID, err)
@@ -1652,9 +1688,9 @@ if req.ConnectionIDs != "" {
 			json.NewDecoder(listResp.Body).Decode(&collections)
 			listResp.Body.Close()
 			for _, coll := range collections {
-				getReq, _ := http.NewRequest("POST", strings.TrimRight(conn.Endpoint, "/")+"/api/v1/collections/"+coll.ID+"/get", strings.NewReader(`{"include":["metadatas","documents"]}`))
+				getReq, _ := http.NewRequest("POST", strings.TrimRight(conn.Endpoint, "/")+"/api/v2/tenants/"+chromaTenant+"/databases/"+chromaDatabase+"/collections/"+coll.ID+"/get", strings.NewReader(`{"include":["metadatas","documents"]}`))
 				getReq.Header.Set("Content-Type", "application/json")
-				if conn.APIKey != "" { getReq.Header.Set("Authorization", "Bearer "+conn.APIKey) }
+				if conn.APIKey != "" { getReq.Header.Set("X-Chroma-Token", conn.APIKey) }
 				getResp, gerr := httpClient.Do(getReq)
 				if gerr != nil { continue }
 				var getResult struct {

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+"strings"
 	"bytes"
 	"encoding/json"
 	"io"
@@ -33,19 +34,22 @@ func PredictHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := r.Header.Get("X-User-ID")
-	if userID != "" {
-		if ok, reason := CheckQuota(userID, "query"); !ok {
-http.Error(w, reason, http.StatusForbidden)
-return
+userID := r.Header.Get("X-User-ID")
+if userID != "" {
+var predErrors []string
+if ok, reason := CheckQuota(userID, "query"); !ok {
+predErrors = append(predErrors, reason)
 }
 if ok, reason := CheckCredits(userID, 0.05); !ok {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusForbidden)
-			json.NewEncoder(w).Encode(map[string]string{"error": reason})
-			return
-		}
-	}
+predErrors = append(predErrors, reason)
+}
+if len(predErrors) > 0 {
+w.Header().Set("Content-Type", "application/json")
+w.WriteHeader(http.StatusForbidden)
+json.NewEncoder(w).Encode(map[string]string{"error": strings.Join(predErrors, " | ")})
+return
+}
+}
 
 	jsonData, _ := json.Marshal(req)
 
