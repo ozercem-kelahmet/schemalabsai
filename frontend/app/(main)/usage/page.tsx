@@ -151,7 +151,7 @@ export default function UsagePage() {
         event: l.event_name || "Chat Query",
         kind: "chat",
         model: process.env.NEXT_PUBLIC_BASE_MODEL || "schema-v0",
-        builtModel: (l.resource_name && l.resource_name !== l.model_used) ? l.resource_name : "-",
+        builtModel: (() => { if (!l.resource_name || l.resource_name === "") return "-"; const m = models.find(m => m.id === l.resource_name || m.name === l.resource_name); if (m) return m.name; const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}/.test(l.resource_name); return isUUID ? "-" : l.resource_name; })(),
         credits: l.credits_used || 0,
         baseTokens: l.tokens_used || 0,
         endpointCalls: 0
@@ -167,8 +167,8 @@ export default function UsagePage() {
         time: d.toTimeString().split(" ")[0],
         event: l.event_name || l.event_type,
         kind: l.event_type,
-        model: l.model_used || "-",
-        builtModel: l.resource_name || "-",
+        model: "-",
+        builtModel: "-",
         credits: l.credits_used || 0,
         baseTokens: l.tokens_used || 0,
         endpointCalls: 0
@@ -377,8 +377,8 @@ export default function UsagePage() {
 
   // Chart data from real models
   const modelUsageData = models.slice(0, 5).map(m => {
-    const chatLogs = usageLogs.filter(l => l.event_type === "chat" && l.resource_name === m.id)
-    const trainLogs = usageLogs.filter(l => (l.event_type === "train" || l.event_type === "training") && l.resource_id === m.id)
+    const chatLogs = usageLogs.filter(l => l.event_type === "chat" && (l.resource_name === m.id || l.resource_name === m.name))
+    const trainLogs = usageLogs.filter(l => (l.event_type === "train" || l.event_type === "training") && (l.resource_id === m.id || l.resource_name === m.id || l.resource_name === m.name))
     return {
       name: m.name.length > 20 ? m.name.slice(0, 20) + "..." : m.name,
       queries: chatLogs.length,
