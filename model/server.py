@@ -2615,7 +2615,7 @@ def finetune(bypass_queue=False):
             redis_client.setex(f"training:{query_id}", 3600, json.dumps(session))
         except: pass
         session["start_time"] = time.time()
-        session["epochs"] = epochs
+        session["epochs"] = 0  # Will be updated during training
         session["epoch"] = 0
         session["accuracy"] = 0.0
         session["loss"] = 0.0
@@ -2678,7 +2678,7 @@ def finetune(bypass_queue=False):
         else:  # cok az data, cok parametre
             base = int(40 + class_factor * 8 + feat_factor * 5)
         # Patience ekle (early stop margin) ve sinirla
-        estimated_epochs = min(epochs, max_epochs)  # basit: kullanıcı epochs veya max
+        estimated_epochs = 0  # Unknown until training progresses
         session["epochs"] = estimated_epochs
         training_progress.update(session)
         print(f"📊 Training loop starting: max_epochs={max_epochs}, best_acc={best_acc}")

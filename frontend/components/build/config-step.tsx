@@ -117,7 +117,7 @@ export function ConfigStep({
       const connections = connectionsData.connections || []
       setAllConnections(connections)
       
-      const fileDatasets: Dataset[] = files.map((f: any) => {
+      const fileDatasets: Dataset[] = files.filter((f: any) => f.source !== "connection").map((f: any) => {
         const model = models.find((m: any) => m.source_file_id === f.file_id)
         const cols = f.columns ? f.columns.split(",") : []
         return {

@@ -152,7 +152,7 @@ func main() {
 
 	// Protected API routes
 	http.HandleFunc("/api/upload", enableCORS(handlers.AuthMiddleware(handlers.UploadHandler)))
-	http.HandleFunc("/api/train", enableCORS(handlers.AuthMiddleware(handlers.TrainHandler)))
+	http.HandleFunc("POST /api/train", enableCORS(handlers.AuthMiddleware(handlers.TrainHandler)))
 	http.HandleFunc("/api/train/multi", enableCORS(handlers.AuthMiddleware(handlers.MultiTrainHandler)))
 	http.HandleFunc("/api/train/async", enableCORS(handlers.AuthMiddleware(handlers.AsyncTrainHandler)))
 	http.HandleFunc("/api/train/status", enableCORS(handlers.TrainingStatusHandler))

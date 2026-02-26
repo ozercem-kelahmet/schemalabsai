@@ -3,7 +3,6 @@ package handlers
 import (
 "math"
 	"os"
-"path/filepath"
 	"strconv"
 	"encoding/json"
 	"fmt"
@@ -210,13 +209,16 @@ func CheckStorage(userID string, additionalMB float64) (bool, string) {
 	var totalSize int64
 	DB.Model(&UploadedFile{}).Where("user_id = ?", userID).Select("COALESCE(SUM(size), 0)").Scan(&totalSize)
 usedMB := float64(totalSize) / (1024 * 1024)
-var connFiles []Connection
-DB.Where("user_id = ?", userID).Find(&connFiles)
-for _, c := range connFiles {
-if len(c.ID) >= 16 {
-matches, _ := filepath.Glob(fmt.Sprintf("./uploads/conn_%s_*", c.ID[:16]))
-for _, m := range matches {
-if info, err := os.Stat(m); err == nil { usedMB += float64(info.Size()) / (1024 * 1024) }
+var connFiles2 []Connection
+DB.Where("user_id = ?", userID).Find(&connFiles2)
+for _, c := range connFiles2 {
+if c.CachedTables != "" && c.CachedTables != "null" && c.CachedTables != "[]" {
+var cached2 struct{ TableDetails []struct{ Rows int `json:"rows"`; Columns int `json:"columns"` } `json:"table_details"` }
+if json.Unmarshal([]byte(c.CachedTables), &cached2) == nil {
+for _, t := range cached2.TableDetails {
+cols := t.Columns; if cols < 10 { cols = 10 }
+usedMB += float64(t.Rows * cols * 20) / (1024 * 1024)
+}
 }
 }
 }
@@ -258,19 +260,22 @@ quota.CreditsUsed = totalCreditsFromLogs
 
 	var totalSize int64
 	DB.Model(&UploadedFile{}).Where("user_id = ?", userID).Select("COALESCE(SUM(size), 0)").Scan(&totalSize)
-// Also count connection CSV files on disk
+// Also count connection data size from table_details
 var connFiles []Connection
 DB.Where("user_id = ?", userID).Find(&connFiles)
-var connSize int64
+var connSizeMB float64
 for _, c := range connFiles {
-if len(c.ID) >= 16 {
-matches, _ := filepath.Glob(fmt.Sprintf("./uploads/conn_%s_*", c.ID[:16]))
-for _, m := range matches {
-if info, err := os.Stat(m); err == nil { connSize += info.Size() }
+if c.CachedTables != "" && c.CachedTables != "null" && c.CachedTables != "[]" {
+var cached struct{ TableDetails []struct{ Rows int `json:"rows"`; Columns int `json:"columns"` } `json:"table_details"` }
+if json.Unmarshal([]byte(c.CachedTables), &cached) == nil {
+for _, t := range cached.TableDetails {
+cols := t.Columns; if cols < 10 { cols = 10 }
+connSizeMB += float64(t.Rows * cols * 20) / (1024 * 1024)
 }
 }
 }
-quota.StorageUsedMB = float64(totalSize + connSize) / (1024 * 1024)
+}
+quota.StorageUsedMB = float64(totalSize) / (1024*1024) + connSizeMB
 
 	// Count today's queries
 	today := time.Now().Truncate(24 * time.Hour)

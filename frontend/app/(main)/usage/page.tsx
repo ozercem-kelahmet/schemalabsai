@@ -150,7 +150,7 @@ export default function UsagePage() {
         time: d.toTimeString().split(" ")[0],
         event: l.event_name || "Chat Query",
         kind: "chat",
-        model: l.model_used || "-",
+        model: process.env.NEXT_PUBLIC_BASE_MODEL || "schema-v0",
         builtModel: (l.resource_name && l.resource_name !== l.model_used) ? l.resource_name : "-",
         credits: l.credits_used || 0,
         baseTokens: l.tokens_used || 0,
@@ -376,12 +376,16 @@ export default function UsagePage() {
   const totalEndpointCalls = filteredData.reduce((sum, item) => sum + item.endpointCalls, 0)
 
   // Chart data from real models
-  const modelUsageData = models.slice(0, 3).map(m => ({
-    name: m.name.length > 20 ? m.name.slice(0, 20) + "..." : m.name,
-    queries: queries.filter(q => q.model_id === m.id).length,
-    apiCalls: queries.filter(q => q.model_id === m.id).length,
-    credits: ((m.epochs || 5) * 0.5 + queries.filter(q => q.model_id === m.id).length * 0.12).toFixed(1)
-  }))
+  const modelUsageData = models.slice(0, 5).map(m => {
+    const chatLogs = usageLogs.filter(l => l.event_type === "chat" && l.resource_name === m.id)
+    const trainLogs = usageLogs.filter(l => (l.event_type === "train" || l.event_type === "training") && l.resource_id === m.id)
+    return {
+      name: m.name.length > 20 ? m.name.slice(0, 20) + "..." : m.name,
+      queries: chatLogs.length,
+      apiCalls: chatLogs.length,
+      credits: parseFloat((trainLogs.reduce((s, l) => s + (l.credits_used || 0), 0) + chatLogs.reduce((s, l) => s + (l.credits_used || 0), 0)).toFixed(2))
+    }
+  })
 
   // Daily usage trend (last 7 days)
   const dailyUsageData = Array.from({ length: 7 }, (_, i) => {
@@ -427,11 +431,11 @@ export default function UsagePage() {
 
   const getEventBadge = (kind: string) => {
     const styles: Record<string, string> = {
-      query: "bg-blue-500/10 text-blue-500",
-      model_building: "bg-purple-500/10 text-purple-500",
-      api: "bg-green-500/10 text-green-500",
+      chat: "bg-blue-500/10 text-blue-500",
+      train: "bg-purple-500/10 text-purple-500",
+      training: "bg-purple-500/10 text-purple-500",
       endpoint: "bg-orange-500/10 text-orange-500",
-      data_generation: "bg-violet-500/10 text-violet-500",
+      generate: "bg-violet-500/10 text-violet-500",
       sync: "bg-amber-500/10 text-amber-500",
       upload: "bg-cyan-500/10 text-cyan-500",
       predict: "bg-teal-500/10 text-teal-500",
@@ -439,11 +443,11 @@ export default function UsagePage() {
       connection: "bg-emerald-500/10 text-emerald-500",
     }
     const labels: Record<string, string> = {
-      query: "Query",
-      model_building: "Model Building",
-      api: "API",
+      chat: "Query",
+      train: "Model Building",
+      training: "Model Building",
       endpoint: "Endpoint",
-      data_generation: "Data Generation",
+      generate: "Data Generation",
       sync: "Sync",
       upload: "Upload",
       predict: "Prediction",
@@ -693,11 +697,12 @@ export default function UsagePage() {
                 <SelectTrigger className="w-[150px] border-border bg-card text-foreground"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Events</SelectItem>
-                  <SelectItem value="query">Query</SelectItem>
-                  <SelectItem value="model_building">Model Building</SelectItem>
-                  <SelectItem value="api">API</SelectItem>
+                  <SelectItem value="chat">Query</SelectItem>
+                  <SelectItem value="train">Model Building</SelectItem>
+                  <SelectItem value="upload">Upload</SelectItem>
+                  <SelectItem value="connection">Connection</SelectItem>
+                  <SelectItem value="generate">Data Generation</SelectItem>
                   <SelectItem value="endpoint">Endpoint</SelectItem>
-                  <SelectItem value="data_generation">Data Generation</SelectItem>
                 </SelectContent>
               </Select>
             </div>

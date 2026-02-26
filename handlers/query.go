@@ -2,9 +2,11 @@ package handlers
 
 import (
 	"encoding/json"
-	"strings"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -102,6 +104,42 @@ func CreateQueryHandler(w http.ResponseWriter, r *http.Request) {
 		var model FineTunedModel
 		if err := DB.Where("id = ?", *req.TrainingModelID).First(&model).Error; err == nil {
 			sourceFiles = model.SourceFiles
+			// If source_files empty but connection_ids exists, fetch from connection
+			if sourceFiles == "" && model.ConnectionIDs != "" {
+				connIDs := strings.Split(model.ConnectionIDs, ",")
+				var allFileIDs []string
+				for _, cid := range connIDs {
+					cid = strings.TrimSpace(cid)
+					if cid == "" { continue }
+					var conn Connection
+					if DB.Where("id = ?", cid).First(&conn).Error != nil { continue }
+					csvPaths, err := exportConnectionToCSV(conn, cid)
+					if err != nil || len(csvPaths) == 0 { continue }
+					for _, csvPath := range csvPaths {
+						fileID := fmt.Sprintf("conn_%s_%s", cid, strings.TrimSuffix(filepath.Base(csvPath), ".csv"))
+						var count int64
+						DB.Model(&UploadedFile{}).Where("id = ?", fileID).Count(&count)
+						if count == 0 {
+							info, err := os.Stat(csvPath)
+							var fsize int64
+							if err == nil { fsize = info.Size() }
+							DB.Create(&UploadedFile{
+								ID: fileID,
+								UserID: model.UserID,
+								Filename: filepath.Base(csvPath),
+								Path: csvPath,
+								Size: fsize,
+								Source: "connection",
+							})
+						}
+						allFileIDs = append(allFileIDs, fileID)
+					}
+				}
+				if len(allFileIDs) > 0 {
+					sourceFiles = strings.Join(allFileIDs, ",")
+					DB.Model(&model).Update("source_files", sourceFiles)
+				}
+			}
 		}
 	}
 

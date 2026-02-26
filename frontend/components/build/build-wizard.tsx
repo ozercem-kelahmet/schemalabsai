@@ -43,8 +43,9 @@ export function BuildWizard() {
   const [evalMetrics, setEvalMetrics] = useState<EvaluationMetrics | null>(null)
   const [builtModel, setBuiltModel] = useState<Model | null>(null)
   
-  const [totalEpochs, setTotalEpochs] = useState(5)
+  const [totalEpochs, setTotalEpochs] = useState(0)
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
+  const trainingQueryIdRef = useRef<string>("")
   const timerRef = useRef<NodeJS.Timeout | null>(null)
   const trainingStartedRef = useRef(false)
   const skipCheckRef = useRef(false)
@@ -112,7 +113,7 @@ export function BuildWizard() {
       console.log("CHECK_ONGOING skipCheck=", skipCheckRef.current)
       if (skipCheckRef.current) return
       try {
-        const progress = await api.getTrainingProgress()
+        const progress = await api.getTrainingProgress(trainingQueryIdRef.current)
         // Skip if training already completed (epoch >= epochs means done)
         console.log("PROGRESS_STATUS:", progress.status, "epoch:", progress.epoch, "epochs:", progress.epochs)
         if (progress.status === "training" && progress.epoch < progress.epochs) {
@@ -123,7 +124,7 @@ export function BuildWizard() {
           const normalizedAccuracy = progress.accuracy > 1 ? progress.accuracy / 100 : progress.accuracy
           setCurrentMetrics({
             epoch: progress.epoch,
-            totalEpochs: (progress.epochs > 0 ? progress.epochs : totalEpochs),
+            totalEpochs: progress.epochs || 0,
             loss: progress.loss || 0,
             accuracy: normalizedAccuracy || 0,
             learningRate: 0.001,
@@ -178,6 +179,8 @@ export function BuildWizard() {
       const selectedTablesStr = selectedTableNames.length > 0 ? JSON.stringify(selectedTableNames) : ""
 
       // Start training - show UI immediately, handle result async
+      const trainingQueryId = `train-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      trainingQueryIdRef.current = trainingQueryId
       const trainPromise = api.multiTrain(
         fileIds,
         modelName,
@@ -185,7 +188,7 @@ export function BuildWizard() {
         64,
         0.001,
         100,
-        undefined,
+        trainingQueryId,
         syncMode,
         scheduleCron,
         scheduleDesc,
@@ -310,12 +313,12 @@ export function BuildWizard() {
 
     const pollProgress = async () => {
       try {
-        const progress = await api.getTrainingProgress()
+        const progress = await api.getTrainingProgress(trainingQueryIdRef.current)
         
         if (progress.status === "training") {
           // Terminaldeki epochs gelince kilitle, geri donmesin
           const serverEpochs = progress.epochs
-          const epochs = (serverEpochs && serverEpochs > 0) ? serverEpochs : totalEpochs
+          const epochs = serverEpochs || 0
           if (serverEpochs && serverEpochs > 0) {
             setTotalEpochs(serverEpochs)
           }
@@ -329,7 +332,11 @@ export function BuildWizard() {
             learningRate: 0.001,
           }
           
-          setCurrentMetrics(newMetrics)
+          // Don't update if epoch goes backwards (backend reset)
+          setCurrentMetrics((prev) => {
+            if (prev && prev.epoch > newMetrics.epoch) return prev
+            return newMetrics
+          })
           setMetricsHistory((prev) => {
             const exists = prev.some((m) => m.epoch === progress.epoch)
             if (!exists) {
@@ -383,7 +390,7 @@ export function BuildWizard() {
       }
     }
 
-    pollingRef.current = setInterval(pollProgress, 1500)
+    pollingRef.current = setInterval(pollProgress, 500)
     pollProgress()
 
     return () => {
@@ -443,7 +450,7 @@ export function BuildWizard() {
       // Navigate to playground with model parameter - let playground handle model selection
       const params = new URLSearchParams({
         model: builtModel.id,
-        new: Date.now().toString()
+        new: Date.now().toString(),
       })
       router.push("/playground?" + params.toString())
     }

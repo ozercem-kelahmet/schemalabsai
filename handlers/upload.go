@@ -201,14 +201,21 @@ maxFileSize := int64(maxFileSizeMB) * 1024 * 1024
 		http.Error(w, "Failed to save file", http.StatusInternalServerError)
 		return
 	}
-	defer dest.Close()
 
 	size, err := io.Copy(dest, file)
 	if err != nil {
 		http.Error(w, "Failed to write file", http.StatusInternalServerError)
 		return
 	}
+	dest.Sync()
+	dest.Close() // Close before parsing so Excel/JSON can read the file
 
+// Verify file written correctly
+if fi, statErr := os.Stat(destPath); statErr == nil {
+log.Printf("File written: %s, disk=%d bytes, copy=%d bytes", destPath, fi.Size(), size)
+} else {
+log.Printf("File stat error: %v", statErr)
+}
 	// Save to database if user is logged in
 	if userID != "" && DB != nil {
 		// Parse CSV to get columns and unique values
@@ -260,8 +267,10 @@ maxFileSize := int64(maxFileSizeMB) * 1024 * 1024
 		if strings.HasSuffix(strings.ToLower(finalFilename), ".xlsx") || strings.HasSuffix(strings.ToLower(finalFilename), ".xls") {
 			if xlFile, err := excelize.OpenFile(destPath); err == nil {
 				sheets := xlFile.GetSheetList()
+log.Printf("Excel opened: %s, sheets=%v (%d)", destPath, sheets, len(sheets))
 				if len(sheets) > 0 {
 					rows, err := xlFile.GetRows(sheets[0])
+log.Printf("Excel sheet[0] %q: rows=%d err=%v", sheets[0], len(rows), err)
 					if err == nil && len(rows) > 0 {
 						columns = strings.Join(rows[0], ",")
 						rowCount = len(rows) - 1
@@ -287,15 +296,20 @@ maxFileSize := int64(maxFileSizeMB) * 1024 * 1024
 					}
 				}
 
-// Export additional sheets as separate CSV files
-if len(sheets) > 1 {
+// Create connection for multi-sheet Excel files
+if len(sheets) >= 1 {
 baseName := strings.TrimSuffix(strings.TrimSuffix(finalFilename, ".xlsx"), ".xls")
-for si := 1; si < len(sheets); si++ {
+connID := uuid.New().String()[:16]
+var tableDetails []map[string]interface{}
+var selectedTableNames []string
+
+// Export ALL sheets (including first) as CSV files under connection
+for si := 0; si < len(sheets); si++ {
 sheetRows, serr := xlFile.GetRows(sheets[si])
-if serr != nil || len(sheetRows) < 2 { continue }
-sheetFileID := uuid.New().String()[:8]
-sheetFilename := fmt.Sprintf("%s_%s.csv", baseName, sanitizeFilename(sheets[si]))
-sheetPath := fmt.Sprintf("./uploads/%s_%s", sheetFileID, sheetFilename)
+if serr != nil || len(sheetRows) < 1 { continue }
+sheetFileID := fmt.Sprintf("conn_%s_%s", connID, sanitizeFilename(sheets[si]))
+sheetFilename := fmt.Sprintf("%s - %s.csv", baseName, sanitizeFilename(sheets[si]))
+sheetPath := fmt.Sprintf("./uploads/%s.csv", sheetFileID)
 sheetFile, ferr := os.Create(sheetPath)
 if ferr != nil { continue }
 sheetWriter := csv.NewWriter(sheetFile)
@@ -308,17 +322,53 @@ sheetSize := sheetInfo.Size()
 sheetFile.Close()
 sheetCols := ""
 sheetRowCount := len(sheetRows) - 1
-if len(sheetRows) > 0 { sheetCols = strings.Join(sheetRows[0], ",") }
+sheetColCount := 0
+if len(sheetRows) > 0 { sheetCols = strings.Join(sheetRows[0], ","); sheetColCount = len(sheetRows[0]) }
 DB.Create(&UploadedFile{
 ID: sheetFileID, Filename: sheetFilename, Path: sheetPath,
 Size: sheetSize, UserID: userID, CreatedAt: time.Now(),
-Columns: sheetCols, RowCount: sheetRowCount,
-FolderID: func() *string { if folderID != "" { return &folderID }; return nil }(),
+Columns: sheetCols, RowCount: sheetRowCount, Source: "connection",
 })
+tableDetails = append(tableDetails, map[string]interface{}{
+"name": sheets[si], "rows": sheetRowCount, "columns": sheetColCount,
+})
+selectedTableNames = append(selectedTableNames, sheets[si])
 log.Printf("Excel sheet %d/%d exported: %s (%d rows)", si+1, len(sheets), sheetFilename, sheetRowCount)
+}
+
+// Create connection record
+if len(tableDetails) > 0 {
+cachedJSON, _ := json.Marshal(map[string]interface{}{"table_details": tableDetails})
+selectedJSON, _ := json.Marshal(selectedTableNames)
+now := time.Now()
+DB.Create(&Connection{
+ID: connID, Name: baseName, Type: "upload", SubType: "excel",
+Status: "active", UserID: userID,
+CachedTables: string(cachedJSON), SelectedTables: string(selectedJSON),
+CachedAt: &now, CreatedAt: now, UpdatedAt: now,
+})
+log.Printf("Excel connection created: %s with %d sheets", baseName, len(tableDetails))
 }
 }
 				xlFile.Close()
+			} else {
+				log.Printf("Excel OpenFile failed for %s: %v", destPath, err)
+				// Check if it's actually an Apple Numbers file
+				if zipReader, zerr := os.Open(destPath); zerr == nil {
+					buf := make([]byte, 512)
+					zipReader.Read(buf)
+					zipReader.Close()
+					if strings.Contains(string(buf), "Data/Preset") || strings.Contains(string(buf), "Index/Document") {
+						log.Printf("File %s appears to be Apple Numbers format, not xlsx", destPath)
+						// Try to update the record with a note
+						if userID != "" && DB != nil {
+							DB.Model(&UploadedFile{}).Where("id = ?", fileID).Updates(map[string]interface{}{
+								"columns": "⚠️ Apple Numbers format detected. Please export as .xlsx from Numbers: File > Export To > Excel",
+								"row_count": 0,
+							})
+						}
+					}
+				}
 			}
 		}
 		
@@ -387,6 +437,11 @@ if strings.HasSuffix(strings.ToLower(finalFilename), ".json") || strings.HasSuff
 	}
 }
 
+		// Skip DB record for Excel files that were converted to connections
+		isExcelConnection := (strings.HasSuffix(strings.ToLower(finalFilename), ".xlsx") || strings.HasSuffix(strings.ToLower(finalFilename), ".xls")) && columns != ""
+		if isExcelConnection {
+			log.Printf("Skipping uploaded_files record for Excel connection: %s", finalFilename)
+		} else {
 		uploadedFile := UploadedFile{
 			ID:           fileID,
 			Filename:     finalFilename,
@@ -397,12 +452,14 @@ if strings.HasSuffix(strings.ToLower(finalFilename), ".json") || strings.HasSuff
 			Columns:      columns,
 			RowCount:     rowCount,
 			UniqueValues: uniqueValues,
+			Source:       "upload",
 			FolderID:     func() *string { if folderID != "" { return &folderID }; return nil }(),
 		}
 		DB.Create(&uploadedFile)
 
+}
 // Log upload to usage
-sizeMB := float64(uploadedFile.Size) / (1024 * 1024)
+sizeMB := float64(size) / (1024 * 1024)
 storageCost := sizeMB * 0.01
 if storageCost < 0.01 { storageCost = 0.01 }
 if userID != "" {
@@ -420,11 +477,29 @@ CreditsUsed: storageCost, CreatedAt: time.Now(),
 }
 	}
 
+	type SheetInfo struct {
+		FileID   string `json:"file_id"`
+		Filename string `json:"filename"`
+		Size     int64  `json:"size"`
+	}
+	var sheetFiles []SheetInfo
+	if userID != "" && DB != nil {
+		var extras []UploadedFile
+		DB.Where("user_id = ? AND id != ? AND created_at > ? AND filename LIKE ?",
+			userID, fileID, time.Now().Add(-10*time.Second),
+			strings.TrimSuffix(strings.TrimSuffix(finalFilename, ".xlsx"), ".xls")+"%").
+			Find(&extras)
+		for _, ex := range extras {
+			sheetFiles = append(sheetFiles, SheetInfo{FileID: ex.ID, Filename: ex.Filename, Size: ex.Size})
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(UploadResponse{
-		FileID:   fileID,
-		Filename: finalFilename,
-		Size:     size,
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"file_id":   fileID,
+		"filename":  finalFilename,
+		"size":      size,
+		"sheets":    sheetFiles,
 	})
 }
 

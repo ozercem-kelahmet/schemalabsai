@@ -69,7 +69,7 @@ export function DatasetGrid() {
         
         // Show files as soon as they arrive (fastest path)
         const [filesData, modelsData, connectionsData] = await Promise.all([filesPromise, modelsPromise, connectionsPromise])
-        const files = (filesData.files || []).filter((f: any) => !f.is_merged && !f.filename?.includes("_merged_all"))
+        const files = (filesData.files || []).filter((f: any) => !f.is_merged && !f.filename?.includes("_merged_all") && !f.file_id?.startsWith("conn_") && f.source !== "connection")
         const models = modelsData.models || []
         const connections = connectionsData.connections || []
         const fileDatasets: Dataset[] = files.map((f: any) => {
@@ -280,7 +280,7 @@ export function DatasetGrid() {
   const confirmDelete = async () => {
     if (!deleteTarget) return
     try {
-      const isConnection = deleteTarget.syncStatus === "synced" || deleteTarget.syncStatus === "pending"
+      const isConnection = deleteTarget.source !== "upload" && deleteTarget.source !== "generated" && deleteTarget.source !== ""
       if (isConnection) {
         await api.deleteConnection(deleteTarget.id)
       } else {
@@ -488,6 +488,7 @@ export function DatasetGrid() {
             return
           }
           if ((connection as any).type === "upload" && connection.files) {
+            let uploadToastId: string | number = ""
             try {
               const files = connection.files as File[]
               
@@ -509,18 +510,42 @@ export function DatasetGrid() {
               }
               
               // Upload files sequentially to avoid connection issues
-              toast.loading("Uploading " + files.length + " files...")
+              uploadToastId = toast.loading("Uploading " + files.length + " files...")
               let uploaded = 0
+              const allSheets: {name: string, rows: number, columns: number, file_id: string}[] = []
+              let mainFileId = ""
               for (const file of files) {
-                await api.upload(file, undefined)
+                const result = await api.upload(file, undefined)
                 uploaded++
-                toast.dismiss()
-                toast.loading("Uploaded " + uploaded + "/" + files.length + " files...")
+                toast.dismiss(uploadToastId)
+                toast.loading("Uploaded " + uploaded + "/" + files.length + " files...", { id: uploadToastId })
+                // Check for Excel multi-sheet files
+                if (result?.sheets && result.sheets.length > 0) {
+                  mainFileId = result.file_id
+                  // Add main sheet (Sheet1)
+                  allSheets.push({ name: "(main_xlsx)", rows: 0, columns: 0, file_id: result.file_id })
+                  // Add extra sheets
+                  result.sheets.forEach((s: any) => {
+                    allSheets.push({ name: s.filename, rows: 0, columns: 0, file_id: s.file_id })
+                  })
+                }
               }
-              toast.dismiss()
-              toast.success(uploaded + " files uploaded successfully!")
+              toast.dismiss(uploadToastId)
+              // If Excel had multiple sheets, show selection dialog
+              if (allSheets.length > 0) {
+                const sheetOnly = allSheets.filter(s => s.name !== "(main_xlsx)")
+                setAvailableTables(sheetOnly.map(s => ({ name: s.name, rows: s.rows, columns: s.columns })))
+                setSelectedTables(sheetOnly.map(s => s.name))
+                // First id is main xlsx (to delete), rest are sheets
+                setPendingConnectionId("excel_sheets:" + allSheets.map(s => s.file_id).join(","))
+                setIsTableSelectOpen(true)
+                toast.success("Select which sheets to keep.")
+                return // Don't loadData yet, wait for sheet selection
+              } else {
+                toast.success(uploaded + " files uploaded successfully!")
+              }
             } catch (error) {
-              toast.dismiss()
+              toast.dismiss(uploadToastId)
               toast.error("File upload failed: " + (error instanceof Error ? error.message : "Unknown error"))
             }
           } else if ((connection as any).type === "database") {
@@ -638,18 +663,32 @@ export function DatasetGrid() {
               <Button variant="outline" onClick={() => setIsTableSelectOpen(false)}>Cancel</Button>
               <Button onClick={async () => {
                 if (pendingConnectionId) {
-                  await fetch("/api/connections/update", {
-                    method: "POST",
-                    credentials: "include",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ id: pendingConnectionId, selected_tables: selectedTables })
-                  })
+                  if (pendingConnectionId.startsWith("excel_sheets:")) {
+                    const fileIds = pendingConnectionId.replace("excel_sheets:", "").split(",")
+                    // First id is main xlsx - always delete it
+                    try { await api.deleteFile(fileIds[0]) } catch {}
+                    // Rest are sheet CSVs - delete unselected
+                    const sheetIds = fileIds.slice(1)
+                    const allNames = availableTables.map(t => t.name)
+                    for (let i = 0; i < allNames.length; i++) {
+                      if (!selectedTables.includes(allNames[i])) {
+                        try { await api.deleteFile(sheetIds[i]) } catch {}
+                      }
+                    }
+                  } else {
+                    await fetch("/api/connections/update", {
+                      method: "POST",
+                      credentials: "include",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ id: pendingConnectionId, selected_tables: selectedTables })
+                    })
+                  }
                 }
                 setIsTableSelectOpen(false)
-                toast.success("Connected successfully!")
+                toast.success(pendingConnectionId?.startsWith("excel_sheets:") ? "Sheets selected!" : "Connected successfully!")
                 loadData()
               }} disabled={selectedTables.length === 0}>
-                Save ({selectedTables.length} tables)
+                Save ({selectedTables.length} {pendingConnectionId?.startsWith("excel_sheets:") ? "sheets" : "tables"})
               </Button>
             </div>
           </div>

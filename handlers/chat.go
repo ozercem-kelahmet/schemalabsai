@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -136,12 +137,14 @@ func getSystemPrompt(filename, dataContext, modelAnalysis string) string {
 	return `You are SchemaLabs AI - a universal data analyst for ANY dataset.
 
 **PERSONAL QUESTIONS (not about data):**
-If user asks about YOU (who created you, what model, capabilities, SchemaLabs company):
-→ Answer directly and briefly (2-3 sentences max)
-→ NO tables, NO charts, NO data analysis format
-→ Then offer to help with their data
+If user asks about YOU (who are you, what model, capabilities, what can you do):
+→ Answer based on YOUR SPECIFIC context - you are a fine-tuned model trained on the dataset described below
+→ Mention the dataset name, what kind of data it contains, and what insights you can provide
+→ Brief but specific (3-5 sentences)
+→ NO tables, NO charts
+→ Then offer specific examples of questions they can ask about their data
 
-Example: "I'm SchemaLabs AI, built by SchemaLabs to analyze any dataset. I use advanced ML for insights. What data would you like to explore?"
+Example: "I'm a SchemaLabs AI model fine-tuned on your [DATASET_NAME] data. I've been trained to understand patterns in this dataset including [key columns/metrics]. I can analyze trends, compare entities, find outliers, and generate visualizations. Try asking me things like 'show top performers' or 'what patterns exist in the data'."
 
 **DATA QUESTIONS:** Use full analysis format below.
 
@@ -705,13 +708,51 @@ return
 		actualFileID := req.FileID
 		var modelInfo struct {
 			SourceFileID string `gorm:"column:source_file_id"`
+			SourceFiles  string `gorm:"column:source_files"`
+			ConnectionIDs string `gorm:"column:connection_ids"`
 			ModelPath    string `gorm:"column:model_path"`
+			UserID       string `gorm:"column:user_id"`
 		}
-		err := DB.Table("fine_tuned_models").Where("id = ? OR name = ?", req.FineTunedModel, req.FineTunedModel).Select("source_file_id, model_path").First(&modelInfo).Error
-		fmt.Printf("DEBUG Model lookup: ID=%s, err=%v, SourceFileID=%s, ModelPath=%s\n", req.FineTunedModel, err, modelInfo.SourceFileID, modelInfo.ModelPath)
+		err := DB.Table("fine_tuned_models").Where("id = ? OR name = ?", req.FineTunedModel, req.FineTunedModel).Select("source_file_id, source_files, connection_ids, model_path, user_id").First(&modelInfo).Error
+		fmt.Printf("DEBUG Model lookup: ID=%s, err=%v, SourceFileID=%s, SourceFiles=%s, ConnIDs=%s, ModelPath=%s\n", req.FineTunedModel, err, modelInfo.SourceFileID, modelInfo.SourceFiles, modelInfo.ConnectionIDs, modelInfo.ModelPath)
 		if err == nil && modelInfo.SourceFileID != "" {
 			actualFileID = modelInfo.SourceFileID
 			fmt.Printf("DEBUG: Using model SourceFileID: %s\n", actualFileID)
+		}
+		// If no source files but has connections, fetch from connection
+		if err == nil && actualFileID == "" && modelInfo.SourceFiles == "" && modelInfo.ConnectionIDs != "" {
+			fmt.Printf("DEBUG: Fetching from connections: %s\n", modelInfo.ConnectionIDs)
+			connIDs := strings.Split(modelInfo.ConnectionIDs, ",")
+			for _, cid := range connIDs {
+				cid = strings.TrimSpace(cid)
+				if cid == "" { continue }
+				var conn Connection
+				if DB.Where("id = ?", cid).First(&conn).Error != nil { continue }
+				csvPaths, cerr := exportConnectionToCSV(conn, cid)
+				if cerr != nil || len(csvPaths) == 0 { continue }
+				for _, csvPath := range csvPaths {
+					fileID := fmt.Sprintf("conn_%s_%s", cid, strings.TrimSuffix(filepath.Base(csvPath), ".csv"))
+					var count int64
+					DB.Model(&UploadedFile{}).Where("id = ?", fileID).Count(&count)
+					if count == 0 {
+						info, serr := os.Stat(csvPath)
+						var fsize int64
+						if serr == nil { fsize = info.Size() }
+						DB.Create(&UploadedFile{
+							ID: fileID,
+							UserID: modelInfo.UserID,
+							Filename: filepath.Base(csvPath),
+							Path: csvPath,
+							Size: fsize,
+							Source: "connection",
+						})
+					}
+					if actualFileID == "" { actualFileID = fileID }
+				}
+			}
+			if actualFileID != "" {
+				DB.Table("fine_tuned_models").Where("id = ?", req.FineTunedModel).Update("source_files", actualFileID)
+			}
 		}
 		result, err := callFineTunedModel(req.FineTunedModel, actualFileID, req.Message, modelInfo.ModelPath)
 		if err != nil {

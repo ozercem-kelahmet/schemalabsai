@@ -61,6 +61,10 @@ type TrainResponse struct {
 }
 
 func TrainHandler(w http.ResponseWriter, r *http.Request) {
+if r.URL.Path != "/api/train" {
+http.Error(w, "Not found", http.StatusNotFound)
+return
+}
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -801,6 +805,20 @@ if mongoSelMap != nil && !mongoSelMap[collName] { continue }
 			}
 		}
 
+
+	case "excel":
+		var connFiles []UploadedFile
+		DB.Where("id LIKE ? AND source = ?", "conn_"+connID+"%", "connection").Find(&connFiles)
+		log.Printf("Excel connection %s: found %d CSV files", connID, len(connFiles))
+		for _, cf := range connFiles {
+			if cf.Path != "" {
+				filePaths = append(filePaths, cf.Path)
+				log.Printf("Excel CSV: %s -> %s", cf.Filename, cf.Path)
+			}
+		}
+		if len(filePaths) == 0 {
+			return nil, fmt.Errorf("no CSV files found for Excel connection %s", connID)
+		}
 	default:
 		log.Printf("Unsupported connection type for training: %s", conn.SubType)
 	}
@@ -1166,7 +1184,7 @@ func writeRowsToCSV(dataRows *sql.Rows, connID, tableName string) string {
 }
 
 func MultiTrainHandler(w http.ResponseWriter, r *http.Request) {
-	// Reset training progress for new training
+log.Printf("=== MULTI TRAIN HANDLER CALLED: path=%s method=%s ===", r.URL.Path, r.Method)	// Reset training progress for new training
 	trainingProgress.Status = "training"
 	trainingProgress.Epoch = 0
 	// Epochs Flask tarafindan set edilecek
@@ -1854,6 +1872,46 @@ if req.ConnectionIDs != "" {
 			continue
 		}
 
+// Excel connection - use pre-exported CSV files
+if conn.SubType == "excel" {
+	var connFiles []UploadedFile
+	DB.Where("id LIKE ? AND source = ?", "conn_"+connID+"%", "connection").Find(&connFiles)
+	log.Printf("Excel connection %s: found %d CSV files, selectedTables: %s", connID, len(connFiles), conn.SelectedTables)
+	selectedMap := map[string]bool{}
+	if conn.SelectedTables != "" {
+		var tableList []string
+		if err := json.Unmarshal([]byte(conn.SelectedTables), &tableList); err == nil {
+			for _, t := range tableList {
+				selectedMap[strings.TrimSpace(t)] = true
+			}
+		} else {
+			for _, t := range strings.Split(conn.SelectedTables, ",") {
+				selectedMap[strings.TrimSpace(t)] = true
+			}
+		}
+	}
+	for _, cf := range connFiles {
+		if cf.Path != "" {
+			if len(selectedMap) > 0 {
+				match := false
+				for sel := range selectedMap {
+					if strings.Contains(cf.Filename, sel) || strings.Contains(cf.ID, sel) {
+						match = true
+						break
+					}
+				}
+				if !match {
+					log.Printf("Excel CSV skipped (not selected): %s", cf.Filename)
+					continue
+				}
+			}
+			filePaths = append(filePaths, cf.Path)
+			log.Printf("Excel CSV: %s -> %s", cf.Filename, cf.Path)
+		}
+	}
+	continue
+}
+
 		// PostgreSQL / Supabase (existing code)
 		connHost := conn.Host
 		sslmode := "disable"
@@ -1932,6 +1990,47 @@ if req.ConnectionIDs != "" {
 	}
 }
 
+	// Save ALL connection CSVs to uploaded_files
+	if req.ConnectionIDs != "" {
+		for _, fp := range filePaths {
+			if !strings.Contains(fp, "conn_") { continue }
+			fileID := strings.TrimSuffix(filepath.Base(fp), ".csv")
+			var count int64
+			DB.Model(&UploadedFile{}).Where("id = ?", fileID).Count(&count)
+			if count == 0 {
+				info, _ := os.Stat(fp)
+				var fsize int64
+				if info != nil { fsize = info.Size() }
+				// Build friendly filename from connection name + table
+				friendlyName := filepath.Base(fp)
+				parts := strings.SplitN(fileID, "_", 3)
+				if len(parts) >= 3 {
+					cid := parts[1]
+					tablePart := parts[2]
+					var connName string
+					DB.Table("connections").Where("id = ?", cid).Select("name").Scan(&connName)
+					if connName == "" { connName = cid[:8] }
+					friendlyName = connName + " - " + tablePart + ".csv"
+				}
+				DB.Create(&UploadedFile{
+					ID: fileID,
+					UserID: userID,
+					Filename: friendlyName,
+					Path: fp,
+					Size: fsize,
+					Source: "connection",
+				})
+				log.Printf("Saved connection CSV to uploaded_files: %s (%s)", fileID, friendlyName)
+			}
+			found := false
+			for _, fid := range req.FileIDs {
+				if fid == fileID { found = true; break }
+			}
+			if !found {
+				req.FileIDs = append(req.FileIDs, fileID)
+			}
+		}
+	}
 
 	if len(filePaths) == 0 {
 		w.Header().Set("Content-Type", "application/json")
@@ -2072,6 +2171,35 @@ ftModel := FineTunedModel{
 			Version:      1,
 SourceFileID: func() string { if mergedFileID != "" { return mergedFileID }; return strings.Join(req.FileIDs, ",") }(),
 			SourceName:   func() string {
+			// Connection-based: use selected tables or connection name
+			if req.ConnectionIDs != "" {
+				var labels []string
+				for _, cid := range strings.Split(req.ConnectionIDs, ",") {
+					cid = strings.TrimSpace(cid)
+					if cid == "" { continue }
+					var conn Connection
+					if DB.Where("id = ?", cid).First(&conn).Error == nil {
+						if conn.SelectedTables != "" {
+							// Parse JSON array or comma-separated
+							var tableList []string
+							if json.Unmarshal([]byte(conn.SelectedTables), &tableList) == nil {
+								for _, t := range tableList {
+									t = strings.TrimSpace(t)
+									if t != "" { labels = append(labels, t) }
+								}
+							} else {
+								for _, t := range strings.Split(conn.SelectedTables, ",") {
+					t = strings.TrimSpace(strings.Trim(t, `[]\"'`))
+									if t != "" { labels = append(labels, t) }
+								}
+							}
+						} else {
+							labels = append(labels, conn.Name)
+						}
+					}
+				}
+				if len(labels) > 0 { return strings.Join(labels, ", ") }
+			}
 			var names []string
 			for _, fid := range req.FileIDs {
 				var file UploadedFile
@@ -2121,12 +2249,17 @@ if req.SyncMode == "real-time" && req.ConnectionIDs != "" { GlobalWatcher.StartW
 	}
 
 
-// Send training complete email (only if training succeeded)
+// Send training complete email
+log.Printf("MULTI EMAIL CHECK: accuracy=%.2f userID=%s", accuracy, userID)
 if accuracy > 0 {
 var user User
 if DB.Where("id = ?", userID).First(&user).Error == nil {
 emailService := NewEmailService()
-emailService.SendTrainingComplete(user.Email, modelName, accuracy)
+if err := emailService.SendTrainingComplete(user.Email, modelName, accuracy); err != nil {
+log.Printf("MULTI EMAIL ERROR: %v", err)
+} else {
+log.Printf("MULTI EMAIL SENT to %s", user.Email)
+}
 }
 }
 	w.Header().Set("Content-Type", "application/json")
@@ -2315,9 +2448,14 @@ func TrainingProgressHandler(w http.ResponseWriter, r *http.Request) {
 			// If Flask says completed but Go says training, ignore Flask (stale result)
 			if status == "completed" && trainingProgress.Status == "training" && trainingProgress.Epoch == 0 {
 				// New training just started, Flask has old completed status - skip
-			} else if status != "idle" {
-				w.Write(body)
-				return
+} else if status != "idle" {
+// Override Flask model_id with Go DB UUID
+if trainingProgress.ModelID != "" {
+flaskProgress["model_id"] = trainingProgress.ModelID
+}
+overridden, _ := json.Marshal(flaskProgress)
+w.Write(overridden)
+return
 			}
 		}
 	}

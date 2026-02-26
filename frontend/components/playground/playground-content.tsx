@@ -105,7 +105,15 @@ function adaptBackendModel(m: BackendModel): AdaptedModel {
   if (sourceFiles.length > 0) {
     datasets = sourceFiles.map((file, idx) => ({
       datasetId: file.trim(),
-      datasetName: (sourceFileNames[idx] || file).trim().replace(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}[_.]?/, "").replace(/_\d{8}_\d{6}/, "").replace(/\.csv$/, ""),
+      datasetName: (() => {
+        const raw = (sourceFileNames[idx] || file).trim()
+        if (raw.startsWith("conn_")) {
+          // Connection file: use filename from uploaded_files or extract table name
+          const parts = raw.replace(/\.csv$/, "").split("_")
+          return parts.length >= 3 ? parts.slice(2).join("_") : raw
+        }
+        return raw.replace(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}[_.]?/, "").replace(/_\d{8}_\d{6}/, "").replace(/\.csv$/, "")
+      })(),
       source: (file.trim().startsWith("conn_") ? "connection" : "upload") as DataSource,
     }))
   } else if (sourceFileId) {
@@ -144,6 +152,7 @@ export function PlaygroundContent({ sessionId: propSessionId }: PlaygroundConten
   const sessionId = propSessionId || querySessionId
   const newChatTrigger = searchParams.get("new")
   const modelIdFromUrl = searchParams.get("model")
+  const autoMessage = searchParams.get("autoMessage")
   const { chatSessions, setChatSessions } = useSidebar()
   const { queries, getQuery } = useQueryStore()
   const currentQuery = useMemo(() => {
@@ -198,12 +207,14 @@ export function PlaygroundContent({ sessionId: propSessionId }: PlaygroundConten
           const cachedModels = parsed.models.map(adaptBackendModel)
           setBackendModels(cachedModels)
           setModelsLoading(false)
-          // Restore last model for this session from cache
-          const lastModelId = sessionId ? localStorage.getItem(`schemalabs_session_model_${sessionId}`) : null
-          if (lastModelId) {
-            const model = cachedModels.find((m: any) => m.id === lastModelId)
+          // Restore model from URL param or session cache
+          const urlModel = new URLSearchParams(window.location.search).get("model")
+          const targetModelId = urlModel || (sessionId ? localStorage.getItem(`schemalabs_session_model_${sessionId}`) : null)
+          if (targetModelId) {
+            const model = cachedModels.find((m: any) => m.id === targetModelId || m.id?.includes(targetModelId))
             if (model) {
               setSelectedModels([model])
+              setHasInitializedChat(true)
               if (model.datasets?.length > 0) {
                 setSelectedFiles(model.datasets.map((ds: any) => ({ file_id: ds.datasetId, filename: ds.datasetName, source: ds.source })))
               }
@@ -214,14 +225,16 @@ export function PlaygroundContent({ sessionId: propSessionId }: PlaygroundConten
     } catch {}
     
     const loadAll = async () => {
-      const [modelsRes, filesRes, messagesRes, queriesRes] = await Promise.all([
+      // Load models and files first (fast), queries in background (slow)
+      const [modelsRes, filesRes, messagesRes] = await Promise.all([
         api.getFineTunedModels().catch(() => ({ models: [] })),
         api.getUploadedFiles().catch(() => ({ files: [] })),
         sessionId ? api.getMessages(sessionId).catch(() => ({ messages: [] })) : Promise.resolve(null),
-        api.getQueries().catch(() => ({ queries: [] })),
       ])
+      const queriesPromise = api.getQueries().catch(() => ({ queries: [] }))
       const allModels = modelsRes.models && Array.isArray(modelsRes.models) ? modelsRes.models.map(adaptBackendModel) : []
       setBackendModels(allModels)
+      setModelsLoading(false)
       try { localStorage.setItem("schemalabs_models_cache", JSON.stringify({ models: modelsRes.models })) } catch {}
       if (filesRes.files) {
         setUploadedFiles(filesRes.files)
@@ -248,6 +261,7 @@ export function PlaygroundContent({ sessionId: propSessionId }: PlaygroundConten
         }
       }
       // Fallback: if model not set from messages, try from query
+      const queriesRes = await queriesPromise
       if (!modelSetFromMessages && sessionId && allModels.length > 0) {
         const queryList = queriesRes?.queries || queriesRes || []
         const thisQuery = Array.isArray(queryList) ? queryList.find((q: any) => q.id === sessionId) : null
@@ -281,7 +295,6 @@ export function PlaygroundContent({ sessionId: propSessionId }: PlaygroundConten
           }
         }
       }
-      setModelsLoading(false)
     }
     loadAll()
   }, [])
@@ -320,7 +333,7 @@ export function PlaygroundContent({ sessionId: propSessionId }: PlaygroundConten
   // Select model from URL parameter
   useEffect(() => {
     if (!modelIdFromUrl || backendModels.length === 0) return
-    const model = backendModels.find(m => m.id === modelIdFromUrl)
+    const model = backendModels.find(m => m.id === modelIdFromUrl || m.id?.includes(modelIdFromUrl || ""))
     if (model) {
       setHasInitializedChat(true)
       setSelectedModels([model])
@@ -330,6 +343,14 @@ export function PlaygroundContent({ sessionId: propSessionId }: PlaygroundConten
           filename: ds.datasetName,
           source: ds.source
         })))
+      }
+      // Auto-send message from build page
+      if (false) {
+        setTimeout(() => {
+          setInput(autoMessage)
+          const submitBtn = document.querySelector('[data-send-button]') as HTMLButtonElement
+          if (submitBtn) submitBtn.click()
+        }, 500)
       }
     }
   }, [modelIdFromUrl, backendModels])
@@ -1169,7 +1190,7 @@ api.getMessages(sessionId)
   }
 
   // No model selected - show model selection screen
-  if (!selectedModel && !sessionId && !modelsLoading) {
+  if (!selectedModel && !sessionId && !modelsLoading && !modelIdFromUrl) {
     return (
       <div className="flex h-[calc(100vh-4rem)] md:h-[calc(100vh-6rem)] flex-col">
         <div className="flex-1 flex items-center justify-center px-4">
@@ -1574,6 +1595,7 @@ api.getMessages(sessionId)
                 <Button
                   type="submit"
                   size="sm"
+                  data-send-button
                   disabled={!input.trim() || isLoading || (!selectedModel && !sessionId)}
                   className={cn("h-8 w-8 rounded-full p-0 transition-colors", input.trim() ? "bg-[#0052CC] hover:bg-[#003D99] text-white" : "bg-muted text-muted-foreground")}
                 >

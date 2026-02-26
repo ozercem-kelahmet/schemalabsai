@@ -48,6 +48,7 @@ const cloudProviders: { id: CloudProvider; name: string; description: string; ic
 
 export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProps) {
   const [selectedProvider, setSelectedProvider] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<string>("upload")
   const [dragActive, setDragActive] = useState(false)
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
   
@@ -77,6 +78,7 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
 
   const resetForm = () => {
     setSelectedProvider(null)
+    setActiveTab("upload")
     setUploadedFiles([])
     setConnectionName("")
     setEndpoint("")
@@ -204,6 +206,13 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
       }
     }
     
+    // Upload files: pass to parent handler directly
+    if (type === "upload") {
+      onConnect?.(connection)
+      handleClose()
+      return
+    }
+
     // For multi-table connections, fetch tables first
     const multiTableTypes = ["postgresql", "mysql", "supabase", "mongodb", "snowflake", "databricks", "graphql", "pinecone", "chroma", "google-drive", "gcs", "aws-s3"]
     const connSubType = connection.subType || selectedProvider || ""
@@ -507,11 +516,18 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
                 </div>
               </div>
               {(selectedProvider === "supabase") && (
-                <div className="flex items-center gap-2">
-                  <input type="checkbox" id="ssl-toggle" checked={true} readOnly className="rounded" />
-                  <Label htmlFor="ssl-toggle" className="text-xs text-muted-foreground">SSL Required (Supabase)</Label>
-                  <a href="https://supabase.com/docs/guides/database/connecting-to-postgres" target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline ml-auto">Learn more</a>
-                </div>
+                <>
+                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5">
+                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                      <span className="font-medium">Session Pooling:</span> Connection uses Supabase's session pooler on port 5432.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input type="checkbox" id="ssl-toggle" checked={true} readOnly className="rounded" />
+                    <Label htmlFor="ssl-toggle" className="text-xs text-muted-foreground">SSL Required (Supabase)</Label>
+                    <a href="https://supabase.com/docs/guides/database/connecting-to-postgres" target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline ml-auto">Learn more</a>
+                  </div>
+                </>
               )}
               <Button onClick={() => handleConnect("database")}
                 disabled={!connectionName || !dbHost || !dbName || !dbUser || !dbPassword}
@@ -700,7 +716,7 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
         ) : selectedProvider ? (
           renderProviderForm()
         ) : (
-          <Tabs defaultValue="upload" className="w-full">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
             <TabsList className="grid w-full grid-cols-4 bg-muted">
               <TabsTrigger value="upload" className="data-[state=active]:bg-card">
                 <FileUp className="h-4 w-4 mr-2" />
