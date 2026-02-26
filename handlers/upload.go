@@ -90,16 +90,21 @@ func UploadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userID := r.Header.Get("X-User-ID")
+	var parseWarning string
 	folderID := r.FormValue("folder_id")
 
 // Check storage and credit quota before upload
 if userID != "" && DB != nil {
 	if ok, reason := CheckStorage(userID, float64(r.ContentLength)/(1024*1024)); !ok {
-		http.Error(w, reason, http.StatusForbidden)
+		w.Header().Set("Content-Type", "application/json")
+w.WriteHeader(http.StatusForbidden)
+json.NewEncoder(w).Encode(map[string]string{"error": reason})
 		return
 	}
 	if ok, reason := CheckCredits(userID, 0.01); !ok {
-		http.Error(w, reason, http.StatusForbidden)
+		w.Header().Set("Content-Type", "application/json")
+w.WriteHeader(http.StatusForbidden)
+json.NewEncoder(w).Encode(map[string]string{"error": reason})
 		return
 	}
 }
@@ -107,7 +112,9 @@ if userID != "" && DB != nil {
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		http.Error(w, "Failed to read file", http.StatusBadRequest)
+		w.Header().Set("Content-Type", "application/json")
+w.WriteHeader(http.StatusBadRequest)
+json.NewEncoder(w).Encode(map[string]string{"error": "Failed to read file"})
 		return
 	}
 	defer file.Close()
@@ -122,7 +129,9 @@ maxFileSizeMB = getEnvInt("MAX_FILE_SIZE_MB_UNLIMITED", 100)
 }
 maxFileSize := int64(maxFileSizeMB) * 1024 * 1024
 	if header.Size > maxFileSize {
-		http.Error(w, fmt.Sprintf("File too large. Max size: %dMB", maxFileSizeMB), http.StatusBadRequest)
+		w.Header().Set("Content-Type", "application/json")
+w.WriteHeader(http.StatusBadRequest)
+json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("File too large. Max size: %dMB", maxFileSizeMB)})
 		return
 	}
 
@@ -133,14 +142,18 @@ maxFileSize := int64(maxFileSizeMB) * 1024 * 1024
 		DB.Model(&UploadedFile{}).Where("user_id = ?", userID).Select("COALESCE(SUM(size), 0)").Scan(&totalUsed)
 	}
 	if totalUsed + header.Size > maxTotalSize {
-		http.Error(w, fmt.Sprintf("Storage limit exceeded. Max: %dMB, Used: %dMB", maxTotalMB, totalUsed/(1024*1024)), http.StatusBadRequest)
+		w.Header().Set("Content-Type", "application/json")
+w.WriteHeader(http.StatusBadRequest)
+json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("Storage limit exceeded. Max: %dMB, Used: %dMB", maxTotalMB, totalUsed/(1024*1024))})
 		return
 	}
 
 	ext := strings.ToLower(filepath.Ext(header.Filename))
 	allowed := map[string]bool{".csv": true, ".xlsx": true, ".xls": true, ".json": true, ".parquet": true, ".txt": true, ".pdf": true}
 	if !allowed[ext] {
-		http.Error(w, "File type not supported", http.StatusBadRequest)
+		w.Header().Set("Content-Type", "application/json")
+w.WriteHeader(http.StatusBadRequest)
+json.NewEncoder(w).Encode(map[string]string{"error": "File type not supported. Supported: CSV, Excel (.xlsx, .xls)"})
 		return
 	}
 
@@ -198,13 +211,17 @@ maxFileSize := int64(maxFileSizeMB) * 1024 * 1024
 
 	dest, err := os.Create(destPath)
 	if err != nil {
-		http.Error(w, "Failed to save file", http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json")
+w.WriteHeader(http.StatusInternalServerError)
+json.NewEncoder(w).Encode(map[string]string{"error": "Failed to save file"})
 		return
 	}
 
 	size, err := io.Copy(dest, file)
 	if err != nil {
-		http.Error(w, "Failed to write file", http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json")
+w.WriteHeader(http.StatusInternalServerError)
+json.NewEncoder(w).Encode(map[string]string{"error": "Failed to write file"})
 		return
 	}
 	dest.Sync()
@@ -353,6 +370,7 @@ log.Printf("Excel connection created: %s with %d sheets", baseName, len(tableDet
 				xlFile.Close()
 			} else {
 				log.Printf("Excel OpenFile failed for %s: %v", destPath, err)
+				parseWarning = fmt.Sprintf("Failed to parse Excel file: %v. The file may be corrupted or in an unsupported format.", err)
 				// Check if it's actually an Apple Numbers file
 				if zipReader, zerr := os.Open(destPath); zerr == nil {
 					buf := make([]byte, 512)
@@ -360,6 +378,7 @@ log.Printf("Excel connection created: %s with %d sheets", baseName, len(tableDet
 					zipReader.Close()
 					if strings.Contains(string(buf), "Data/Preset") || strings.Contains(string(buf), "Index/Document") {
 						log.Printf("File %s appears to be Apple Numbers format, not xlsx", destPath)
+					parseWarning = "This file appears to be in Apple Numbers format. Please export as .xlsx from Numbers app: File > Export To > Excel"
 						// Try to update the record with a note
 						if userID != "" && DB != nil {
 							DB.Model(&UploadedFile{}).Where("id = ?", fileID).Updates(map[string]interface{}{
@@ -500,6 +519,7 @@ CreditsUsed: storageCost, CreatedAt: time.Now(),
 		"filename":  finalFilename,
 		"size":      size,
 		"sheets":    sheetFiles,
+		"warning":   parseWarning,
 	})
 }
 
@@ -513,7 +533,7 @@ func GetUploadedFilesHandler(w http.ResponseWriter, r *http.Request) {
 
 	if userID != "" && DB != nil {
 		var files []UploadedFile
-		DB.Select("id, filename, path, size, folder_id, created_at, columns, row_count, vertical, source, is_merged").Where("user_id = ?", userID).Order("created_at desc").Find(&files)
+		DB.Select("id, filename, path, size, folder_id, created_at, columns, row_count, vertical, source, is_merged").Where("user_id = ? AND row_count > 0", userID).Order("created_at desc").Find(&files)
 
 		// Get all folders for this user
 		var folders []Folder

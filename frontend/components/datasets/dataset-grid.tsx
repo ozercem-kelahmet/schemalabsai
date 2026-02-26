@@ -516,6 +516,11 @@ export function DatasetGrid() {
               let mainFileId = ""
               for (const file of files) {
                 const result = await api.upload(file, undefined)
+                if (result?.warning) {
+                  toast.dismiss(uploadToastId)
+                  toast.error(result.warning, { duration: 8000 })
+                  return
+                }
                 uploaded++
                 toast.dismiss(uploadToastId)
                 toast.loading("Uploaded " + uploaded + "/" + files.length + " files...", { id: uploadToastId })

@@ -392,8 +392,8 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
             <>
               <div className="space-y-1">
                 <Label className="text-foreground text-xs">Connection Method</Label>
-                <div className="flex items-center gap-2">
-                  <div className="text-xs text-muted-foreground bg-muted/50 rounded px-2 py-1.5 flex-1">MongoDB Driver (python)</div>
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 flex items-center justify-between">
+                  <p className="text-xs text-amber-600 dark:text-amber-400"><span className="font-medium">MongoDB Driver (python)</span></p>
                   <a href="https://www.mongodb.com/docs/atlas/troubleshoot-connection/" target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline shrink-0">Learn more</a>
                 </div>
               </div>
@@ -412,7 +412,9 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
             <>
               <div className="space-y-1">
                 <Label className="text-foreground text-xs">Connection Method</Label>
-                <div className="text-xs text-muted-foreground bg-muted/50 rounded px-2 py-1.5">REST API</div>
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5">
+                  <p className="text-xs text-amber-600 dark:text-amber-400"><span className="font-medium">REST API</span></p>
+                </div>
               </div>
               <div className="space-y-1">
                 <Label className="text-foreground text-xs">Workspace URL <span className="text-red-500">*</span></Label>
@@ -444,8 +446,8 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
             <>
               <div className="space-y-1">
                 <Label className="text-foreground text-xs">Connection Method</Label>
-                <div className="flex items-center gap-2">
-                  <div className="text-xs text-muted-foreground bg-muted/50 rounded px-2 py-1.5 flex-1">Snowflake Connector</div>
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 flex items-center justify-between">
+                  <p className="text-xs text-amber-600 dark:text-amber-400"><span className="font-medium">Snowflake Connector</span></p>
                   <a href="https://docs.snowflake.com/en/user-guide/gen-conn-config" target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline shrink-0">Learn more</a>
                 </div>
               </div>
