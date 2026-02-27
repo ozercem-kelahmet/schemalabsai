@@ -2212,9 +2212,9 @@ IsMerged:  true,
 	// Save to database
 	var dbModelID string
 if DB != nil && userID != "" {
-		dbModelID = uuid.New().String()
+		dbModelID = preModelID
 ftModel := FineTunedModel{
-			ID:           dbModelID,
+			ID:           preModelID,
 			Name:         modelName,
 			Version:      1,
 SourceFileID: func() string { if mergedFileID != "" { return mergedFileID }; return strings.Join(req.FileIDs, ",") }(),
@@ -2524,13 +2524,19 @@ func TrainingProgressHandler(w http.ResponseWriter, r *http.Request) {
 		if json.Unmarshal(body, &flaskProgress) == nil {
 			status, _ := flaskProgress["status"].(string)
 			// If Flask says completed but Go says training, ignore Flask (stale result)
-			if status == "completed" && trainingProgress.Status == "training" && trainingProgress.Epoch == 0 {
-				// New training just started, Flask has old completed status - skip
-} else if status != "idle" {
+// When Go says training but Flask says completed, ALWAYS trust Go (Flask has stale data)
+if trainingProgress.Status == "training" && (status == "completed" || status == "idle") {
+// Return Go training status, ignore stale Flask
+log.Printf("Overriding stale Flask status=%s with Go training (model=%s)", status, trainingProgress.ModelID)
+goProgress := map[string]interface{}{"status": "training", "model_id": trainingProgress.ModelID, "model_name": trainingProgress.ModelName, "epoch": trainingProgress.Epoch, "epochs": trainingProgress.Epochs, "accuracy": trainingProgress.Accuracy, "loss": trainingProgress.Loss}
+overridden, _ := json.Marshal(goProgress)
+w.Write(overridden)
+return
+}
+if status != "idle" {
 // Override Flask model_id with Go DB UUID
 if trainingProgress.ModelID != "" {
 flaskProgress["model_id"] = trainingProgress.ModelID
-// Update DB training progress
 epoch, _ := flaskProgress["epoch"].(float64)
 epochs, _ := flaskProgress["epochs"].(float64)
 loss, _ := flaskProgress["loss"].(float64)
