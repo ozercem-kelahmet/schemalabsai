@@ -50,6 +50,7 @@ export function BuildWizard() {
   const trainingStartedRef = useRef(false)
   const skipCheckRef = useRef(false)
   const completedByPollingRef = useRef(false)
+  const trainCancelledRef = useRef(false)
 
   // Load metrics history and logs from localStorage on mount
   // Check for ongoing training on mount (e.g. after page refresh)
@@ -159,6 +160,11 @@ export function BuildWizard() {
             accuracy: normalizedAccuracy || 0,
             learningRate: 0.001,
           })
+          // Restore elapsed time from server start_time
+          if (progress.start_time) {
+            const elapsed = Math.floor(Date.now() / 1000 - progress.start_time)
+            if (elapsed > 0) setElapsedTime(elapsed)
+          }
           addLog("Resuming ongoing training session...")
           addLog(`Current: Epoch ${progress.epoch}/${progress.epochs}`)
         }
@@ -182,6 +188,7 @@ export function BuildWizard() {
     // Reset state for new training
     trainingStartedRef.current = false
     completedByPollingRef.current = false
+    trainCancelledRef.current = false
     skipCheckRef.current = false
     setLogs([])
     setEvalMetrics(null)
@@ -226,12 +233,20 @@ export function BuildWizard() {
         selectedTablesStr
       )
 
-      trainingStartedRef.current = true
+      console.log("TRAIN_START: setting initializing, waiting 3s for Go handler")
+      trainingStartedRef.current = false  // Don't start polling yet - wait for Go to initialize
       setCurrentStep("training")
-      setTrainingStatus("training")
+      setTrainingStatus("initializing")
       setMetricsHistory([])
       setElapsedTime(0)
       setCurrentMetrics(null)
+      
+      // Wait 3 seconds for Go handler to reset progress and start Flask training
+      await new Promise(resolve => setTimeout(resolve, 3000))
+      console.log("TRAIN_START: 3s passed, enabling polling")
+      trainingStartedRef.current = true
+      setTrainingStatus("training")
+      setElapsedTime(3) // Account for the 3s wait
 
       addLog("Initializing build environment...")
       addLog(`Model: ${modelName}`)
@@ -254,7 +269,9 @@ export function BuildWizard() {
           setTrainingStatus("idle")
           return
         }
-        console.log("TRAIN_PROMISE_RESOLVED", result); if (completedByPollingRef.current) { console.log("SKIP - already completed by polling"); return } // polling already handled
+        console.log("TRAIN_PROMISE_RESOLVED", result);
+        if (completedByPollingRef.current) { console.log("SKIP - already completed by polling"); return }
+        if (trainCancelledRef.current) { console.log("SKIP - training cancelled/restarted"); return }
         handleTrainResult(result)
       }).catch((err: any) => {
         toast.error("Training Failed", { description: err.message, duration: 10000 })
@@ -339,12 +356,13 @@ export function BuildWizard() {
   }
 
   useEffect(() => {
-    if ((trainingStatus !== "training" && trainingStatus !== "initializing") || isPaused || !trainingStartedRef.current) return
+    if ((trainingStatus !== "training" && trainingStatus !== "initializing") || isPaused) return
 
     const pollProgress = async () => {
       try {
+        if (completedByPollingRef.current || !trainingStartedRef.current) { return }
         const progress = await api.getTrainingProgress(trainingQueryIdRef.current)
-        
+        console.log("POLL:", progress.status, "epoch:", progress.epoch, "acc:", progress.accuracy, "model:", progress.model_id)
         if (progress.status === "training") {
           // Terminaldeki epochs gelince kilitle, geri donmesin
           const serverEpochs = progress.epochs
@@ -376,8 +394,11 @@ export function BuildWizard() {
             return prev
           })
         } else if (progress.status === "completed") {
+          console.log("POLL_COMPLETED: model_id=", progress.model_id, "acc=", progress.accuracy)
           // Training completed - move to evaluate
+          console.log("STOPPING POLLING NOW")
           stopPolling()
+          trainingStartedRef.current = false  // Also prevent any re-polling
           completedByPollingRef.current = true
           const finalAccuracy = (progress.accuracy > 1 ? progress.accuracy / 100 : progress.accuracy) || 0
           setEvalMetrics({
@@ -420,7 +441,7 @@ export function BuildWizard() {
       }
     }
 
-    pollingRef.current = setInterval(pollProgress, 500)
+    pollingRef.current = setInterval(pollProgress, 2000)
     pollProgress()
 
     return () => {
@@ -462,6 +483,7 @@ export function BuildWizard() {
 
   const handleTrainAgain = () => {
     stopPolling()
+    trainCancelledRef.current = true
     skipCheckRef.current = true
     setTrainingStatus("idle")
     trainingStartedRef.current = false
@@ -476,11 +498,21 @@ export function BuildWizard() {
   }
 
   const handleOpenPlayground = async () => {
-    // Always go to new chat - model selection screen
-    const params = new URLSearchParams({
-      new: Date.now().toString(),
-    })
-    router.push("/playground?" + params.toString())
+    if (builtModel) {
+      // Refresh models cache before navigating so playground can find the new model instantly
+      try {
+        const res = await fetch("/api/models/finetuned", { credentials: "include" })
+        const data = await res.json()
+        if (data.models) {
+          localStorage.setItem("schemalabs_models_cache", JSON.stringify({ models: data.models }))
+        }
+      } catch {}
+      const params = new URLSearchParams({
+        model: builtModel.id,
+        new: Date.now().toString(),
+      })
+      router.push("/playground?" + params.toString())
+    }
   }
 
   return (

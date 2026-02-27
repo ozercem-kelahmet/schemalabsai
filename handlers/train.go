@@ -194,6 +194,9 @@ req.Epochs = int(ep)
 }
 		accuracy = acc
 		log.Printf("✅ Accuracy parsed from Flask: %.2f", accuracy)
+// Set completed IMMEDIATELY so polling stops returning stale training status
+trainingProgress.Status = "completed"
+trainingProgress.Accuracy = accuracy
 	} else {
 		log.Printf("⚠️  No accuracy in Flask response or type mismatch")
 	}
@@ -2177,6 +2180,9 @@ log.Printf("Pre-created training model: %s (status=training)", preModelID)
 	if acc, ok := flaskResp["accuracy"].(float64); ok {
 		accuracy = acc
 		log.Printf("✅ Accuracy parsed from Flask: %.2f", accuracy)
+// Set completed IMMEDIATELY so polling stops returning stale training status
+trainingProgress.Status = "completed"
+trainingProgress.Accuracy = accuracy
 	} else {
 		log.Printf("⚠️  No accuracy in Flask response or type mismatch")
 	}
@@ -2502,6 +2508,7 @@ var trainingProgress = struct {
 	Status   string  `json:"status"`
 	ModelID   string  `json:"model_id"`
 	ModelName string  `json:"model_name"`
+StartTime int64   `json:"start_time"`
 }{}
 
 func TrainingProgressHandler(w http.ResponseWriter, r *http.Request) {
@@ -2525,10 +2532,10 @@ func TrainingProgressHandler(w http.ResponseWriter, r *http.Request) {
 			status, _ := flaskProgress["status"].(string)
 			// If Flask says completed but Go says training, ignore Flask (stale result)
 // When Go says training but Flask says completed, ALWAYS trust Go (Flask has stale data)
-if trainingProgress.Status == "training" && (status == "completed" || status == "idle") {
+if (trainingProgress.Status == "training" || trainingProgress.Status == "completed_sent") && (status == "completed" || status == "idle") {
 // Return Go training status, ignore stale Flask
 log.Printf("Overriding stale Flask status=%s with Go training (model=%s)", status, trainingProgress.ModelID)
-goProgress := map[string]interface{}{"status": "training", "model_id": trainingProgress.ModelID, "model_name": trainingProgress.ModelName, "epoch": trainingProgress.Epoch, "epochs": trainingProgress.Epochs, "accuracy": trainingProgress.Accuracy, "loss": trainingProgress.Loss}
+goProgress := map[string]interface{}{"status": "training", "model_id": trainingProgress.ModelID, "model_name": trainingProgress.ModelName, "epoch": trainingProgress.Epoch, "epochs": trainingProgress.Epochs, "accuracy": trainingProgress.Accuracy, "loss": trainingProgress.Loss, "start_time": trainingProgress.StartTime}
 overridden, _ := json.Marshal(goProgress)
 w.Write(overridden)
 return
@@ -2548,27 +2555,32 @@ updates := map[string]interface{}{
 }
 // When training completes, update main accuracy/loss/epochs and set status active
 if status == "completed" && acc > 0 {
+// Only update DB once - check if model is still in "training" status
+var checkModel FineTunedModel
+if DB.Where("id = ? AND status = ?", trainingProgress.ModelID, "training").First(&checkModel).Error == nil {
 updates["accuracy"] = acc
 updates["loss"] = loss
 updates["epochs"] = int(epochs)
 updates["status"] = "active"
 updates["model_path"] = flaskProgress["model_path"]
-log.Printf("Training completed for model %s: accuracy=%.1f%%, updating to active", trainingProgress.ModelID, acc)
-// Send completion email only if model was in training state (prevents duplicates)
+log.Printf("Training completed for model %s: accuracy=%.1f%%, updating to active (once)", trainingProgress.ModelID, acc)
 go func(modelID string, modelAcc float64) {
 	var m FineTunedModel
-	if DB.Where("id = ? AND status = ?", modelID, "training").First(&m).Error == nil {
+	if DB.Where("id = ?", modelID).First(&m).Error == nil {
 		var user User
 		if DB.Where("id = ?", m.UserID).First(&user).Error == nil {
 			emailService := NewEmailService()
 			if err := emailService.SendTrainingComplete(user.Email, m.Name, modelAcc); err != nil {
 				log.Printf("Polling email error: %v", err)
-			} else {
-				log.Printf("Polling email sent to %s for model %s", user.Email, m.Name)
 			}
 		}
 	}
 }(trainingProgress.ModelID, acc)
+// Set idle immediately so next poll doesn't trigger again
+trainingProgress.Status = "completed_sent"
+} else {
+log.Printf("Skipping duplicate completion for model %s (already active)", trainingProgress.ModelID)
+}
 } else if status == "failed" {
 updates["status"] = "failed"
 }
