@@ -575,6 +575,7 @@ export function BuildWizard() {
           trainingTime={elapsedTime}
           onTrainAgain={handleTrainAgain}
           onOpenPlayground={handleOpenPlayground}
+            openingPlayground={openingPlayground}
         />
       )}
     </div>

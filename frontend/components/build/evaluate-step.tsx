@@ -39,6 +39,7 @@ interface EvaluateStepProps {
   trainingTime: number
   onTrainAgain: () => void
   onOpenPlayground: () => void
+  openingPlayground?: boolean
 }
 
 type ExportFormat = "onnx" | "safetensors" | "pytorch" | "tensorflow"
@@ -117,7 +118,7 @@ const exportDestinations: DestinationOption[] = [
   },
 ]
 
-export function EvaluateStep({ metrics, model, trainingTime, onTrainAgain, onOpenPlayground }: EvaluateStepProps) {
+export function EvaluateStep({ metrics, model, trainingTime, onTrainAgain, onOpenPlayground, openingPlayground }: EvaluateStepProps) {
   const [showExportModal, setShowExportModal] = useState(false)
   const [selectedFormat, setSelectedFormat] = useState<ExportFormat>("safetensors")
   const [selectedDestination, setSelectedDestination] = useState<ExportDestination>("download")
@@ -276,7 +277,7 @@ const response = await fetch(`/api/models/finetuned/download?id=${model.id}`, {
           size="lg"
         >
           <MessageSquare className="h-4 w-4" />
-          Open in Playground
+          {openingPlayground ? "Opening model..." : "Open in Playground"}
         </Button>
         <Button
           variant="outline"
