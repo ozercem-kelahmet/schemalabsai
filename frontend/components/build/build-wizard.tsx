@@ -476,14 +476,11 @@ export function BuildWizard() {
   }
 
   const handleOpenPlayground = async () => {
-    if (builtModel) {
-      // Navigate to playground with model parameter - let playground handle model selection
-      const params = new URLSearchParams({
-        model: builtModel.id,
-        new: Date.now().toString(),
-      })
-      router.push("/playground?" + params.toString())
-    }
+    // Always go to new chat - model selection screen
+    const params = new URLSearchParams({
+      new: Date.now().toString(),
+    })
+    router.push("/playground?" + params.toString())
   }
 
   return (
