@@ -497,8 +497,10 @@ export function BuildWizard() {
     setElapsedTime(0)
   }
 
+  const [openingPlayground, setOpeningPlayground] = useState(false)
   const handleOpenPlayground = async () => {
     if (builtModel) {
+      setOpeningPlayground(true)
       // Refresh models cache before navigating so playground can find the new model instantly
       try {
         const res = await fetch("/api/models/finetuned", { credentials: "include" })
