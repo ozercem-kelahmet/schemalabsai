@@ -297,6 +297,7 @@ func main() {
 
 	// Start scheduler for scheduled/real-time sync
 	handlers.GlobalScheduler.Start()
+	handlers.StartTrainingChecker()
 	log.Println("SCHEMALABS AI running on http://localhost:" + apiPort)
 	server := &http.Server{Addr: ":" + apiPort, Handler: nil, MaxHeaderBytes: 1 << 20}
 	log.Fatal(server.ListenAndServe())

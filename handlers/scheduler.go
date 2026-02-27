@@ -154,11 +154,21 @@ func (s *Scheduler) tick() {
 }
 
 func (s *Scheduler) ExecuteJob(job *ScheduledJob) {
+	if ok, reason := CheckCredits(job.UserID, CreditPerTrain); !ok {
+		log.Printf("Retrain blocked for %s: %s", job.ModelName, reason)
+		DB.Model(&FineTunedModel{}).Where("id = ?", job.ModelID).Update("sync_status", "error")
+		return
+	}
+	if ok, reason := CheckStorage(job.UserID, 0); !ok {
+		log.Printf("Retrain blocked for %s: %s", job.ModelName, reason)
+		DB.Model(&FineTunedModel{}).Where("id = ?", job.ModelID).Update("sync_status", "error")
+		return
+	}
 	s.mu.Lock()
 	job.Status = "running"
 	s.mu.Unlock()
 
-	log.Printf("🔄 Retrain starting: %s", job.ModelName)
+	log.Printf("\xf0\x9f\x94\x84 Retrain starting: %s", job.ModelName)
 	now := time.Now()
 	DB.Model(&FineTunedModel{}).Where("id = ?", job.ModelID).Updates(map[string]interface{}{
 		"sync_status": "syncing", "last_sync_at": now,
@@ -176,10 +186,22 @@ func (s *Scheduler) ExecuteJob(job *ScheduledJob) {
 			var totalSize int64
 			DB.Model(&UploadedFile{}).Where("user_id = ?", job.UserID).Select("COALESCE(SUM(size), 0)").Scan(&totalSize)
 			storageMB := float64(totalSize) / (1024 * 1024)
+			var schConns []Connection
+			DB.Where("user_id = ?", job.UserID).Find(&schConns)
+			for _, c := range schConns {
+				if c.CachedTables != "" && c.CachedTables != "null" && c.CachedTables != "[]" {
+					var cached struct{ TableDetails []struct{ Rows int `json:"rows"`; Columns int `json:"columns"` } `json:"table_details"` }
+					if json.Unmarshal([]byte(c.CachedTables), &cached) == nil {
+						for _, t := range cached.TableDetails {
+							cols := t.Columns; if cols < 10 { cols = 10 }
+							storageMB += float64(t.Rows * cols * 20) / (1024 * 1024)
+						}
+					}
+				}
+			}
 			DB.Model(&UserQuota{}).Where("user_id = ?", job.UserID).Update("storage_used_mb", storageMB)
 		}
 	}
-
 	// Step 2: Retrain with fresh data
 	err := triggerRetrain(job)
 
@@ -277,6 +299,9 @@ func triggerRetrain(job *ScheduledJob) error {
 }
 
 func calculateNextRun(cronExpr string) time.Time {
+if cronExpr == "" {
+return time.Now().Add(24 * time.Hour)
+}
 	now := time.Now()
 	switch cronExpr {
 	case "hourly":

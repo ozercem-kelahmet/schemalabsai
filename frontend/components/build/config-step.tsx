@@ -112,7 +112,7 @@ export function ConfigStep({
         api.getConnections().catch(() => ({ connections: [] }))
       ])
       
-      const files = (filesData.files || []).filter((f: any) => !f.is_merged && !f.filename?.includes("_merged_all"))
+      const files = (filesData.files || []).filter((f: any) => !f.is_merged && !f.filename?.includes("_merged_all") && (f.row_count || 0) > 0)
       const models = modelsData.models || []
       const connections = connectionsData.connections || []
       setAllConnections(connections)
@@ -141,6 +141,7 @@ export function ConfigStep({
         console.log("CONFIG-STEP conn:", c.name, c.sub_type, "total_rows=", c.total_rows, "total_cols=", c.total_cols); let totalRows = c.total_rows || 0
         let totalCols = c.total_cols || 0
         let schemaItems: any[] = (c.schema || []).map((s: string) => ({ name: s, type: "string" as const, description: "" }))
+        if ((totalRows || 0) === 0 && (!c.table_details || c.table_details.length === 0)) continue
         connDatasets.push({
           id: c.id,
           name: c.name,
@@ -177,6 +178,7 @@ export function ConfigStep({
                 if (parentIdx >= 0) updated.splice(parentIdx, 1)
                 const src = (conns[i].sub_type === "postgresql" ? "postgresql" : conns[i].sub_type === "mongodb" ? "mongodb" : conns[i].sub_type || "api") as any
                 for (const t of tables) {
+                  if ((t.rows || 0) === 0) continue
                   const tid = conns[i].id + "::" + t.name
                   if (!updated.find(d => d.id === tid)) {
                     updated.push({

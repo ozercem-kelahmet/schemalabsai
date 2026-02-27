@@ -388,6 +388,10 @@ type FineTunedModel struct {
 	NextSyncAt       *time.Time `json:"next_sync_at"`
 	SyncStatus       string     `json:"sync_status" gorm:"default:idle"`
 	ConnectionIDs    string     `json:"connection_ids"`
+Status           string     `json:"status" gorm:"default:active"`
+TrainingEpoch    int        `json:"training_epoch" gorm:"default:0"`
+TrainingLoss     float64    `json:"training_loss" gorm:"default:0"`
+TrainingAcc      float64    `json:"training_acc" gorm:"default:0"`
 }
 
 type Folder struct {
@@ -643,6 +647,30 @@ func DeleteConnectionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	DB.Where("id = ? AND user_id = ?", id, session.UserID).Delete(&Connection{}, &APIKey{})
+
+	// Delete associated uploaded files (connection exports with conn_ prefix)
+	DB.Where("id LIKE ? AND user_id = ?", "conn_"+id+"%", session.UserID).Delete(&UploadedFile{})
+
+	// Recalculate storage after deletion
+	var totalSize int64
+	DB.Model(&UploadedFile{}).Where("user_id = ?", session.UserID).Select("COALESCE(SUM(size), 0)").Scan(&totalSize)
+	var connFiles []Connection
+	DB.Where("user_id = ?", session.UserID).Find(&connFiles)
+	var connSizeMB float64
+	for _, c := range connFiles {
+		if c.CachedTables != "" && c.CachedTables != "null" && c.CachedTables != "[]" {
+			var cached struct{ TableDetails []struct{ Rows int `json:"rows"`; Columns int `json:"columns"` } `json:"table_details"` }
+			if json.Unmarshal([]byte(c.CachedTables), &cached) == nil {
+				for _, t := range cached.TableDetails {
+					cols := t.Columns; if cols < 10 { cols = 10 }
+					connSizeMB += float64(t.Rows * cols * 20) / (1024 * 1024)
+				}
+			}
+		}
+	}
+	newStorageMB := float64(totalSize)/(1024*1024) + connSizeMB
+	DB.Model(&UserQuota{}).Where("user_id = ?", session.UserID).Update("storage_used_mb", newStorageMB)
+
 	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
 }
 

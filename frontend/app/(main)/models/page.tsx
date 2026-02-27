@@ -245,8 +245,29 @@ export default function ModelsPage() {
   const cleanName = (s: string) => s.replace(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}[_.]?/, "").replace(/^\.csv_?/, "").replace(/_\d{8}_\d{6}/, "").replace(/\.(csv|json|jsonl)$/, "")
   const getSourceNames = (m: FineTunedModel): string[] => {
     const names: string[] = []
-    // Add connection names from backend or lookup
-    if (m.connection_ids) {
+    // For connection-based models, show clean table/dataset names from source_file_names
+    if (m.connection_ids && m.source_file_names) {
+      const fileNames = m.source_file_names.split(",").map(s => {
+        let name = cleanName(s.trim())
+        // Remove connID prefix pattern like "cc751ec8_"
+        name = name.replace(/^[a-f0-9]{8}_/, "")
+        return name
+      }).filter(Boolean)
+      fileNames.forEach(n => { if (n && !n.match(/^[0-9]+$/) && n !== "0 files merged") names.push(n) })
+      // If no file names found, fall back to connection names
+      if (names.length === 0) {
+        if (m.connection_names) {
+          m.connection_names.split(",").filter(Boolean).forEach(n => names.push(n.trim()))
+        } else {
+          const connIds = m.connection_ids.split(",").filter(Boolean)
+          connIds.forEach(cid => {
+            const conn = syncConnections.find((c: any) => c.id === cid.trim())
+            names.push(conn ? conn.name || conn.sub_type : "Connection")
+          })
+        }
+      }
+    } else if (m.connection_ids) {
+      // No source_file_names, use connection names
       if (m.connection_names) {
         m.connection_names.split(",").filter(Boolean).forEach(n => names.push(n.trim()))
       } else {
@@ -256,17 +277,22 @@ export default function ModelsPage() {
           names.push(conn ? conn.name || conn.sub_type : "Connection")
         })
       }
-    }
-    // Add file names
-    if (m.source_file_names) {
+    } else if (m.source_file_names) {
+      // Upload-based model
       const fileNames = m.source_file_names.split(",").map(s => cleanName(s.trim())).filter(Boolean)
       fileNames.forEach(n => { if (n && !n.match(/^[0-9]+$/) && n !== "0 files merged") names.push(n) })
     } else if (m.source_name && m.source_name !== "0 files merged") {
       names.push(cleanName(m.source_name))
-    } else if (m.source_files && !m.connection_ids) {
-      m.source_files.split(",").filter(Boolean).forEach((_, i) => names.push("Dataset " + (i + 1)))
     }
-    return names.length > 0 ? names : []
+    // Deduplicate names (case-insensitive)
+    const seen = new Set<string>()
+    const unique = names.filter(n => {
+      const lower = n.toLowerCase()
+      if (seen.has(lower)) return false
+      seen.add(lower)
+      return true
+    })
+    return unique.length > 0 ? unique : []
   }
 
   const handleClick = async (m: FineTunedModel) => {

@@ -300,7 +300,7 @@ func ListFineTunedModelsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var models []FineTunedModel
-	DB.Where("user_id = ?", userID).Order("created_at desc").Find(&models)
+	DB.Where("user_id = ? AND (status = ? OR status = ? OR status IS NULL)", userID, "active", "").Order("created_at desc").Find(&models)
 
 	// Collect all unique file IDs
 	fileIDSet := make(map[string]bool)
@@ -592,7 +592,7 @@ if mongoSelMap != nil && !mongoSelMap[collName] { continue }
 			}
 			json.NewDecoder(resp.Body).Decode(&result)
 			if len(result.Vectors) > 0 {
-				csvPath := fmt.Sprintf("./uploads/conn_%s_pinecone.csv", connID)
+				csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, sanitizeFilename(conn.Name))
 				csvFile, _ := os.Create(csvPath)
 				csvWriter := csv.NewWriter(csvFile)
 				headers := []string{"id"}
@@ -1665,7 +1665,15 @@ if req.ConnectionIDs != "" {
 			}
 			json.Unmarshal(bodyBytes, &result)
 			if len(result.Matches) > 0 {
-				csvPath := fmt.Sprintf("./uploads/conn_%s_pinecone.csv", connID)
+				// Use selected table/namespace name for Pinecone, fallback to connection name
+pineconeTableName := conn.Name
+if conn.SelectedTables != "" {
+	var selTables []string
+	if json.Unmarshal([]byte(conn.SelectedTables), &selTables) == nil && len(selTables) > 0 {
+		pineconeTableName = selTables[0]
+	}
+}
+csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, sanitizeFilename(pineconeTableName))
 				csvFile, _ := os.Create(csvPath)
 				csvWriter := csv.NewWriter(csvFile)
 				var headers []string
@@ -1944,7 +1952,17 @@ if conn.SubType == "excel" {
 			tableNames = append(tableNames, name)
 		}
 		tableRows.Close()
+// Filter by selected tables
+var pgSelMap map[string]bool
+if conn.SelectedTables != "" {
+var sel []string
+json.Unmarshal([]byte(conn.SelectedTables), &sel)
+pgSelMap = make(map[string]bool)
+for _, s := range sel { pgSelMap[s] = true }
+log.Printf("PostgreSQL selected tables filter: %v", sel)
+}
 		for _, tableName := range tableNames {
+if pgSelMap != nil && !pgSelMap[tableName] { continue }
 			dataRows, err := sqlDB.Query(fmt.Sprintf(`SELECT * FROM "%s"`, tableName))
 			if err != nil { continue }
 			cols, _ := dataRows.Columns()
@@ -2010,7 +2028,19 @@ if conn.SubType == "excel" {
 					var connName string
 					DB.Table("connections").Where("id = ?", cid).Select("name").Scan(&connName)
 					if connName == "" { connName = cid[:8] }
-					friendlyName = connName + " - " + tablePart + ".csv"
+					// For vector DBs (pinecone etc), use selected table/namespace from connection
+var selectedTableName string
+DB.Table("connections").Where("id = ?", cid).Select("selected_tables").Scan(&selectedTableName)
+if selectedTableName != "" {
+	var selTables []string
+	if json.Unmarshal([]byte(selectedTableName), &selTables) == nil && len(selTables) > 0 {
+		friendlyName = connName + " - " + selTables[0] + ".csv"
+	} else {
+		friendlyName = connName + " - " + tablePart + ".csv"
+	}
+} else {
+	friendlyName = connName + " - " + tablePart + ".csv"
+}
 				}
 				DB.Create(&UploadedFile{
 					ID: fileID,
@@ -2095,6 +2125,24 @@ queryIDField.Write([]byte(req.QueryID))
 
 	writer.Close()
 
+// Pre-create model with "training" status so it persists across page refresh
+preModelID := uuid.New().String()
+preModel := FineTunedModel{
+ID: preModelID,
+Name: func() string { if req.ModelName != "" { return req.ModelName }; return "training..." }(),
+Status: "training",
+UserID: userID,
+Epochs: req.Epochs,
+BatchSize: req.BatchSize,
+SourceFiles: strings.Join(req.FileIDs, ","),
+ConnectionIDs: req.ConnectionIDs,
+CreatedAt: time.Now(),
+SyncMode: func() string { if req.SyncMode != "" { return req.SyncMode }; return "manual" }(),
+}
+DB.Create(&preModel)
+trainingProgress.ModelID = preModelID
+log.Printf("Pre-created training model: %s (status=training)", preModelID)
+
 	// Call Flask server with timeout
 	httpClient := &http.Client{Timeout: 18000 * time.Second}
 	httpReq, _ := http.NewRequest("POST", GetFlaskURL()+"/finetune", body)
@@ -2172,36 +2220,38 @@ ftModel := FineTunedModel{
 SourceFileID: func() string { if mergedFileID != "" { return mergedFileID }; return strings.Join(req.FileIDs, ",") }(),
 			SourceName:   func() string {
 			// Connection-based: use selected tables or connection name
-			if req.ConnectionIDs != "" {
-				var labels []string
-				for _, cid := range strings.Split(req.ConnectionIDs, ",") {
-					cid = strings.TrimSpace(cid)
-					if cid == "" { continue }
-					var conn Connection
-					if DB.Where("id = ?", cid).First(&conn).Error == nil {
-						if conn.SelectedTables != "" {
-							// Parse JSON array or comma-separated
-							var tableList []string
-							if json.Unmarshal([]byte(conn.SelectedTables), &tableList) == nil {
-								for _, t := range tableList {
-									t = strings.TrimSpace(t)
-									if t != "" { labels = append(labels, t) }
-								}
-							} else {
-								for _, t := range strings.Split(conn.SelectedTables, ",") {
-					t = strings.TrimSpace(strings.Trim(t, `[]\"'`))
-									if t != "" { labels = append(labels, t) }
-								}
-							}
-						} else {
-							labels = append(labels, conn.Name)
-						}
-					}
-				}
-				if len(labels) > 0 { return strings.Join(labels, ", ") }
-			}
-			var names []string
-			for _, fid := range req.FileIDs {
+if req.ConnectionIDs != "" {
+var labels []string
+// Use request-level selected_tables first (what user actually selected for this training)
+if req.SelectedTables != "" {
+var selTables []string
+if json.Unmarshal([]byte(req.SelectedTables), &selTables) == nil {
+for _, t := range selTables {
+t = strings.TrimSpace(t)
+if t != "" { labels = append(labels, t) }
+}
+} else {
+for _, t := range strings.Split(req.SelectedTables, ",") {
+t = strings.TrimSpace(strings.Trim(t, `[]\"'`))
+if t != "" { labels = append(labels, t) }
+}
+}
+}
+// Fallback to connection name if no selected tables from request
+if len(labels) == 0 {
+for _, cid := range strings.Split(req.ConnectionIDs, ",") {
+cid = strings.TrimSpace(cid)
+if cid == "" { continue }
+var conn Connection
+if DB.Where("id = ?", cid).First(&conn).Error == nil {
+labels = append(labels, conn.Name)
+}
+}
+}
+if len(labels) > 0 { return strings.Join(labels, ", ") }
+}
+var names []string
+for _, fid := range req.FileIDs {
 				var file UploadedFile
 				if DB.Where("id = ?", fid).First(&file).Error == nil {
 					names = append(names, file.Filename)
@@ -2225,7 +2275,35 @@ ScheduleCron: req.ScheduleCron,
 ScheduleDesc: req.ScheduleDesc,
 ConnectionIDs: req.ConnectionIDs,
 		}
-		DB.Create(&ftModel)
+		ftModel.ID = preModelID
+// Check if training was queued (Flask returned status=queued, no accuracy yet)
+if status, ok := flaskResp["status"].(string); ok && (status == "queued" || status == "training") {
+	// Training still in progress - keep preModel as "training", don't overwrite with active+0%
+	DB.Model(&FineTunedModel{}).Where("id = ?", preModelID).Updates(map[string]interface{}{
+		"source_name": ftModel.SourceName,
+		"source_files": ftModel.SourceFiles,
+		"connection_ids": ftModel.ConnectionIDs,
+		"sync_mode": ftModel.SyncMode,
+		"schedule_cron": ftModel.ScheduleCron,
+		"schedule_desc": ftModel.ScheduleDesc,
+	})
+	dbModelID = preModelID
+	log.Printf("Training queued/in-progress for model %s - keeping status=training", preModelID)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": "training",
+		"model_id": preModelID,
+		"message": "Training in progress",
+	})
+	return
+}
+if accuracy == 0 {
+	ftModel.Status = "failed"
+	log.Printf("Training returned accuracy 0 - marking as failed")
+} else {
+	ftModel.Status = "active"
+}
+DB.Save(&ftModel)
 
 // Deduct credits and log usage
 UseCredit(userID, "train")
@@ -2452,6 +2530,43 @@ func TrainingProgressHandler(w http.ResponseWriter, r *http.Request) {
 // Override Flask model_id with Go DB UUID
 if trainingProgress.ModelID != "" {
 flaskProgress["model_id"] = trainingProgress.ModelID
+// Update DB training progress
+epoch, _ := flaskProgress["epoch"].(float64)
+epochs, _ := flaskProgress["epochs"].(float64)
+loss, _ := flaskProgress["loss"].(float64)
+acc, _ := flaskProgress["accuracy"].(float64)
+updates := map[string]interface{}{
+"training_epoch": int(epoch),
+"training_loss": loss,
+"training_acc": acc,
+}
+// When training completes, update main accuracy/loss/epochs and set status active
+if status == "completed" && acc > 0 {
+updates["accuracy"] = acc
+updates["loss"] = loss
+updates["epochs"] = int(epochs)
+updates["status"] = "active"
+updates["model_path"] = flaskProgress["model_path"]
+log.Printf("Training completed for model %s: accuracy=%.1f%%, updating to active", trainingProgress.ModelID, acc)
+// Send completion email only if model was in training state (prevents duplicates)
+go func(modelID string, modelAcc float64) {
+	var m FineTunedModel
+	if DB.Where("id = ? AND status = ?", modelID, "training").First(&m).Error == nil {
+		var user User
+		if DB.Where("id = ?", m.UserID).First(&user).Error == nil {
+			emailService := NewEmailService()
+			if err := emailService.SendTrainingComplete(user.Email, m.Name, modelAcc); err != nil {
+				log.Printf("Polling email error: %v", err)
+			} else {
+				log.Printf("Polling email sent to %s for model %s", user.Email, m.Name)
+			}
+		}
+	}
+}(trainingProgress.ModelID, acc)
+} else if status == "failed" {
+updates["status"] = "failed"
+}
+DB.Model(&FineTunedModel{}).Where("id = ?", trainingProgress.ModelID).Updates(updates)
 }
 overridden, _ := json.Marshal(flaskProgress)
 w.Write(overridden)
@@ -2460,7 +2575,26 @@ return
 		}
 	}
 
-	json.NewEncoder(w).Encode(trainingProgress)
+	// Check DB for active training if no in-memory progress
+if trainingProgress.Status == "" || trainingProgress.Status == "idle" {
+userID := r.Header.Get("X-User-ID")
+if userID != "" {
+var trainingModel FineTunedModel
+if DB.Where("user_id = ? AND status = ?", userID, "training").Order("created_at desc").First(&trainingModel).Error == nil {
+json.NewEncoder(w).Encode(map[string]interface{}{
+"status": "training",
+"model_id": trainingModel.ID,
+"model_name": trainingModel.Name,
+"epoch": trainingModel.TrainingEpoch,
+"epochs": trainingModel.Epochs,
+"loss": trainingModel.TrainingLoss,
+"accuracy": trainingModel.TrainingAcc,
+})
+return
+}
+}
+}
+json.NewEncoder(w).Encode(trainingProgress)
 }
 
 func UpdateFineTunedModelHandler(w http.ResponseWriter, r *http.Request) {
@@ -2619,4 +2753,59 @@ func DownloadModelHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/octet-stream")
 
 	http.ServeFile(w, r, filePath)
+}
+
+
+// StartTrainingChecker periodically checks for stale "training" models
+// If user closes browser, polling stops but model stays "training" forever
+// This goroutine checks Flask and updates accordingly
+func StartTrainingChecker() {
+	go func() {
+		for {
+			time.Sleep(60 * time.Second)
+			var staleModels []FineTunedModel
+			// Find models stuck in "training" for more than 5 minutes
+			DB.Where("status = ? AND created_at < ?", "training", time.Now().Add(-5*time.Minute)).Find(&staleModels)
+			for _, m := range staleModels {
+				// Check Flask for this model's training status
+				client := &http.Client{Timeout: 3 * time.Second}
+				resp, err := client.Get(GetFlaskURL() + "/training/progress?query_id=" + m.ID)
+				if err != nil {
+					// Flask unreachable - if model older than 30 min, mark failed
+					if time.Since(m.CreatedAt) > 30*time.Minute {
+						DB.Model(&m).Updates(map[string]interface{}{"status": "failed"})
+						log.Printf("Stale training checker: marked %s as failed (Flask unreachable, 30min+)", m.ID)
+					}
+					continue
+				}
+				body, _ := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				var progress map[string]interface{}
+				if json.Unmarshal(body, &progress) != nil { continue }
+				status, _ := progress["status"].(string)
+				acc, _ := progress["accuracy"].(float64)
+				if status == "completed" && acc > 0 {
+					loss, _ := progress["loss"].(float64)
+					epochs, _ := progress["epochs"].(float64)
+					modelPath, _ := progress["model_path"].(string)
+					DB.Model(&m).Updates(map[string]interface{}{
+						"status": "active", "accuracy": acc, "loss": loss,
+						"epochs": int(epochs), "model_path": modelPath,
+					})
+					log.Printf("Stale training checker: activated model %s (acc=%.1f%%)", m.ID, acc)
+					// Send email
+					var user User
+					if DB.Where("id = ?", m.UserID).First(&user).Error == nil {
+						emailService := NewEmailService()
+						emailService.SendTrainingComplete(user.Email, m.Name, acc)
+					}
+				} else if status == "failed" || status == "idle" {
+					if time.Since(m.CreatedAt) > 30*time.Minute {
+						DB.Model(&m).Updates(map[string]interface{}{"status": "failed"})
+						log.Printf("Stale training checker: marked %s as failed (status=%s)", m.ID, status)
+					}
+				}
+			}
+		}
+	}()
 }

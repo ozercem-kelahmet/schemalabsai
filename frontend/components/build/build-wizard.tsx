@@ -52,6 +52,31 @@ export function BuildWizard() {
   const completedByPollingRef = useRef(false)
 
   // Load metrics history and logs from localStorage on mount
+  // Check for ongoing training on mount (e.g. after page refresh)
+  useEffect(() => {
+    const checkOngoingTraining = async () => {
+      try {
+        const res = await fetch("/api/train/progress", { credentials: "include" })
+        const progress = await res.json()
+        if (progress.status === "training" && progress.model_id) {
+          // Resume training UI
+          trainingStartedRef.current = true
+          setCurrentStep("training")
+          setTrainingStatus("training")
+          if (progress.model_name) setModelName(progress.model_name)
+          if (progress.epoch) setCurrentEpoch(progress.epoch)
+          if (progress.epochs) setTotalEpochs(progress.epochs)
+          if (progress.accuracy) setCurrentAccuracy(progress.accuracy)
+          if (progress.loss) setCurrentLoss(progress.loss)
+          console.log("Resumed ongoing training:", progress.model_id)
+        }
+      } catch (e) {
+        console.log("No ongoing training")
+      }
+    }
+    checkOngoingTraining()
+  }, [])
+
   useEffect(() => {
     const saved = localStorage.getItem("trainingMetricsHistory")
     if (saved) {

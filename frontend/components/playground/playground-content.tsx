@@ -295,6 +295,17 @@ export function PlaygroundContent({ sessionId: propSessionId }: PlaygroundConten
           }
         }
       }
+      // If coming from build page with model param, set model immediately
+      if (modelIdFromUrl && allModels.length > 0 && !modelSetFromMessages) {
+        const urlModel = allModels.find(m => m.id === modelIdFromUrl || m.id?.includes(modelIdFromUrl))
+        if (urlModel) {
+          setSelectedModels([urlModel] as any)
+          setHasInitializedChat(true)
+          if ((urlModel as any)?.datasets?.length > 0) {
+            setSelectedFiles((urlModel as any).datasets.map((ds: any) => ({ file_id: ds.datasetId, filename: ds.datasetName, source: ds.source })))
+          }
+        }
+      }
     }
     loadAll()
   }, [])
@@ -715,18 +726,18 @@ api.getMessages(sessionId)
         const createData = await api.createQuery(
           userMessage.substring(0, 50) || selectedModel?.name || "New Chat",
           selectedLLMs[0],
-          [selectedModel.id],
+          [selectedModel?.id || ""],
           "",
-          selectedModel.name,
-          selectedModel.accuracy,
-          selectedModel.datasets[0]?.datasetName || "",
-          selectedModel.id
+          selectedModel?.name || "",
+          selectedModel?.accuracy || 0,
+          selectedModel?.datasets?.[0]?.datasetName || "",
+          selectedModel?.id || ""
         )
         if (createData.id) {
           queryId = createData.id
           setCurrentQueryId(queryId)
           
-          window.history.pushState({}, "", `/playground/${queryId}`)
+          window.history.replaceState({}, '', `/playground/${queryId}`)
           
           // Add to sidebar
           setChatSessions(prev => prev.some(s => s.id === queryId) ? prev : [{

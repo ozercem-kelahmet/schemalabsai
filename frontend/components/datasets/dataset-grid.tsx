@@ -289,6 +289,8 @@ export function DatasetGrid() {
       toast.success("Dataset deleted successfully")
       setDatasets(prev => prev.filter(d => d.id !== deleteTarget.id))
       setDeleteTarget(null)
+      // Refresh quota after deletion
+      try { await fetch("/api/quota", { credentials: "include" }) } catch {}
     } catch (error) {
       console.error("Delete failed:", error)
       toast.error("Failed to delete dataset")
