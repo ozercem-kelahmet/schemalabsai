@@ -68,6 +68,11 @@ export function BuildWizard() {
           if (progress.epochs) setTotalEpochs(progress.epochs)
           if (progress.accuracy) setCurrentAccuracy(progress.accuracy)
           if (progress.loss) setCurrentLoss(progress.loss)
+          // Restore elapsed time from server start_time
+          if (progress.start_time) {
+            const elapsed = Math.floor(Date.now() / 1000 - progress.start_time)
+            if (elapsed > 0) setElapsedTime(elapsed)
+          }
           console.log("Resumed ongoing training:", progress.model_id)
         }
       } catch (e) {
