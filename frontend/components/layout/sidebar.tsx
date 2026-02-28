@@ -112,7 +112,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 
   // Load queries from backend - only on playground pages
   useEffect(() => {
-    if (typeof window === "undefined" || !window.location.pathname.includes("playground")) return
+
     const loadQueries = async () => {
       try {
         const res = await fetch("/api/queries", { credentials: "include" })

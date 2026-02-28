@@ -1,13 +1,14 @@
 import type React from "react"
 import type { Metadata, Viewport } from "next"
-import { Geist } from "next/font/google"
+import { Geist, Geist_Mono } from "next/font/google"
 import { ThemeProvider } from "@/components/theme-provider"
 import { QueryStoreProvider } from "@/lib/query-store"
 import { Providers } from "@/components/providers"
 import { AuthProvider } from "@/lib/auth"
 import "./globals.css"
 
-const geist = Geist({ subsets: ["latin"], display: "swap", preload: false })
+const geist = Geist({ subsets: ["latin"] })
+const geistMono = Geist_Mono({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
   title: "Schema Console",
@@ -30,7 +31,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`font-sans antialiased bg-background text-foreground ${geist.className}`} suppressHydrationWarning>
+      <body className={`font-sans antialiased bg-background text-foreground ${geist.variable} ${geistMono.variable}`} suppressHydrationWarning>
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
           <Providers>
             <AuthProvider>
