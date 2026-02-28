@@ -76,9 +76,9 @@ export default function DashboardPage() {
     if (m.training_duration && m.training_duration > 0) {
       return sum + m.training_duration
     }
+    // Estimate: ~2 seconds per epoch for models without duration
     const epochs = m.epochs || 5
-    const estimatedSeconds = epochs * 20
-    return sum + estimatedSeconds
+    return sum + (epochs * 2)
   }, 0)
   const trainingHours = (totalTrainingSeconds / 3600).toFixed(1)
   const recentModels = models.slice(0, 2)

@@ -2582,6 +2582,9 @@ updates["loss"] = loss
 updates["epochs"] = int(epochs)
 updates["status"] = "active"
 updates["model_path"] = flaskProgress["model_path"]
+if trainingProgress.StartTime > 0 {
+updates["training_duration"] = int(time.Now().Unix() - trainingProgress.StartTime)
+}
 log.Printf("Training completed for model %s: accuracy=%.1f%%, updating to active (once)", trainingProgress.ModelID, acc)
 // Email sent from main handler, not polling
 // Set idle immediately so next poll doesn't trigger again
