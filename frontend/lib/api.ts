@@ -393,7 +393,10 @@ export const api = {
   },
 
   getConnections: async () => {
-    return cachedFetch(API_BASE + '/api/connections', 10000)
+    const res = await fetch(API_BASE + '/api/connections', {
+      credentials: 'include'
+    })
+    return res.json()
   },
 
   createConnection: async (data: any) => {
