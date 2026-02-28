@@ -393,10 +393,7 @@ export const api = {
   },
 
   getConnections: async () => {
-    const res = await fetch(API_BASE + '/api/connections', {
-      credentials: 'include'
-    })
-    return res.json()
+    return cachedFetch(API_BASE + '/api/connections', 10000)
   },
 
   createConnection: async (data: any) => {
@@ -427,11 +424,23 @@ export const api = {
     return res.json()
   },
 
-  listTables: async (connectionId: string) => {
+  listTables: async (connectionId: string, skipCache = false) => {
+    const cacheKey = `tables_cache_${connectionId}`
+    if (!skipCache) {
+      try {
+        const cached = sessionStorage.getItem(cacheKey)
+        if (cached) {
+          const parsed = JSON.parse(cached)
+          if (Date.now() - parsed.ts < 30000) return parsed.data  // 30s cache
+        }
+      } catch {}
+    }
     const res = await fetch(API_BASE + '/api/connections/tables?connection_id=' + connectionId, {
       credentials: 'include'
     })
-    return res.json()
+    const data = await res.json()
+    try { sessionStorage.setItem(cacheKey, JSON.stringify({ data, ts: Date.now() })) } catch {}
+    return data
   },
 
   exportTable: async (connectionId: string, tableName: string, limit?: number) => {

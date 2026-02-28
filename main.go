@@ -267,7 +267,7 @@ func main() {
 	// Serve uploaded files
 	// Frontend routes with auth check
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Println("DEBUG CATCH-ALL: ", r.URL.Path)
+		// Static files - no debug log
 		path := r.URL.Path
 
 		// Public routes - no auth needed

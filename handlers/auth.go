@@ -119,6 +119,9 @@ func InitAuth() error {
 		DB.Exec("CREATE INDEX IF NOT EXISTS idx_uploaded_files_user ON uploaded_files(user_id, created_at DESC)")
 		DB.Exec("CREATE INDEX IF NOT EXISTS idx_fine_tuned_models_user ON fine_tuned_models(user_id, created_at DESC)")
 		DB.Exec("CREATE INDEX IF NOT EXISTS idx_connections_user ON connections(user_id)")
+DB.Exec("CREATE INDEX IF NOT EXISTS idx_messages_query ON messages(query_id, created_at)")
+DB.Exec("CREATE INDEX IF NOT EXISTS idx_fine_tuned_models_status ON fine_tuned_models(user_id, status)")
+DB.Exec("CREATE INDEX IF NOT EXISTS idx_queries_model ON queries(user_id, training_model_id)")
 	}()
 
 	// Redis
@@ -306,8 +309,7 @@ func MeHandler(w http.ResponseWriter, r *http.Request) {
 
 func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		fmt.Println("DEBUG: AuthMiddleware handler called for:", r.URL.Path)
-		cookie, err := r.Cookie("session")
+				cookie, err := r.Cookie("session")
 		if err != nil {
 			http.Error(w, "Not authenticated", http.StatusUnauthorized)
 			return
@@ -3082,8 +3084,7 @@ func DeleteAPIKeyHandler(w http.ResponseWriter, r *http.Request) {
 func APIKeyAuthMiddleware(requiredPermission string) func(http.HandlerFunc) http.HandlerFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			fmt.Println("DEBUG: AuthMiddleware handler called for:", r.URL.Path)
-			authHeader := r.Header.Get("Authorization")
+						authHeader := r.Header.Get("Authorization")
 			if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
 				http.Error(w, "Missing or invalid Authorization header", http.StatusUnauthorized)
 				return

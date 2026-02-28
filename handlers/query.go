@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"sync"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -51,8 +52,7 @@ func CreateQueryHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userID := r.Header.Get("X-User-ID")
-	fmt.Printf("USER ID FROM HEADER: %q\n", userID)
-	if userID == "" {
+		if userID == "" {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -60,8 +60,7 @@ func CreateQueryHandler(w http.ResponseWriter, r *http.Request) {
 	var req CreateQueryRequest
 	json.NewDecoder(r.Body).Decode(&req)
 
-	// DEBUG LOG
-	fmt.Printf("CREATE QUERY REQUEST: name=%q, model=%q, isTraining=%v, hasModel=%v, dataSources=%v\n",
+		fmt.Printf("CREATE QUERY REQUEST: name=%q, model=%q, isTraining=%v, hasModel=%v, dataSources=%v\n",
 		req.Name, req.Model, req.IsTraining, req.HasModel, req.DataSources)
 
 	queryID := uuid.New().String()
@@ -161,26 +160,54 @@ func CreateQueryHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+var queryListCache struct {
+	sync.RWMutex
+	data   map[string][]byte
+	expiry map[string]time.Time
+}
+
+func init() {
+	queryListCache.data = make(map[string][]byte)
+	queryListCache.expiry = make(map[string]time.Time)
+}
+
+func InvalidateQueryCache(userID string) {
+	queryListCache.Lock()
+	delete(queryListCache.data, userID)
+	queryListCache.Unlock()
+}
+
 func ListQueriesHandler(w http.ResponseWriter, r *http.Request) {
-startTime := time.Now()
+	startTime := time.Now()
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	userID := r.Header.Get("X-User-ID")
-	fmt.Printf("USER ID FROM HEADER: %q\n", userID)
-	if userID == "" {
+		if userID == "" {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
+	// Check cache (3 second TTL)
+	queryListCache.RLock()
+	if cached, ok := queryListCache.data[userID]; ok {
+		if time.Now().Before(queryListCache.expiry[userID]) {
+			queryListCache.RUnlock()
+			w.Header().Set("Content-Type", "application/json")
+			w.Write(cached)
+			return
+		}
+	}
+	queryListCache.RUnlock()
+
 	modelID := r.URL.Query().Get("model_id")
 var queries []Query
 	if modelID != "" {
-	DB.Where("user_id = ? AND training_model_id = ?", userID, modelID).Order("updated_at desc").Find(&queries)
+	DB.Select("id, name, model, is_training, has_model, training_failed, training_model_id, model_name, model_accuracy, source_csv_name, created_at, file_id, updated_at").Where("user_id = ? AND training_model_id = ?", userID, modelID).Order("updated_at desc").Find(&queries)
 } else {
-	DB.Where("user_id = ?", userID).Order("updated_at desc").Limit(50).Find(&queries)
+	DB.Select("id, name, model, is_training, has_model, training_failed, training_model_id, model_name, model_accuracy, source_csv_name, created_at, file_id, updated_at").Where("user_id = ?", userID).Order("updated_at desc").Limit(50).Find(&queries)
 }
 
 var response []QueryResponse
@@ -204,7 +231,12 @@ SourceFiles:     "",
 }
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Printf("ListQueriesHandler took %v for %d queries\n", time.Since(startTime), len(response))
-json.NewEncoder(w).Encode(map[string]interface{}{"queries": response})
+result, _ := json.Marshal(map[string]interface{}{"queries": response})
+queryListCache.Lock()
+queryListCache.data[userID] = result
+queryListCache.expiry[userID] = time.Now().Add(10 * time.Second)
+queryListCache.Unlock()
+w.Write(result)
 }
 
 func DeleteQueryHandler(w http.ResponseWriter, r *http.Request) {
@@ -214,8 +246,7 @@ func DeleteQueryHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userID := r.Header.Get("X-User-ID")
-	fmt.Printf("USER ID FROM HEADER: %q\n", userID)
-	queryID := r.URL.Query().Get("id")
+		queryID := r.URL.Query().Get("id")
 
 	if userID == "" || queryID == "" {
 		http.Error(w, "Bad request", http.StatusBadRequest)
@@ -237,8 +268,7 @@ func GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userID := r.Header.Get("X-User-ID")
-	fmt.Printf("USER ID FROM HEADER: %q\n", userID)
-	queryID := r.URL.Query().Get("query_id")
+		queryID := r.URL.Query().Get("query_id")
 	modelID := r.URL.Query().Get("model_id")
 
 	if userID == "" {
@@ -249,11 +279,9 @@ func GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	var messages []Message
 
 	if modelID != "" {
-		fmt.Printf("DEBUG: Getting messages for model_id: %s\n", modelID)
-		var queryIDs []string
+			var queryIDs []string
 		var model FineTunedModel; modelName := modelID; if err := DB.Where("id = ?", modelID).First(&model).Error; err == nil && model.ModelPath != "" { modelName = strings.TrimSuffix(strings.TrimPrefix(model.ModelPath, "../checkpoints/"), ".pt") }; DB.Model(&Query{}).Where("user_id = ? AND (training_model_id = ? OR training_model_id = ?)", userID, modelID, modelName).Pluck("id", &queryIDs)
-		fmt.Printf("DEBUG: Found %d queries for model\n", len(queryIDs))
-		if len(queryIDs) > 0 {
+			if len(queryIDs) > 0 {
 			DB.Where("query_id IN ? AND user_id = ?", queryIDs, userID).Order("created_at asc").Find(&messages)
 		}
 	} else if queryID != "" {
@@ -263,7 +291,6 @@ func GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Printf("DEBUG: Returning %d messages\n", len(messages))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"messages": messages})
 }
@@ -275,8 +302,7 @@ func UpdateQueryHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userID := r.Header.Get("X-User-ID")
-	fmt.Printf("USER ID FROM HEADER: %q\n", userID)
-	if userID == "" {
+		if userID == "" {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}

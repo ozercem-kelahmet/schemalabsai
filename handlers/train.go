@@ -1195,6 +1195,7 @@ log.Printf("=== MULTI TRAIN HANDLER CALLED: path=%s method=%s ===", r.URL.Path, 
 	trainingProgress.Loss = 0
 	trainingProgress.ModelID = ""
 	trainingProgress.ModelName = ""
+trainingProgress.Epochs = 0
 	// Reset Flask progress too
 	go func() {
 		client := &http.Client{Timeout: 3 * time.Second}
@@ -2144,6 +2145,7 @@ SyncMode: func() string { if req.SyncMode != "" { return req.SyncMode }; return 
 }
 DB.Create(&preModel)
 trainingProgress.ModelID = preModelID
+trainingProgress.ModelName = req.ModelName
 log.Printf("Pre-created training model: %s (status=training)", preModelID)
 
 	// Call Flask server with timeout
@@ -2334,7 +2336,10 @@ if req.SyncMode == "real-time" && req.ConnectionIDs != "" { GlobalWatcher.StartW
 
 
 // Send training complete email
-log.Printf("MULTI EMAIL CHECK: accuracy=%.2f userID=%s", accuracy, userID)
+log.Printf("MULTI EMAIL CHECK: accuracy=%.2f userID=%s (will send in 30s)", accuracy, userID)
+// Delay email 30 seconds so frontend has time to show success screen first
+go func() {
+time.Sleep(30 * time.Second)
 if accuracy > 0 {
 var user User
 if DB.Where("id = ?", userID).First(&user).Error == nil {
@@ -2346,6 +2351,7 @@ log.Printf("MULTI EMAIL SENT to %s", user.Email)
 }
 }
 }
+}()
 	w.Header().Set("Content-Type", "application/json")
 	rows := 0
 	if r, ok := flaskResp["rows"].(float64); ok {
@@ -2530,14 +2536,27 @@ func TrainingProgressHandler(w http.ResponseWriter, r *http.Request) {
 		var flaskProgress map[string]interface{}
 		if json.Unmarshal(body, &flaskProgress) == nil {
 			status, _ := flaskProgress["status"].(string)
-			// If Flask says completed but Go says training, ignore Flask (stale result)
-// When Go says training but Flask says completed, ALWAYS trust Go (Flask has stale data)
-if (trainingProgress.Status == "training" || trainingProgress.Status == "completed_sent") && (status == "completed" || status == "idle") {
-// Return Go training status, ignore stale Flask
-log.Printf("Overriding stale Flask status=%s with Go training (model=%s)", status, trainingProgress.ModelID)
-goProgress := map[string]interface{}{"status": "training", "model_id": trainingProgress.ModelID, "model_name": trainingProgress.ModelName, "epoch": trainingProgress.Epoch, "epochs": trainingProgress.Epochs, "accuracy": trainingProgress.Accuracy, "loss": trainingProgress.Loss, "start_time": trainingProgress.StartTime}
-overridden, _ := json.Marshal(goProgress)
-w.Write(overridden)
+
+// When Go is actively training but Flask says completed/idle, return Go status with Flask epoch data
+if trainingProgress.Status == "training" && (status == "completed" || status == "idle") {
+// Update Go progress from Flask data if available
+fEpoch, _ := flaskProgress["epoch"].(float64)
+fEpochs, _ := flaskProgress["epochs"].(float64)
+fLoss, _ := flaskProgress["loss"].(float64)
+fAcc, _ := flaskProgress["accuracy"].(float64)
+if fEpoch > 0 { trainingProgress.Epoch = int(fEpoch) }
+if fEpochs > 0 { trainingProgress.Epochs = int(fEpochs) }
+if fLoss > 0 { trainingProgress.Loss = fLoss }
+if fAcc > 0 { trainingProgress.Accuracy = fAcc }
+goResp := map[string]interface{}{"status": "training", "model_id": trainingProgress.ModelID, "model_name": trainingProgress.ModelName, "epoch": trainingProgress.Epoch, "epochs": trainingProgress.Epochs, "accuracy": trainingProgress.Accuracy, "loss": trainingProgress.Loss, "start_time": trainingProgress.StartTime}
+out, _ := json.Marshal(goResp)
+w.Write(out)
+return
+}
+// Skip polling when completed_sent - return completed and set idle
+if trainingProgress.Status == "completed_sent" {
+json.NewEncoder(w).Encode(map[string]interface{}{"status": "completed", "model_id": trainingProgress.ModelID, "accuracy": trainingProgress.Accuracy, "start_time": trainingProgress.StartTime, "epochs": trainingProgress.Epochs, "epoch": trainingProgress.Epochs})
+trainingProgress.Status = "idle"
 return
 }
 if status != "idle" {
@@ -2564,22 +2583,11 @@ updates["epochs"] = int(epochs)
 updates["status"] = "active"
 updates["model_path"] = flaskProgress["model_path"]
 log.Printf("Training completed for model %s: accuracy=%.1f%%, updating to active (once)", trainingProgress.ModelID, acc)
-go func(modelID string, modelAcc float64) {
-	var m FineTunedModel
-	if DB.Where("id = ?", modelID).First(&m).Error == nil {
-		var user User
-		if DB.Where("id = ?", m.UserID).First(&user).Error == nil {
-			emailService := NewEmailService()
-			if err := emailService.SendTrainingComplete(user.Email, m.Name, modelAcc); err != nil {
-				log.Printf("Polling email error: %v", err)
-			}
-		}
-	}
-}(trainingProgress.ModelID, acc)
+// Email sent from main handler, not polling
 // Set idle immediately so next poll doesn't trigger again
 trainingProgress.Status = "completed_sent"
 } else {
-log.Printf("Skipping duplicate completion for model %s (already active)", trainingProgress.ModelID)
+// skip silently
 }
 } else if status == "failed" {
 updates["status"] = "failed"

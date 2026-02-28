@@ -110,8 +110,9 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
     setMounted(true)
   }, [])
 
-  // Load queries from backend
+  // Load queries from backend - only on playground pages
   useEffect(() => {
+    if (typeof window === "undefined" || !window.location.pathname.includes("playground")) return
     const loadQueries = async () => {
       try {
         const res = await fetch("/api/queries", { credentials: "include" })
@@ -327,7 +328,7 @@ export function Sidebar() {
         <div className={cn("flex h-16 items-center gap-2 border-b px-4", theme === "dark" ? "border-white/10" : "border-gray-200")}>
           {(!collapsed || mobileOpen) ? (
             <>
-              <Image src={theme === "dark" ? "/images/schema-light.png" : "/images/schema-dark.png"} alt="Schema" width={72} height={20} className="h-5 w-auto" priority />
+              <img src={theme === "dark" ? "/images/schema-light.png" : "/images/schema-dark.png"} alt="Schema" width={72} height={20} className="h-5 w-auto" />
               <span className="ml-auto rounded bg-[#0052CC]/20 px-1.5 py-0.5 font-mono text-[10px] text-[#2684FF]">ALPHA</span>
               {mobileOpen && (
                 <button onClick={() => setMobileOpen(false)} className={cn("ml-2 p-1 rounded-md md:hidden", theme === "dark" ? "hover:bg-white/10 text-gray-400" : "hover:bg-gray-100 text-gray-600")} aria-label="Close menu">

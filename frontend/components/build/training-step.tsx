@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { TrainingCharts } from "./training-charts"
 import { TrainingLogs } from "./training-logs"
+import { useRef } from "react"
 import type { TrainingMetrics } from "@/lib/types"
 import { Pause, Play, Square, Loader2 } from "lucide-react"
 
@@ -32,10 +33,13 @@ export function TrainingStep({
     return `${mins}:${String(secs).padStart(2, "0")}`
   }
 
-  // Progress bar epoch-based
+  // Progress bar - only increases, never goes backwards
   const epoch = currentMetrics?.epoch || 0
   const total = currentMetrics?.totalEpochs || 0
-  const progress = total > 0 ? Math.min(100, (epoch / total) * 100) : 0
+  const maxProgressRef = useRef(0)
+  const rawProgress = total > 0 ? Math.min(99, (epoch / total) * 100) : 0
+  if (rawProgress > maxProgressRef.current) maxProgressRef.current = rawProgress
+  const progress = maxProgressRef.current
 
   return (
     <div className="space-y-6">
@@ -70,7 +74,7 @@ export function TrainingStep({
                   {status === "training" ? "Training in Progress" : status}
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  Epoch {currentMetrics?.epoch || 0} of {(currentMetrics?.totalEpochs && currentMetrics.totalEpochs > 0) ? currentMetrics.totalEpochs : "..."}
+                  Epoch {currentMetrics?.epoch || 0} of {currentMetrics?.epoch ? (currentMetrics.epoch + 1) : 0}
                 </p>
               </div>
             </div>

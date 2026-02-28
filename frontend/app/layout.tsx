@@ -1,14 +1,13 @@
 import type React from "react"
 import type { Metadata, Viewport } from "next"
-import { Geist, Geist_Mono } from "next/font/google"
+import { Geist } from "next/font/google"
 import { ThemeProvider } from "@/components/theme-provider"
 import { QueryStoreProvider } from "@/lib/query-store"
 import { Providers } from "@/components/providers"
 import { AuthProvider } from "@/lib/auth"
 import "./globals.css"
 
-const geist = Geist({ subsets: ["latin"] })
-const geistMono = Geist_Mono({ subsets: ["latin"] })
+const geist = Geist({ subsets: ["latin"], display: "swap", preload: false })
 
 export const metadata: Metadata = {
   title: "Schema Console",
