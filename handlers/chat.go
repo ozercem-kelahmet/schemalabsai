@@ -754,7 +754,7 @@ return
 				DB.Table("fine_tuned_models").Where("id = ?", req.FineTunedModel).Update("source_files", actualFileID)
 			}
 		}
-		result, err := callFineTunedModel(req.FineTunedModel, actualFileID, req.Message, modelInfo.ModelPath)
+		result, err := callFineTunedModel(req.FineTunedModel, actualFileID, req.Message, modelInfo.ModelPath, userID)
 		if err != nil {
 			fmt.Printf("Fine-tuned model error: %v\\n", err)
 		} else {
@@ -785,6 +785,13 @@ fmt.Println("DEBUG: fineTunedResult does NOT contain vsRaptors")
 	}
 	fmt.Printf("DEBUG PROMPT FILENAME: %q\n", promptFilename)
 	basePrompt := getSystemPrompt(promptFilename, req.DataContext, "")
+	
+	// Add Vertical AI Runtime context to LLM prompt
+	verticalCtx := GetVerticalContext(userID, req.FineTunedModel)
+	if verticalCtx != "" {
+		basePrompt += verticalCtx
+		fmt.Printf("DEBUG: Vertical context added (%d chars)\n", len(verticalCtx))
+	}
 	var systemPrompt string
 	if fineTunedResult != "" {
 		chunks := chunkAnalysis(fineTunedResult, 80000)
@@ -1052,7 +1059,7 @@ func ClearChatHistoryHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // callFineTunedModel calls the Flask server for fine-tuned model analysis
-func callFineTunedModel(modelID string, fileID string, message string, modelPath string) (string, error) {
+func callFineTunedModel(modelID string, fileID string, message string, modelPath string, userID string) (string, error) {
 	flaskURL := GetFlaskURL()
 
 	payload := map[string]interface{}{
@@ -1060,6 +1067,7 @@ func callFineTunedModel(modelID string, fileID string, message string, modelPath
 		"file_id":    fileID,
 		"message":    message,
 		"model_path": modelPath,
+		"user_id":    userID,
 	}
 
 	jsonData, _ := json.Marshal(payload)

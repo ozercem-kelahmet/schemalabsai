@@ -46,6 +46,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 import { ContentRenderer, type ResponseBlock } from "./response-renderer"
+import { VerticalPanel } from "./vertical-panel"
 import { api } from "@/lib/api"
 
 const llmOptions = [
@@ -169,6 +170,7 @@ export function PlaygroundContent({ sessionId: propSessionId }: PlaygroundConten
   const [selectedModels, setSelectedModels] = useState<AdaptedModel[]>([])
   const [compareMode, setCompareMode] = useState(false)
   const selectedModel = compareMode ? selectedModels[0] || null : selectedModels[0] || null
+  const [verticalPanelOpen, setVerticalPanelOpen] = useState(false)
 
   // Chat state
   const [messages, setMessages] = useState<DisplayMessage[]>([])
@@ -1313,6 +1315,7 @@ api.getMessages(sessionId)
   if (!mounted) return null
 
   return (
+    <>
     <TooltipProvider>
       <div className="flex h-[calc(100vh-1.5rem)] flex-col relative -mb-6">
         {/* Header Controls */}
@@ -1558,12 +1561,12 @@ api.getMessages(sessionId)
                 <div className="flex items-center gap-2">
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground">
+                      <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-[#0052CC]" onClick={() => setVerticalPanelOpen(true)}>
                         <Plus className="h-4 w-4" />
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent side="top">
-                      <p>Custom script</p>
+                      <p>Vertical AI Runtime</p>
                     </TooltipContent>
                   </Tooltip>
 
@@ -1619,5 +1622,12 @@ api.getMessages(sessionId)
         </div>
       </div>
     </TooltipProvider>
+    <VerticalPanel
+      open={verticalPanelOpen}
+      onClose={() => setVerticalPanelOpen(false)}
+      modelId={selectedModel?.id || ""}
+      modelName={selectedModel?.name || "No model selected"}
+    />
+    </>
   )
 }

@@ -1128,6 +1128,8 @@ def smart_column_mapping(df_cols, target_col):
 
 
 
+_sector_cache = {}  # model_id -> sector
+
 def detect_sector_with_llm(column_names):
     """Kolon isimlerinden sektor tahmin et"""
     try:
@@ -1737,6 +1739,8 @@ def analyze():
         file_id = data.get('file_id', '')
         model_id = data.get('model_id', '')  # Fine-tuned model ID or "schema-v0" for base
         query = data.get('query', data.get('message', '')).lower()
+        user_id = data.get('user_id', '')
+        print(f'[VERTICAL DEBUG] model_id={model_id}, user_id={user_id}')
         use_base_model = (model_id == "schema-v0" or model_id == "" or model_id == "none")
         
         uploads_dir = '../uploads'
@@ -2260,9 +2264,58 @@ def analyze():
         if len(analysis) > 15000:
             analysis = analysis[:15000] + "\n...(truncated)"
         
+        # === SECTOR DETECTION ===
+        sector_detected = 'unknown'
+        if model_id and model_id not in ("schema-v0", "", "none"):
+            if model_id in _sector_cache:
+                sector_detected = _sector_cache[model_id]
+                print(f"[SECTOR] Cache hit: {sector_detected}")
+            else:
+                try:
+                    sector_detected = detect_sector_with_llm(list(df.columns))
+                    _sector_cache[model_id] = sector_detected
+                    print(f"[SECTOR] Detected: {sector_detected}")
+                except Exception as e:
+                    print(f"[SECTOR] Error: {e}")
+        
+        # === VERTICAL AI RUNTIME PIPELINE ===
+        vertical_result = None
+        if model_id and model_id not in ("schema-v0", "", "none") and user_id:
+            try:
+                schema_output_for_tools = {}
+                if ft_structured:
+                    top_class = max(ft_structured['class_distribution'].items(), key=lambda x: x[1]['count'])[0] if ft_structured.get('class_distribution') else "unknown"
+                    avg_conf = sum(p['confidence'] for p in ft_structured['predictions'][:100]) / max(len(ft_structured['predictions'][:100]), 1)
+                    schema_output_for_tools = {
+                        "prediction": top_class,
+                        "confidence": round(avg_conf, 4),
+                        "class_probabilities": {k: v['percentage']/100 for k, v in ft_structured.get('class_distribution', {}).items()},
+                        "total_predictions": ft_structured.get('total_predictions', 0)
+                    }
+                data_for_tools = df.head(1).to_dict(orient='records')[0] if len(df) > 0 else {}
+                # Add sector to schema_output for tools/agents
+                schema_output_for_tools['sector'] = sector_detected
+                vertical_result = run_vertical_pipeline(model_id, user_id, data_for_tools, schema_output_for_tools)
+                if vertical_result:
+                    analysis += "\n=== VERTICAL AI RUNTIME RESULTS ===\n"
+                    for tr in vertical_result.get('post_inference', []):
+                        if tr['status'] == 'success':
+                            analysis += f"Tool '{tr['tool']}': {json.dumps(tr['output'])}\n"
+                    for ar in vertical_result.get('agent_outputs', []):
+                        if ar['status'] == 'success':
+                            analysis += f"Agent '{ar['agent']}': {json.dumps(ar['output'])}\n"
+                    if vertical_result.get('flags'):
+                        analysis += f"Flags: {vertical_result['flags']}\n"
+                    if vertical_result.get('final_decision'):
+                        analysis += f"Final Decision: {vertical_result['final_decision']}\n"
+            except Exception as e:
+                print(f"[VERTICAL] Pipeline error: {e}")
+                import traceback
+                traceback.print_exc()
+        
         # Return structured JSON with FULL analysis text so LLM can answer questions
         if ft_structured:
-            return jsonify({
+            response = {
                 'status': 'success',
                 'analysis': analysis,
                 'predictions': ft_structured['predictions'],
@@ -2279,9 +2332,16 @@ def analyze():
                     'numeric_columns': len(df.select_dtypes(include=['number']).columns),
                     'categorical_columns': len(df.select_dtypes(include=['object', 'category']).columns)
                 }
-            })
+            }
+            response['sector_detected'] = sector_detected
+            if vertical_result:
+                response['vertical_runtime'] = vertical_result
+            return jsonify(response)
         
-        return jsonify({'analysis': analysis, 'status': 'success'})
+        response = {'analysis': analysis, 'status': 'success', 'sector_detected': sector_detected}
+        if vertical_result:
+            response['vertical_runtime'] = vertical_result
+        return jsonify(response)
     except Exception as e:
         print("="*80)
         print("❌ TRAINING EXCEPTION")
@@ -3295,6 +3355,22 @@ def analyze_file():
         column_names = analysis['file_info'].get('column_names', [])
         sector_detected = detect_sector_with_llm(column_names)
         
+        # Vertical AI Runtime
+        vertical_config_id = request.form.get('vertical_config_id', '')
+        vertical_result = None
+        if vertical_config_id:
+            try:
+                schema_output_for_vertical = {
+                    'predictions': formatted_predictions,
+                    'sector': sector_detected,
+                    'confidence': formatted_predictions[0]['confidence'] if formatted_predictions else 0
+                }
+                data_for_vertical = df.iloc[0].to_dict() if len(df) > 0 else {}
+                vertical_result = run_vertical_pipeline(None, user_id, data_for_vertical, schema_output_for_vertical, vertical_config_id=vertical_config_id)
+                print(f"[ANALYZE] Vertical pipeline done: {vertical_config_id}")
+            except Exception as ve:
+                print(f"[ANALYZE] Vertical error: {ve}")
+
         response = {
             'status': 'success',
             'request_id': request_id,
@@ -3305,10 +3381,12 @@ def analyze_file():
                 'rows': analysis['file_info']['rows'],
                 'columns': analysis['file_info']['columns'],
                 'numeric_columns': len([k for k in analysis.get('statistics', {}).keys()]),
-                'column_names': analysis['file_info']['column_names'][:20]  # İlk 20
+                'column_names': analysis['file_info']['column_names'][:20]
             },
             'statistics': analysis.get('statistics', {})
         }
+        if vertical_result:
+            response['vertical_runtime'] = vertical_result
         
         return jsonify(response)
         
@@ -3321,6 +3399,416 @@ def analyze_file():
         print(f"best_acc at exception: {best_acc if 'best_acc' in locals() else 'UNDEFINED'}")
         print("="*80)
         return jsonify({'error': str(e), 'status': 'error'}), 500
+
+
+
+
+# ─── Vertical AI Runtime: Execution Engine ───
+
+def load_vertical_runtime(model_id, user_id, vertical_config_id=None):
+    """Load active vertical's tools, agents, config for a model or by vertical_config_id"""
+    import psycopg2
+    db_url = os.environ.get('DATABASE_URL', 'postgresql://schemalabs:schemalabs@localhost:5432/schemalabs')
+    try:
+        conn = psycopg2.connect(db_url)
+        cur = conn.cursor()
+        
+        # Find vertical config — by ID or by model_id
+        if vertical_config_id:
+            cur.execute("""
+                SELECT id, name, config_yaml FROM vertical_configs 
+                WHERE id=%s AND enabled=true LIMIT 1
+            """, (vertical_config_id,))
+        else:
+            cur.execute("""
+                SELECT id, name, config_yaml FROM vertical_configs 
+                WHERE model_id=%s AND user_id=%s AND enabled=true
+                ORDER BY created_at DESC LIMIT 1
+            """, (model_id, user_id))
+        row = cur.fetchone()
+        if not row:
+            cur.close(); conn.close()
+            return {"tools": [], "agents": [], "config": {}}
+        
+        vertical_id = row[0]
+        config = {}
+        try:
+            import yaml
+            config = yaml.safe_load(row[2]) or {}
+        except:
+            try: config = json.loads(row[2])
+            except: config = {}
+        
+        # Load tool (1 per vertical)
+        cur.execute("""
+            SELECT id, name, code, hook FROM vertical_tools 
+            WHERE vertical_id=%s AND user_id=%s AND validation_status='passed'
+            ORDER BY execution_order ASC LIMIT 1
+        """, (vertical_id, user_id))
+        tools = [{"id": r[0], "name": r[1], "code": r[2], "hook": r[3]} for r in cur.fetchall()]
+        
+        # Load agent (1 per vertical)
+        cur.execute("""
+            SELECT id, name, code, role FROM vertical_agents 
+            WHERE vertical_id=%s AND user_id=%s AND validation_status='passed'
+            ORDER BY pipeline_order ASC LIMIT 1
+        """, (vertical_id, user_id))
+        agents = [{"id": r[0], "name": r[1], "code": r[2], "role": r[3]} for r in cur.fetchall()]
+        
+        cur.close(); conn.close()
+        print(f"[VERTICAL] Loaded vertical '{row[1]}': {len(tools)} tools, {len(agents)} agents")
+        return {"tools": tools, "agents": agents, "config": config}
+    except Exception as e:
+        print(f"[VERTICAL] Load error: {e}")
+        return {"tools": [], "agents": [], "config": {}}
+
+
+def execute_tool(tool_code, data, schema_output, config, timeout=10):
+    """Execute a tool with timeout via threading"""
+    import threading
+    result = [{"status": "error", "output": None, "error": "Timeout"}]
+    
+    def _run():
+        try:
+            ns = {}
+            exec(tool_code, ns)
+            if 'run' in ns:
+                r = ns['run'](data, schema_output, config)
+                result[0] = {"status": "success", "output": r}
+            else:
+                result[0] = {"status": "error", "output": None, "error": "No run() found"}
+        except Exception as e:
+            result[0] = {"status": "error", "output": None, "error": str(e)}
+    
+    t = threading.Thread(target=_run)
+    t.start()
+    t.join(timeout=timeout)
+    return result[0]
+
+
+def execute_agent(agent_code, data, schema_output, tool_outputs, tools, config, timeout=15):
+    """Execute an agent with timeout via threading"""
+    import threading
+    result = [{"status": "error", "output": None, "error": "Timeout"}]
+    
+    def _run():
+        try:
+            ns = {}
+            exec(agent_code, ns)
+            if 'Agent' not in ns:
+                result[0] = {"status": "error", "output": None, "error": "No Agent class"}
+                return
+            agent = ns['Agent'](config)
+            def tool_runner(name, d2, so2, c2): return {}
+            def schema_runner(d2): return schema_output
+            r = agent.run(data, schema_output, tool_outputs, tool_runner, schema_runner)
+            result[0] = {"status": "success", "output": r}
+        except Exception as e:
+            result[0] = {"status": "error", "output": None, "error": str(e)}
+    
+    t = threading.Thread(target=_run)
+    t.start()
+    t.join(timeout=timeout)
+    return result[0]
+
+
+def run_vertical_pipeline(model_id, user_id, data, schema_output, vertical_config_id=None):
+    """Full pipeline: pre_inference → schema → post_inference → agent → validator"""
+    runtime = load_vertical_runtime(model_id, user_id, vertical_config_id=vertical_config_id)
+    if not runtime['tools'] and not runtime['agents']:
+        return None
+    
+    config = runtime['config']
+    result = {
+        "pre_inference": [], "post_inference": [], "agent_outputs": [],
+        "validator": [], "flags": [],
+        "meta": {"tools_executed": 0, "agents_executed": 0}
+    }
+    
+    # Pre-inference tools
+    for t in runtime['tools']:
+        if t['hook'] == 'pre_inference':
+            print(f"[VERTICAL] Pre-inference: {t['name']}")
+            r = execute_tool(t['code'], data, {}, config)
+            result['pre_inference'].append({"tool": t['name'], "status": r['status'], "output": r.get('output')})
+            result['meta']['tools_executed'] += 1
+    
+    # Post-inference tools
+    tool_outputs = {}
+    for t in runtime['tools']:
+        if t['hook'] == 'post_inference':
+            print(f"[VERTICAL] Post-inference: {t['name']}")
+            r = execute_tool(t['code'], data, schema_output, config)
+            result['post_inference'].append({"tool": t['name'], "status": r['status'], "output": r.get('output')})
+            tool_outputs[t['name']] = r.get('output', {})
+            result['meta']['tools_executed'] += 1
+    
+    # Agents
+    for a in runtime['agents']:
+        print(f"[VERTICAL] Agent: {a['name']}")
+        r = execute_agent(a['code'], data, schema_output, tool_outputs, runtime['tools'], config)
+        result['agent_outputs'].append({"agent": a['name'], "role": a['role'], "status": r['status'], "output": r.get('output')})
+        result['meta']['agents_executed'] += 1
+        if a['role'] == 'decision_maker' and r['status'] == 'success':
+            result['final_decision'] = r.get('output', {}).get('final_decision')
+    
+    # Validators
+    for t in runtime['tools']:
+        if t['hook'] == 'validator':
+            print(f"[VERTICAL] Validator: {t['name']}")
+            vdata = {"original_data": data, "schema_output": schema_output, "tool_outputs": tool_outputs, "agent_outputs": result['agent_outputs']}
+            r = execute_tool(t['code'], vdata, schema_output, config)
+            result['validator'].append({"tool": t['name'], "status": r['status'], "output": r.get('output')})
+            result['meta']['tools_executed'] += 1
+    
+    print(f"[VERTICAL] Done: {result['meta']['tools_executed']}T {result['meta']['agents_executed']}A")
+    return result
+
+# ─── Vertical AI Runtime: Script Validation ───
+
+BLOCKED_IMPORTS = {'torch', 'tensorflow', 'keras', 'sys', 'ctypes', 'pickle', 'subprocess'}
+BLOCKED_CALLS = {'exec', 'eval', '__import__', 'compile', 'execfile'}
+BLOCKED_ATTRS = {'os.system', 'os.popen', 'os.exec', 'os.spawn', 'os.fork'}
+ALLOWED_OS = {'os.environ', 'os.getenv', 'os.path'}
+MAX_SCRIPT_SIZE = 512 * 1024  # 512 KB
+
+
+@app.route('/validate_config', methods=['POST'])
+def validate_config():
+    """Validate a Vertical AI system config (YAML/JSON)"""
+    data = request.get_json()
+    config_yaml = data.get('config_yaml', '')
+    
+    checks = []
+    errors = []
+    
+    # Check 1: Not empty
+    if not config_yaml.strip():
+        errors.append("Config is empty")
+        return jsonify({"status": "failed", "error": "; ".join(errors), "checks": checks})
+    checks.append("Config is not empty")
+    
+    # Check 2: Size limit (64KB)
+    if len(config_yaml.encode('utf-8')) > 64 * 1024:
+        errors.append("Config exceeds 64KB size limit")
+        return jsonify({"status": "failed", "error": "; ".join(errors), "checks": checks})
+    checks.append("Size check passed")
+    
+    # Check 3: Parse as YAML, JSON, or plain text
+    parsed = None
+    config_type = "text"
+    try:
+        import yaml
+        parsed = yaml.safe_load(config_yaml)
+        if isinstance(parsed, dict):
+            config_type = "yaml"
+            checks.append("YAML/JSON parse")
+        else:
+            parsed = {"instructions": config_yaml}
+            config_type = "text"
+            checks.append("Plain text config accepted")
+    except:
+        try:
+            parsed = json.loads(config_yaml)
+            if isinstance(parsed, dict):
+                config_type = "json"
+                checks.append("YAML/JSON parse")
+            else:
+                parsed = {"instructions": config_yaml}
+                config_type = "text"
+                checks.append("Plain text config accepted")
+        except:
+            parsed = {"instructions": config_yaml}
+            config_type = "text"
+            checks.append("Plain text config accepted")
+    
+    # Check 4: Required fields (only for YAML/JSON)
+    if config_type != "text" and 'name' not in parsed:
+        checks.append("Tip: add a 'name' field for better organization")
+    elif config_type != "text":
+        checks.append(f"Name field found: '{parsed['name']}'")
+    
+    # Check 5: Behavior section (recommended)
+    if 'behavior' in parsed:
+        behavior = parsed['behavior']
+        if isinstance(behavior, dict):
+            checks.append(f"Behavior section found ({len(behavior)} rules)")
+        else:
+            errors.append("'behavior' must be a dict/object")
+    else:
+        checks.append("No behavior section (optional)")
+    
+    # Check 6: Output format (optional)
+    if 'output_format' in parsed:
+        checks.append("Output format section found")
+    
+    # Check 7: No dangerous content
+    dangerous = ['__import__', 'exec(', 'eval(', 'subprocess', 'os.system']
+    for d in dangerous:
+        if d in config_yaml:
+            errors.append(f"Config contains suspicious content: '{d}'")
+    if not errors or (len(errors) == 0):
+        checks.append("Security check passed")
+    
+    status = "failed" if errors else "passed"
+    return jsonify({
+        "status": status,
+        "error": "; ".join(errors) if errors else "",
+        "checks": checks
+    })
+
+@app.route('/validate_script', methods=['POST'])
+def validate_script():
+    """Validate a Python tool or agent script before accepting it."""
+    import ast
+    
+    data = request.get_json()
+    code = data.get('code', '')
+    script_type = data.get('script_type', 'tool')  # tool or agent
+    hook = data.get('hook', 'post_inference')
+    
+    checks = []
+    errors = []
+    
+    # Check 1: Size limit
+    if len(code.encode('utf-8')) > MAX_SCRIPT_SIZE:
+        errors.append(f"Script exceeds maximum size of {MAX_SCRIPT_SIZE // 1024}KB")
+    else:
+        checks.append("Size check passed")
+    
+    # Check 2: Syntax validation
+    try:
+        tree = ast.parse(code)
+        checks.append("Syntax check passed")
+    except SyntaxError as e:
+        errors.append(f"Syntax error at line {e.lineno}: {e.msg}")
+        return jsonify({"status": "failed", "error": "; ".join(errors), "checks": checks})
+    
+    # Check 3: Security scan (AST)
+    for node in ast.walk(tree):
+        # Check imports
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                base_module = alias.name.split('.')[0]
+                if base_module in BLOCKED_IMPORTS:
+                    errors.append(f"Line {node.lineno}: blocked import '{alias.name}'")
+                if base_module == 'os' and alias.name not in ALLOWED_OS:
+                    errors.append(f"Line {node.lineno}: restricted import '{alias.name}' (only os.environ allowed)")
+        
+        if isinstance(node, ast.ImportFrom):
+            base_module = (node.module or '').split('.')[0]
+            if base_module in BLOCKED_IMPORTS:
+                errors.append(f"Line {node.lineno}: blocked import from '{node.module}'")
+            if base_module == 'subprocess':
+                errors.append(f"Line {node.lineno}: blocked import from 'subprocess'")
+        
+        # Check dangerous calls
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id in BLOCKED_CALLS:
+                errors.append(f"Line {node.lineno}: blocked call '{node.func.id}()'")
+            if isinstance(node.func, ast.Attribute):
+                full_call = ""
+                if isinstance(node.func.value, ast.Name):
+                    full_call = f"{node.func.value.id}.{node.func.attr}"
+                if full_call in BLOCKED_ATTRS:
+                    errors.append(f"Line {node.lineno}: blocked call '{full_call}()'")
+                if full_call.startswith('os.') and full_call not in ALLOWED_OS:
+                    if node.func.attr not in ('environ', 'getenv', 'path'):
+                        errors.append(f"Line {node.lineno}: blocked os call '{full_call}()'")
+        
+        # Check open() with write mode
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'open':
+            if len(node.args) >= 2:
+                if isinstance(node.args[1], ast.Constant) and 'w' in str(node.args[1].value):
+                    errors.append(f"Line {node.lineno}: file write not allowed")
+    
+    if not errors:
+        checks.append("Security scan passed")
+    
+    # Check 4: Interface validation
+    if script_type == 'tool':
+        # Must have def run(data, schema_output, config)
+        has_run = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == 'run':
+                args = [a.arg for a in node.args.args]
+                if len(args) >= 3 and args[0] == 'data' and args[1] == 'schema_output' and args[2] == 'config':
+                    has_run = True
+                else:
+                    errors.append(f"Tool function 'run' must have signature: run(data, schema_output, config). Found: run({', '.join(args)})")
+                    has_run = True
+        if not has_run:
+            errors.append("Tool must define function: def run(data, schema_output, config)")
+        else:
+            checks.append("Interface validated (def run found)")
+    
+    elif script_type == 'agent':
+        # Support both: class Agent with run() OR standalone def run()
+        has_class_agent = False
+        has_class_run = False
+        has_func_run = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and node.name == 'Agent':
+                has_class_agent = True
+                for item in node.body:
+                    if isinstance(item, ast.FunctionDef) and item.name == 'run':
+                        has_class_run = True
+            if isinstance(node, ast.FunctionDef) and node.name == 'run' and not has_class_agent:
+                args = [a.arg for a in node.args.args]
+                if len(args) >= 3:
+                    has_func_run = True
+        if has_class_agent and has_class_run:
+            checks.append("Interface validated (class Agent with run method)")
+        elif has_func_run:
+            checks.append("Interface validated (standalone run function)")
+        elif has_class_agent and not has_class_run:
+            errors.append("Agent class must define method: def run()")
+        else:
+            errors.append("Agent must define: def run(data, schema_output, tool_outputs, config) or class Agent with run()")
+    
+    # Check 5: Dry-run with synthetic data
+    if not errors:
+        try:
+            namespace = {}
+            exec(code, namespace)
+            
+            if script_type == 'tool' and 'run' in namespace:
+                synthetic_data = {"col1": 1.0, "col2": "test", "col3": 100}
+                synthetic_schema_output = {"prediction": "class_a", "confidence": 0.85, "class_probabilities": {"class_a": 0.85, "class_b": 0.15}}
+                synthetic_config = {"behavior": {"confidence_threshold": 0.75}}
+                result = namespace['run'](synthetic_data, synthetic_schema_output, synthetic_config)
+                if not isinstance(result, dict):
+                    errors.append(f"Tool must return a dict, got {type(result).__name__}")
+                else:
+                    checks.append(f"Dry-run successful (returned dict with {len(result)} keys)")
+            
+            elif script_type == 'agent' and 'Agent' in namespace:
+                AgentClass = namespace['Agent']
+                synthetic_config = {"behavior": {"confidence_threshold": 0.75}}
+                agent_instance = AgentClass(synthetic_config)
+                synthetic_data = {"col1": 1.0, "col2": "test"}
+                synthetic_schema_output = {"prediction": "class_a", "confidence": 0.85, "class_probabilities": {"class_a": 0.85, "class_b": 0.15}}
+                synthetic_tool_outputs = {"sample_tool": {"score": 0.75, "tier": "standard"}}
+                def mock_tool_runner(name, data, schema_output, config): return {}
+                def mock_schema_runner(data): return synthetic_schema_output
+                result = agent_instance.run(synthetic_data, synthetic_schema_output, synthetic_tool_outputs, mock_tool_runner, mock_schema_runner)
+                if not isinstance(result, dict):
+                    errors.append(f"Agent must return a dict, got {type(result).__name__}")
+                elif 'final_decision' not in result:
+                    errors.append("Agent must return dict with 'final_decision' key")
+                else:
+                    checks.append(f"Dry-run successful (returned dict with {len(result)} keys)")
+                    checks.append("Note: tool_outputs is dict format: {tool_name: output_dict}")
+        
+        except Exception as e:
+            errors.append(f"Dry-run failed: {str(e)}")
+    
+    status = "failed" if errors else "passed"
+    return jsonify({
+        "status": status,
+        "error": "; ".join(errors) if errors else "",
+        "checks": checks
+    })
 
 if __name__ == '__main__':
     port = int(os.getenv('FLASK_PORT', 6000))

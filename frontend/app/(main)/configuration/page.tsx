@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Settings, Key, Globe, Plus, Copy, Eye, EyeOff, Trash2, CheckCircle2, Play, Brain, Check, AlertTriangle, Info } from "lucide-react"
+import { Settings, Key, Globe, Plus, Copy, Eye, EyeOff, Trash2, CheckCircle2, Play, Brain, Check, AlertTriangle, Info, Layers } from "lucide-react"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
@@ -36,6 +36,15 @@ interface Endpoint {
   calls: number
   status: string
   created_at: string
+  vertical_config_id?: string
+  vertical_config_name?: string
+}
+
+interface VConfig {
+  id: string
+  name: string
+  model_id: string
+  enabled: boolean
 }
 
 interface FineTunedModel {
@@ -87,7 +96,21 @@ export default function ConfigurationPage() {
   const [newEndpointBaseModel, setNewEndpointBaseModel] = useState("schema-v0")
   const [newEndpointLLM, setNewEndpointLLM] = useState("")
   const [newEndpointDescription, setNewEndpointDescription] = useState("")
+  const [newEndpointVertical, setNewEndpointVertical] = useState("")
+  const [newEndpointType, setNewEndpointType] = useState("query")
+  const [verticalConfigs, setVerticalConfigs] = useState<VConfig[]>([])
   const [creatingEndpoint, setCreatingEndpoint] = useState(false)
+  
+  const fetchVerticals = async (modelId?: string) => {
+    try {
+      const url = modelId ? `/api/vertical/configs?model_id=${modelId}` : `/api/vertical/configs`
+      const res = await fetch(url, { credentials: "include" })
+      if (res.ok) {
+        const configs = await res.json() || []
+        setVerticalConfigs(configs.filter((c: VConfig) => c.enabled))
+      }
+    } catch { setVerticalConfigs([]) }
+  }
 
   const [testModalOpen, setTestModalOpen] = useState(false)
   const [testEndpoint, setTestEndpoint] = useState<Endpoint | null>(null)
@@ -135,6 +158,11 @@ export default function ConfigurationPage() {
 
   const createAPIKey = async () => {
     if (!newKeyName || !selectedFineTunedModel) return
+    if (apiKeys.find((k: any) => k.name === newKeyName)) {
+      setDeleteNotification({ type: "key", name: "Key name already exists: " + newKeyName })
+      setTimeout(() => setDeleteNotification(null), 3000)
+      return
+    }
     setCreatingKey(true)
     try {
       const res = await fetch("/api/keys/create", {
@@ -177,7 +205,12 @@ export default function ConfigurationPage() {
   }
 
   const createEndpoint = async () => {
-    if (!newEndpointName || !newEndpointPath || !newEndpointModel ) return
+    if (!newEndpointName || !newEndpointPath || (newEndpointType === "query" && !newEndpointModel)) return
+    if (endpoints.find(e => e.path === newEndpointPath)) {
+      setDeleteNotification({ type: "endpoint", name: "Path already exists: " + newEndpointPath })
+      setTimeout(() => setDeleteNotification(null), 3000)
+      return
+    }
     setCreatingEndpoint(true)
     try {
       const res = await fetch("/api/endpoints/create", {
@@ -187,18 +220,24 @@ export default function ConfigurationPage() {
         body: JSON.stringify({
           name: newEndpointName,
           path: newEndpointPath,
-          fine_tuned_model_id: newEndpointModel,
-          description: newEndpointDescription
+          fine_tuned_model_id: newEndpointType === "query" ? newEndpointModel : "",
+          description: newEndpointDescription,
+          endpoint_type: newEndpointType,
+          vertical_config_id: newEndpointVertical && newEndpointVertical !== "none" ? newEndpointVertical : ""
         })
       })
       if (res.ok) {
-        fetchData()
         setCreateEndpointModalOpen(false)
+        setCreatingEndpoint(false)
+        setDeleteNotification({ type: "endpoint", name: "Endpoint created: " + newEndpointName })
+        setTimeout(() => setDeleteNotification(null), 3000)
         setNewEndpointName("")
         setNewEndpointPath("")
         setNewEndpointModel("")
         setNewEndpointLLM("")
         setNewEndpointDescription("")
+        setNewEndpointVertical(""); setNewEndpointType("query")
+        fetch("/api/endpoints", { credentials: "include" }).then(r => r.ok ? r.json() : []).then(d => setEndpoints(d || []))
       }
     } catch (e) {
       console.error("Failed to create endpoint:", e)
@@ -209,8 +248,13 @@ export default function ConfigurationPage() {
 
   const deleteEndpoint = async (id: string) => {
     try {
+      const ep = endpoints.find(e => e.id === id)
       await fetch("/api/endpoints/delete", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ id }) })
       setEndpoints(prev => prev.filter(e => e.id !== id))
+      if (ep) {
+        setDeleteNotification({ type: "endpoint", name: ep.name })
+        setTimeout(() => setDeleteNotification(null), 3000)
+      }
     } catch (e) {
       console.error("Failed to delete endpoint:", e)
     }
@@ -375,11 +419,11 @@ export default function ConfigurationPage() {
                       <span className="font-medium text-foreground">{endpoint.name}</span>
                       <span className="flex items-center gap-1 rounded bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-500"><CheckCircle2 className="h-3 w-3" /> Active</span>
                     </div>
-                    <code className="text-xs text-[#0052CC] dark:text-[#2684FF]">https://api.schemalabs.ai/v1/query/{endpoint.path}</code>
+                    <code className="text-xs text-[#0052CC] dark:text-[#2684FF]">https://api.schemalabs.ai/v1/{endpoint.endpoint_type === "analyze" ? "analyze" : "query"}/{endpoint.path}</code>
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                       <span className="flex items-center gap-1"><Brain className="h-3 w-3" /> {getModelName(endpoint.fine_tuned_model_id)}</span>
                       <span>|</span>
-
+                      {endpoint.vertical_config_id && <><span className="flex items-center gap-1 text-purple-400"><Layers className="h-3 w-3" /> Vertical</span><span>|</span></>}
                       <span>{endpoint.calls?.toLocaleString() || 0} calls</span>
                     </div>
                   </div>
@@ -493,6 +537,16 @@ export default function ConfigurationPage() {
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
+              <Label>Endpoint Type</Label>
+              <Select value={newEndpointType} onValueChange={v => { setNewEndpointType(v); if (v === "analyze") fetchVerticals(); }}>
+                <SelectTrigger className="border-border bg-background"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="query">Query — use your trained model</SelectItem>
+                  <SelectItem value="analyze">Analyze — accept external data files</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
               <Label>Base Model</Label>
               <Select value={newEndpointBaseModel} onValueChange={setNewEndpointBaseModel}>
                 <SelectTrigger className="border-border bg-background"><SelectValue /></SelectTrigger>
@@ -501,13 +555,13 @@ export default function ConfigurationPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
+            {newEndpointType === "query" && <div className="space-y-2">
               <Label>Fine-tuned Model</Label>
-              <Select value={newEndpointModel} onValueChange={setNewEndpointModel}>
+              <Select value={newEndpointModel} onValueChange={v => { setNewEndpointModel(v); fetchVerticals(v); setNewEndpointVertical("") }}>
                 <SelectTrigger className="border-border bg-background"><SelectValue placeholder="Select your trained model" /></SelectTrigger>
                 <SelectContent>{fineTunedModels.map(m => <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>)}</SelectContent>
               </Select>
-            </div>
+            </div>}
             <div className="space-y-2">
               <Label>Endpoint Name</Label>
               <Input placeholder="Sales Prediction API" value={newEndpointName} onChange={(e) => setNewEndpointName(e.target.value)} className="border-border bg-background" />
@@ -515,18 +569,61 @@ export default function ConfigurationPage() {
             <div className="space-y-2">
               <Label>URL Path</Label>
               <div className="flex items-center">
-                <span className="rounded-l-md border border-r-0 border-border bg-muted px-3 py-2 text-sm text-muted-foreground">/v1/query/</span>
+                <span className="rounded-l-md border border-r-0 border-border bg-muted px-3 py-2 text-sm text-muted-foreground">{newEndpointType === "analyze" ? "/v1/analyze/" : "/v1/query/"}</span>
                 <Input placeholder="sales-prediction" value={newEndpointPath} onChange={(e) => setNewEndpointPath(e.target.value.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, ""))} className="border-border bg-background rounded-l-none" />
               </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Vertical AI Runtime (Optional)</Label>
+              <Select value={newEndpointVertical} onValueChange={setNewEndpointVertical}>
+                <SelectTrigger className="border-border bg-background"><SelectValue placeholder="None - no vertical processing" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  {verticalConfigs.map(v => <SelectItem key={v.id} value={v.id}>{v.name}{v.enabled ? " (Active)" : ""}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
               <Label>Description (Optional)</Label>
               <Textarea placeholder="What does this endpoint do?" value={newEndpointDescription} onChange={(e) => setNewEndpointDescription(e.target.value)} className="border-border bg-background" rows={2} />
             </div>
+            <div className="rounded-md bg-zinc-900 border border-zinc-700 p-3 relative">
+              <button type="button" className="absolute top-2 right-2 p-1 rounded hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 transition-colors" onClick={(e) => {
+                const btn = e.currentTarget;
+                const p = newEndpointPath || "{path}";
+                const txt = newEndpointType === "analyze"
+                  ? `curl -X POST https://api.schemalabs.ai/v1/analyze/${p} \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -F "file=@data.csv" \
+  -F "query=Analyze this data"`
+                  : `curl -X POST https://api.schemalabs.ai/v1/query/${p} \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "your question"}'`;
+                navigator.clipboard.writeText(txt);
+                btn.innerHTML = '<span class="text-[10px] text-green-400">Copied!</span>';
+                setTimeout(() => { btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>'; }, 1500)
+              }}><Copy className="h-3 w-3" /></button>
+              {newEndpointType === "analyze" ? (
+                <pre className="text-[11px] font-mono leading-relaxed text-zinc-300 whitespace-pre-wrap">{`curl -X POST /v1/analyze/${newEndpointPath || "{path}"}
+  -H "Authorization: Bearer YOUR_API_KEY"
+  -F "file=@data.csv"
+  -F "query=Analyze this data"
+
+# Response: file_info, statistics, sector, predictions`}</pre>
+              ) : (
+                <pre className="text-[11px] font-mono leading-relaxed text-zinc-300 whitespace-pre-wrap">{`curl -X POST /v1/query/${newEndpointPath || "{path}"}
+  -H "Authorization: Bearer YOUR_API_KEY"
+  -H "Content-Type: application/json"
+  -d '{"query": "your question"}'
+
+# Response: analysis, predictions, sector`}</pre>
+              )}
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateEndpointModalOpen(false)}>Cancel</Button>
-            <Button onClick={createEndpoint} disabled={creatingEndpoint || !newEndpointModel || !newEndpointName || !newEndpointPath} className="bg-[#0052CC] text-white hover:bg-[#003D99]">
+            <Button onClick={createEndpoint} disabled={creatingEndpoint || (newEndpointType === "query" && !newEndpointModel) || !newEndpointName || !newEndpointPath} className="bg-[#0052CC] text-white hover:bg-[#003D99]">
               {creatingEndpoint ? "Creating..." : "Create Endpoint"}
             </Button>
           </DialogFooter>

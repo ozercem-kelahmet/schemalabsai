@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -21,6 +22,8 @@ type Endpoint struct {
 	Description      string    `json:"description"`
 	Calls            int       `json:"calls" gorm:"default:0"`
 	Status           string    `json:"status" gorm:"default:active"`
+	VerticalConfigID string    `json:"vertical_config_id"`
+	EndpointType     string    `json:"endpoint_type"`
 	CreatedAt        time.Time `json:"created_at"`
 }
 
@@ -69,6 +72,8 @@ func CreateEndpointHandler(w http.ResponseWriter, r *http.Request) {
 		FineTunedModelID string `json:"fine_tuned_model_id"`
 		LLMModel         string `json:"llm_model"`
 		Description      string `json:"description"`
+VerticalConfigID string `json:"vertical_config_id"`
+EndpointType     string `json:"endpoint_type"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -76,7 +81,7 @@ func CreateEndpointHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Name == "" || req.Path == "" || req.FineTunedModelID == "" {
+	if req.Name == "" || req.Path == "" || (req.EndpointType != "analyze" && req.FineTunedModelID == "") {
 		http.Error(w, "Missing required fields", http.StatusBadRequest)
 		return
 	}
@@ -92,7 +97,7 @@ func CreateEndpointHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var model FineTunedModel
-	if DB.Where("id = ? AND user_id = ?", req.FineTunedModelID, userID).First(&model).Error != nil {
+	if req.FineTunedModelID != "" && DB.Where("id = ? AND user_id = ?", req.FineTunedModelID, userID).First(&model).Error != nil {
 		http.Error(w, "Invalid fine-tuned model", http.StatusBadRequest)
 		return
 	}
@@ -105,6 +110,8 @@ func CreateEndpointHandler(w http.ResponseWriter, r *http.Request) {
 		FineTunedModelID: req.FineTunedModelID,
 		LLMModel:         req.LLMModel,
 		Description:      req.Description,
+		VerticalConfigID: req.VerticalConfigID,
+		EndpointType:     req.EndpointType,
 		Calls:            0,
 		Status:           "active",
 		CreatedAt:        time.Now(),
@@ -208,40 +215,77 @@ func QueryEndpointHandler(w http.ResponseWriter, r *http.Request) {
 	DB.Model(&endpoint).Update("calls", endpoint.Calls+1)
 	DB.Model(&key).Updates(map[string]interface{}{"requests": key.Requests + 1, "last_used": time.Now()})
 
-	// Call fine-tuned model
-	var fineTunedResult string
+	// Call Flask directly for full JSON (sector, predictions, vertical)
+	flaskResponse := map[string]interface{}{}
 if endpoint.FineTunedModelID != "" {
 queryWithData := req.Query
 if len(req.Data) > 0 {
 dataJSON, _ := json.Marshal(req.Data)
 queryWithData = req.Query + "\n\nInput Data: " + string(dataJSON)
 }
-// Get source_file_id from fine_tuned_models table
 var modelInfo struct {
 SourceFileID string
 ModelPath    string
 }
 DB.Table("fine_tuned_models").Where("id = ?", endpoint.FineTunedModelID).Select("source_file_id, model_path").First(&modelInfo)
 fmt.Printf("DEBUG Endpoint: model=%s, source_file_id=%s\n", endpoint.FineTunedModelID, modelInfo.SourceFileID)
-result, err := callFineTunedModel(endpoint.FineTunedModelID, modelInfo.SourceFileID, queryWithData, modelInfo.ModelPath)
+flaskURL := GetFlaskURL()
+payload := map[string]interface{}{
+"model_id": endpoint.FineTunedModelID,
+"file_id": modelInfo.SourceFileID,
+"message": queryWithData,
+"model_path": modelInfo.ModelPath,
+"user_id": endpoint.UserID,
+}
+jsonPayload, _ := json.Marshal(payload)
+flaskResp, err := http.Post(flaskURL+"/analyze", "application/json", bytes.NewBuffer(jsonPayload))
 if err != nil {
-fmt.Printf("Fine-tuned model error: %v\n", err)
+fmt.Printf("Flask error: %v\n", err)
 } else {
-fineTunedResult = result
+defer flaskResp.Body.Close()
+json.NewDecoder(flaskResp.Body).Decode(&flaskResponse)
 }
 }
 
-
-// Return raw analysis - no LLM
+// Build response - pass through Flask fields + endpoint info
 result := map[string]interface{}{
 "query":       req.Query,
 "endpoint_id": endpoint.ID,
 "fine_tuned":  endpoint.FineTunedModelID,
-"analysis":    fineTunedResult,
+}
+for k, v := range flaskResponse {
+result[k] = v
+}
+
+// Add vertical info if configured
+if endpoint.VerticalConfigID != "" {
+var vc VerticalConfig
+if DB.Where("id = ?", endpoint.VerticalConfigID).First(&vc).Error == nil {
+vInfo := map[string]interface{}{
+"id": vc.ID,
+"name": vc.Name,
+"enabled": vc.Enabled,
+"config": vc.ConfigYAML,
+}
+var tools []VerticalTool
+DB.Where("vertical_id = ? AND user_id = ?", vc.ID, endpoint.UserID).Find(&tools)
+tList := []map[string]string{}
+for _, t := range tools {
+tList = append(tList, map[string]string{"name": t.Name, "hook": t.Hook, "status": t.ValidationStatus})
+}
+vInfo["tools"] = tList
+var agents []VerticalAgent
+DB.Where("vertical_id = ? AND user_id = ?", vc.ID, endpoint.UserID).Find(&agents)
+aList := []map[string]string{}
+for _, a := range agents {
+aList = append(aList, map[string]string{"name": a.Name, "role": a.Role, "status": a.ValidationStatus})
+}
+vInfo["agents"] = aList
+result["vertical"] = vInfo
+}
 }
 
 w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
 
 	// Deduct credits and log usage
