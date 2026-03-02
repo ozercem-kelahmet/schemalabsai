@@ -3439,19 +3439,19 @@ def load_vertical_runtime(model_id, user_id, vertical_config_id=None):
             try: config = json.loads(row[2])
             except: config = {}
         
-        # Load tool (1 per vertical)
+        # Load tools
         cur.execute("""
             SELECT id, name, code, hook FROM vertical_tools 
             WHERE vertical_id=%s AND user_id=%s AND validation_status='passed'
-            ORDER BY execution_order ASC LIMIT 1
+            ORDER BY execution_order ASC
         """, (vertical_id, user_id))
         tools = [{"id": r[0], "name": r[1], "code": r[2], "hook": r[3]} for r in cur.fetchall()]
         
-        # Load agent (1 per vertical)
+        # Load agents
         cur.execute("""
             SELECT id, name, code, role FROM vertical_agents 
             WHERE vertical_id=%s AND user_id=%s AND validation_status='passed'
-            ORDER BY pipeline_order ASC LIMIT 1
+            ORDER BY pipeline_order ASC
         """, (vertical_id, user_id))
         agents = [{"id": r[0], "name": r[1], "code": r[2], "role": r[3]} for r in cur.fetchall()]
         
