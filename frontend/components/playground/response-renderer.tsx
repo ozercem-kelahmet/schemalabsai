@@ -165,7 +165,7 @@ export function AdvancedChart({ type, labels, values, values2, values3, title, x
                   <span className="text-[10px] text-white font-medium opacity-0 group-hover:opacity-100">{(values[i] ?? 0).toLocaleString()}</span>
                 </div>
               </div>
-              <span className="text-xs w-16 font-medium text-right">{(values[i] ?? 0).toLocaleString()}</span>
+              <span className="text-[10px] w-20 font-medium text-right tabular-nums">{(values[i] ?? 0).toLocaleString()}</span>
             </div>
           ))}
         </div>
