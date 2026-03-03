@@ -1080,3 +1080,49 @@ export function ResponseRenderer({ blocks }: { blocks: ResponseBlock[] }) {
     </div>
   )
 }
+
+// ─── Function Call Display ───
+export function FunctionCallDisplay({ calls }: { calls: { function_name: string; arguments: any; result: any; error?: string; execution_ms: number }[] }) {
+  if (!calls || calls.length === 0) return null
+  
+  return (
+    <div className="my-2 space-y-2">
+      {calls.map((call, i) => (
+        <div key={i} className="border border-[#2684FF]/20 rounded-lg overflow-hidden bg-[#1a1a2e]/50">
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-[#2684FF]/10 border-b border-[#2684FF]/20">
+            <span className="text-[#2684FF] text-xs">⚡</span>
+            <span className="text-xs font-mono font-medium text-[#2684FF]">{call.function_name}</span>
+            <span className="text-xs text-gray-500 ml-auto">{call.execution_ms}ms</span>
+            {call.error && <span className="text-xs text-red-400">⚠ error</span>}
+          </div>
+          <details className="group">
+            <summary className="px-3 py-1 text-xs text-gray-400 cursor-pointer hover:text-gray-300">
+              Show details
+            </summary>
+            <div className="px-3 py-2 space-y-1">
+              <div>
+                <span className="text-xs text-gray-500">Arguments:</span>
+                <pre className="text-xs text-gray-300 mt-0.5 overflow-x-auto max-h-32 overflow-y-auto bg-black/30 rounded p-1.5">
+                  {JSON.stringify(call.arguments, null, 2)}
+                </pre>
+              </div>
+              {call.error ? (
+                <div>
+                  <span className="text-xs text-red-400">Error:</span>
+                  <pre className="text-xs text-red-300 mt-0.5 bg-black/30 rounded p-1.5">{call.error}</pre>
+                </div>
+              ) : (
+                <div>
+                  <span className="text-xs text-gray-500">Result:</span>
+                  <pre className="text-xs text-gray-300 mt-0.5 overflow-x-auto max-h-48 overflow-y-auto bg-black/30 rounded p-1.5">
+                    {JSON.stringify(call.result, null, 2)}
+                  </pre>
+                </div>
+              )}
+            </div>
+          </details>
+        </div>
+      ))}
+    </div>
+  )
+}

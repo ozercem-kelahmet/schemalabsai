@@ -24,6 +24,37 @@ type VerticalConfig struct {
 	Version         int       `json:"version" gorm:"default:1"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
+	LanguageConfig  string    `json:"language_config" gorm:"type:jsonb"`
+}
+
+// ─── Language Layer Models ───
+
+type PredictionStore struct {
+	ID                string    `json:"id" gorm:"primaryKey"`
+	UserID            string    `json:"user_id"`
+	VerticalID        string    `json:"vertical_id"`
+	ModelID           string    `json:"model_id"`
+	RowData           string    `json:"row_data" gorm:"type:jsonb"`
+	SchemaPrediction  string    `json:"schema_prediction"`
+	SchemaConfidence   float64  `json:"schema_confidence"`
+	ClassProbabilities string   `json:"class_probabilities" gorm:"type:jsonb"`
+	ToolOutputs       string    `json:"tool_outputs" gorm:"type:jsonb"`
+	AgentOutput       string    `json:"agent_output" gorm:"type:jsonb"`
+	FinalDecision     string    `json:"final_decision"`
+	Flags             string    `json:"flags" gorm:"type:jsonb"`
+	QueryID           string    `json:"query_id"`
+	CreatedAt         time.Time `json:"created_at"`
+}
+
+type LLMSecret struct {
+	ID             string    `json:"id" gorm:"primaryKey"`
+	UserID         string    `json:"user_id"`
+	VerticalID     string    `json:"vertical_id"`
+	Provider       string    `json:"provider"`
+	SecretName     string    `json:"secret_name"`
+	EncryptedValue string    `json:"encrypted_value" gorm:"type:text"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type VerticalTool struct {
@@ -147,6 +178,7 @@ func UpdateVerticalConfigHandler(w http.ResponseWriter, r *http.Request) {
 		Description string `json:"description"`
 		ConfigYAML string `json:"config_yaml"`
 		Enabled    *bool  `json:"enabled"`
+LanguageConfig string `json:"language_config"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON", 400); return
@@ -162,6 +194,7 @@ func UpdateVerticalConfigHandler(w http.ResponseWriter, r *http.Request) {
 	if req.Description != "" { updates["description"] = req.Description }
 	if req.ConfigYAML != "" { updates["config_yaml"] = req.ConfigYAML; updates["version"] = config.Version + 1 }
 	if req.Enabled != nil { updates["enabled"] = *req.Enabled }
+	if req.LanguageConfig != "" { updates["language_config"] = req.LanguageConfig }
 
 	DB.Model(&config).Updates(updates)
 

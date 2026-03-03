@@ -263,9 +263,15 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params)
     })
-    const data = await res.json()
+    const text = await res.text()
+    let data: any
+    try {
+      data = JSON.parse(text)
+    } catch {
+      return { error: text || "Request failed", response: text, status: "error" }
+    }
     if (res.status === 403 || data.error) {
-      return { error: data.error || "Request failed", status: "quota_exceeded" }
+      return { error: data.error || data.response || "Request failed", response: data.response || data.error, status: data.status || "error" }
     }
     return data
   },

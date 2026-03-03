@@ -3499,7 +3499,12 @@ def execute_agent(agent_code, data, schema_output, tool_outputs, tools, config, 
                 result[0] = {"status": "error", "output": None, "error": "No Agent class"}
                 return
             agent = ns['Agent'](config)
-            def tool_runner(name, d2, so2, c2): return {}
+            def tool_runner(name, d2, so2, c2):
+                for t in tools:
+                    if t['name'] == name:
+                        r = execute_tool(t['code'], d2, so2, c2 if c2 else config)
+                        return r.get('output', {})
+                return {}
             def schema_runner(d2): return schema_output
             r = agent.run(data, schema_output, tool_outputs, tool_runner, schema_runner)
             result[0] = {"status": "success", "output": r}
@@ -3809,6 +3814,104 @@ def validate_script():
         "error": "; ".join(errors) if errors else "",
         "checks": checks
     })
+
+
+
+# ─── Language Layer Endpoints ───
+
+@app.route('/execute_tool_api', methods=['POST'])
+def execute_tool_api():
+    """Execute a single tool via API - used by Language Layer bridge"""
+    try:
+        data = request.get_json()
+        tool_code = data.get('tool_code', '')
+        row_data = data.get('row_data', {})
+        schema_output = data.get('schema_output', {})
+        config = data.get('config', {})
+        
+        if not tool_code:
+            return jsonify({"status": "error", "error": "No tool_code provided"}), 400
+        
+        result = execute_tool(tool_code, row_data, schema_output, config, timeout=10)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+
+@app.route('/predict_single', methods=['POST'])
+def predict_single():
+    """Run prediction on a single row - used by Language Layer bridge"""
+    try:
+        data = request.get_json()
+        model_id = data.get('model_id', '')
+        user_id = data.get('user_id', '')
+        row_data = data.get('row_data', {})
+        run_pipeline = data.get('run_pipeline', False)
+        vertical_config_id = data.get('vertical_config_id', '')
+        
+        if not model_id:
+            return jsonify({"status": "error", "error": "No model_id provided"}), 400
+        
+        # Load model
+        import pandas as pd
+        df = pd.DataFrame([row_data])
+        
+        # Get model config
+        model_config = get_cached_finetuned_model(model_id, None)
+        if model_config is None:
+            return jsonify({"status": "error", "error": f"Model {model_id} not found"}), 404
+        
+        model = model_config['model']
+        label_encoder = model_config.get('label_encoder')
+        feature_cols = model_config.get('feature_cols', [])
+        
+        # Prepare features
+        import numpy as np
+        X = df.reindex(columns=feature_cols, fill_value=0).values.astype(np.float32)
+        
+        import torch
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        X_tensor = torch.tensor(X, dtype=torch.float32).to(device)
+        
+        model.eval()
+        with torch.no_grad():
+            output = model(X_tensor)
+            probs = torch.softmax(output, dim=1).cpu().numpy()[0]
+            pred_idx = int(np.argmax(probs))
+        
+        prediction = str(pred_idx)
+        if label_encoder and hasattr(label_encoder, 'inverse_transform'):
+            prediction = label_encoder.inverse_transform([pred_idx])[0]
+        
+        confidence = float(probs[pred_idx])
+        class_probs = {str(i): float(p) for i, p in enumerate(probs)}
+        if label_encoder and hasattr(label_encoder, 'classes_'):
+            class_probs = {str(c): float(probs[i]) for i, c in enumerate(label_encoder.classes_)}
+        
+        result = {
+            "status": "success",
+            "schema_prediction": str(prediction),
+            "schema_confidence": confidence,
+            "class_probabilities": class_probs,
+        }
+        
+        # Run vertical pipeline if requested
+        if run_pipeline and vertical_config_id:
+            schema_output = {"prediction": str(prediction), "confidence": confidence, "probabilities": class_probs}
+            vertical_result = run_vertical_pipeline(model_id, user_id, row_data, schema_output, vertical_config_id=vertical_config_id)
+            if vertical_result:
+                result["tool_outputs"] = vertical_result.get("post_inference", {})
+                result["agent_output"] = vertical_result.get("agent_outputs", {})
+                result["flags"] = vertical_result.get("flags", {})
+                result["final_decision"] = vertical_result.get("final_decision", "")
+                result["vertical_runtime"] = vertical_result
+        
+        return jsonify(result)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"status": "error", "error": str(e)}), 500
+
 
 if __name__ == '__main__':
     port = int(os.getenv('FLASK_PORT', 6000))

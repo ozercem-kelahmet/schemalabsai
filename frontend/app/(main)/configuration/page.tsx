@@ -1,13 +1,15 @@
 "use client"
 
+import dynamic from "next/dynamic"
 import { useState, useEffect } from "react"
+import { toast } from "sonner"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Settings, Key, Globe, Plus, Copy, Eye, EyeOff, Trash2, CheckCircle2, Play, Brain, Check, AlertTriangle, Info, Layers } from "lucide-react"
+import { Settings, Key, Globe, Plus, Copy, Eye, EyeOff, Trash2, CheckCircle2, Play, Brain, Check, AlertTriangle, Info, Layers, Pencil } from "lucide-react"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
@@ -65,7 +67,7 @@ const rateLimitOptions = [
   { value: "1000/min", label: "1,000 requests/min (Alpha)" },
 ]
 
-export default function ConfigurationPage() {
+function ConfigurationPageInner() {
   const [apiKeys, setApiKeys] = useState<APIKey[]>([])
   const [apiKeyPage, setApiKeyPage] = useState(1)
   const apiKeysPerPage = 5
@@ -666,7 +668,199 @@ export default function ConfigurationPage() {
             </Button>
           </DialogFooter>
         </DialogContent>
+
+      {/* LLM Settings - External LLMs */}
+      <Card className="border-border bg-card">
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-foreground"><Brain className="h-5 w-5" /> LLM Settings</CardTitle>
+            <CardDescription>Add your API keys to use GPT-4o, Claude, Gemini and other LLMs in the Playground chat. Keys are encrypted and stored securely.</CardDescription>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <LanguageLayerConfig />
+        </CardContent>
+      </Card>
+
       </Dialog>
     </div>
   )
 }
+
+function LanguageLayerConfig() {
+  const [secrets, setSecrets] = useState<{id: string; provider: string; secret_name: string; encrypted_value: string}[]>([])
+  const [provider, setProvider] = useState("openai")
+  const [model, setModel] = useState("gpt-4o")
+  const [apiKey, setApiKey] = useState("")
+  const [secretName, setSecretName] = useState("")
+  const [showKey, setShowKey] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+
+  const [providerModels, setProviderModels] = useState<Record<string, {id: string; name: string}[]>>({
+    openai: [{ id: "gpt-4o", name: "GPT-4o" }],
+    anthropic: [{ id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" }],
+    gemini: [{ id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" }],
+  })
+
+  const providerLabels: Record<string, string> = { openai: "OpenAI", anthropic: "Anthropic", gemini: "Google Gemini" }
+
+  // Fetch models from API
+  useEffect(() => {
+    fetch("/api/vertical/llm/models", { credentials: "include" })
+      .then(r => r.json())
+      .then((models: {id: string; name: string; provider: string}[]) => {
+        if (!models || !Array.isArray(models)) return
+        const grouped: Record<string, {id: string; name: string}[]> = {}
+        models.forEach(m => {
+          const key = m.provider === "Google" ? "gemini" : m.provider.toLowerCase()
+          if (!grouped[key]) grouped[key] = []
+          grouped[key].push({ id: m.id, name: m.name })
+        })
+        setProviderModels(grouped)
+      })
+      .catch(() => {})
+  }, [])
+
+  const fetchSecrets = async () => {
+    try {
+      const r = await fetch("/api/vertical/secrets/list", { credentials: "include" })
+      const data = await r.json()
+      if (Array.isArray(data)) setSecrets(data)
+    } catch {}
+  }
+
+  useEffect(() => { fetchSecrets() }, [])
+
+  const saveSecret = async () => {
+    if (!apiKey || !secretName) { toast.error("Secret name and API key are required"); return }
+    // Validate key first
+    try {
+      const testRes = await fetch("/api/vertical/secrets/test", { method: "POST", headers: {"Content-Type": "application/json"}, credentials: "include", body: JSON.stringify({provider, api_key: apiKey}) })
+      const testData = await testRes.json()
+      if (!testData.success) { toast.error("Invalid API key: " + (testData.error || "Authentication failed")); return }
+    } catch { toast.error("Failed to validate key"); return }
+    try {
+      await fetch("/api/vertical/secrets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ provider, secret_name: secretName, value: apiKey, vertical_id: "" })
+      })
+      toast.success(editingId ? `"${secretName}" updated` : `"${secretName}" saved`)
+      setApiKey(""); setSecretName(""); setEditingId(null)
+      fetchSecrets()
+    } catch { toast.error("Failed to save API key") }
+  }
+
+  const deleteSecret = async (id: string, name: string) => {
+    try {
+      await fetch("/api/vertical/secrets/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ id })
+      })
+      toast.success(`"${name}" deleted`)
+      setSecrets(prev => prev.filter(s => s.id !== id))
+      if (editingId === id) { setEditingId(null); setApiKey(""); setSecretName("") }
+    } catch { toast.error("Failed to delete") }
+  }
+
+  const startEdit = (s: {id: string; provider: string; secret_name: string; encrypted_value: string}) => {
+    setEditingId(s.id)
+    setProvider(s.provider)
+    setSecretName(s.secret_name)
+    setModel(providerModels[s.provider]?.[0]?.id || "")
+    setApiKey("")
+    setShowKey(false)
+    toast(`Editing "${s.secret_name}"`)
+    setTimeout(() => {
+      document.getElementById("ll-apikey-input")?.scrollIntoView({ behavior: "smooth", block: "center" })
+      document.getElementById("ll-apikey-input")?.focus()
+    }, 100)
+  }
+
+  const cancelEdit = () => {
+    setEditingId(null)
+    setApiKey(""); setSecretName("")
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label>Provider</Label>
+          <Select value={provider} onValueChange={(v) => { setProvider(v); setModel(Object.values(providerModels).flat().find(m => providerModels[v]?.some(pm => pm.id === m.id))?.id || providerModels[v]?.[0]?.id || "") }}>
+            <SelectTrigger className="border-border bg-background"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="openai">OpenAI</SelectItem>
+              <SelectItem value="anthropic">Anthropic</SelectItem>
+              <SelectItem value="gemini">Google Gemini</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-2">
+          <Label>Model</Label>
+          <Select value={model} onValueChange={setModel}>
+            <SelectTrigger className="border-border bg-background"><SelectValue placeholder="Select model" /></SelectTrigger>
+            <SelectContent>
+              {(providerModels[provider] || []).map(m => (
+                <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label>Secret Name</Label>
+        <Input placeholder="e.g. OPENAI_API_KEY" value={secretName} onChange={e => setSecretName(e.target.value)} className="border-border bg-background font-mono"  />
+      </div>
+
+      <div className="space-y-2">
+        <Label>{editingId ? "New API Key" : "API Key"}</Label>
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <Input type={showKey ? "text" : "password"} id="ll-apikey-input" placeholder="sk-..." value={apiKey} onChange={e => setApiKey(e.target.value)} className="border-border bg-background font-mono pr-10" />
+            <button onClick={() => setShowKey(!showKey)} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+              {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
+          {editingId && (
+            <Button variant="outline" onClick={cancelEdit}>Cancel</Button>
+          )}
+          <Button onClick={saveSecret} disabled={!apiKey || !secretName} className="bg-[#0052CC] text-white hover:bg-[#003D99] gap-1">
+            {editingId ? "Update" : <><Plus className="h-3 w-3" /> Save</>}
+          </Button>
+        </div>
+      </div>
+
+      {secrets.length > 0 && (
+        <div className="space-y-2">
+          <Label>Saved Keys</Label>
+          <div className="space-y-2">
+            {secrets.map(s => (
+              <div key={s.id} className="flex items-center justify-between p-3 rounded-lg border border-border bg-muted/30">
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-medium px-2 py-0.5 rounded bg-[#2684FF]/10 text-[#2684FF]">{providerLabels[s.provider] || s.provider}</span>
+                  <span className="font-mono text-sm">{s.secret_name}</span>
+                  <span className="text-xs text-muted-foreground font-mono">{s.encrypted_value}</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button variant="ghost" size="sm" onClick={() => startEdit(s as any)} className="text-muted-foreground hover:text-foreground">
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => deleteSecret(s.id, s.secret_name)} className="text-destructive hover:text-destructive">
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default dynamic(() => Promise.resolve(ConfigurationPageInner), { ssr: false })

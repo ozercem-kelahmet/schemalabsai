@@ -45,15 +45,17 @@ import {
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
-import { ContentRenderer, type ResponseBlock } from "./response-renderer"
+import { ContentRenderer, FunctionCallDisplay, type ResponseBlock } from "./response-renderer"
 import { VerticalPanel } from "./vertical-panel"
 import { api } from "@/lib/api"
 
-const llmOptions = [
+const defaultLLMOptions = [
   { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", provider: "Anthropic" },
   { id: "claude-opus-4", name: "Claude Opus 4", provider: "Anthropic" },
   { id: "gpt-4o", name: "GPT-4o", provider: "OpenAI" },
   { id: "gpt-4o-mini", name: "GPT-4o Mini", provider: "OpenAI" },
+  { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", provider: "Google" },
+  { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", provider: "Google" },
 ]
 
 interface BackendModel {
@@ -92,6 +94,15 @@ interface DisplayMessage {
   timestamp: Date
   isLoading?: boolean
   groupId?: string
+  functionCalls?: FunctionCallInfo[]
+}
+
+interface FunctionCallInfo {
+  function_name: string
+  arguments: any
+  result: any
+  error?: string
+  execution_ms: number
 }
 
 function adaptBackendModel(m: BackendModel): AdaptedModel {
@@ -178,7 +189,47 @@ export function PlaygroundContent({ sessionId: propSessionId }: PlaygroundConten
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [currentQueryId, setCurrentQueryId] = useState<string | null>(null)
-  const [selectedLLMs, setSelectedLLMs] = useState<string[]>(["claude-sonnet-4-5"])
+  const [llmOptions, setLlmOptions] = useState(defaultLLMOptions)
+  const [keyStatus, setKeyStatus] = useState<Record<string, boolean>>({})
+  const [addKeyModal, setAddKeyModal] = useState<{open: boolean; provider: string; providerLabel: string}>({open: false, provider: "", providerLabel: ""})
+  const [addKeyValue, setAddKeyValue] = useState("")
+  const [addKeySaving, setAddKeySaving] = useState(false)
+  const [selectedLLMs, setSelectedLLMs] = useState<string[]>([])
+
+  // Fetch available LLM models
+  useEffect(() => {
+    fetch("/api/vertical/llm/models", { credentials: "include" })
+      .then(r => r.json())
+      .then((models: {id: string; name: string; provider: string}[]) => {
+        if (models && models.length > 0) {
+          setLlmOptions(models.map(m => ({ id: m.id, name: m.name, provider: m.provider })))
+          // Set default LLM - only keep models that are visible in dropdown
+          const schemaModels = models.filter(m => m.provider === "Schema")
+          const defaultId = schemaModels.length > 0 ? schemaModels[0].id : ""
+          // Force reset to Schema model - ignore any restored non-visible models
+          setTimeout(() => {
+            setSelectedLLMs(prev => {
+              const filtered = prev.filter(id => {
+                const model = models.find(m => m.id === id)
+                if (!model) return false
+                if (model.provider === "Schema") return true
+                // Check keyStatus for other providers
+                return false
+              })
+              if (filtered.length > 0) return filtered
+              return defaultId ? [defaultId] : []
+            })
+          }, 500)
+        }
+      })
+      .catch(() => {})
+    fetch("/api/vertical/llm/key-status", { credentials: "include" })
+      .then(r => r.json())
+      .then(status => {
+        if (status) setKeyStatus(status)
+      })
+      .catch(() => {})
+  }, [])
 
   // Silent refresh state
   const [hasInitializedChat, setHasInitializedChat] = useState(false)
@@ -258,8 +309,7 @@ export function PlaygroundContent({ sessionId: propSessionId }: PlaygroundConten
         const llmMsg = messagesRes.messages.find((m: any) => m.role === "assistant" && m.model)
         if (llmMsg?.model) {
           const ml = llmMsg.model.toLowerCase()
-          if (ml.includes("gpt")) setSelectedLLMs(["gpt-4o"])
-          else if (ml.includes("claude")) setSelectedLLMs(["claude-sonnet-4-5"])
+          if (llmOptions.length === 0 || llmOptions.some(l => l.id === llmMsg.model && (l.provider === "Schema" || keyStatus.unlimited || keyStatus[l.provider === "Google" ? "gemini" : l.provider.toLowerCase()]))) setSelectedLLMs([llmMsg.model])
         }
       }
       // Fallback: if model not set from messages, try from query
@@ -338,8 +388,7 @@ export function PlaygroundContent({ sessionId: propSessionId }: PlaygroundConten
     const llmMsg = messages.find(m => m.role === "assistant" && m.model)
     if (llmMsg?.model) {
       const ml = llmMsg.model.toLowerCase()
-      if (ml.includes("gpt")) setSelectedLLMs(["gpt-4o"])
-      else if (ml.includes("claude")) setSelectedLLMs(["claude-sonnet-4-5"])
+      if (llmOptions.length === 0 || llmOptions.some(l => l.id === llmMsg.model && (l.provider === "Schema" || keyStatus.unlimited || keyStatus[l.provider === "Google" ? "gemini" : l.provider.toLowerCase()]))) setSelectedLLMs([llmMsg.model])
     }
   }, [backendModels, messages])
 
@@ -483,6 +532,7 @@ api.getMessages(sessionId)
               tokens: m.tokens,
               time: m.time_taken || "",
               timestamp: new Date(m.created_at),
+              functionCalls: m.function_calls ? (typeof m.function_calls === "string" ? JSON.parse(m.function_calls) : m.function_calls) : [],
             }))
             
             console.log("RAW MESSAGES:", rawMessages.map((m: any, i: number) => `${i}:${m.role}|${m.model||""}|${m.modelId?.slice(0,8)||""}|${m.content?.slice(0,30)}`))
@@ -611,6 +661,7 @@ api.getMessages(sessionId)
   }
 
   const toggleLLMSelection = (llmId: string) => {
+    console.log("TOGGLE", llmId, "current:", selectedLLMs)
     const isSelected = selectedLLMs.includes(llmId)
     if (isSelected) {
       if (selectedLLMs.length > 1) {
@@ -818,8 +869,8 @@ api.getMessages(sessionId)
           })
           const endTime = Date.now()
           const timeTaken = ((endTime - startTime) / 1000).toFixed(1)
-          if (response.error) { toast.error(response.error); return { modelId: model.id, content: "⚠️ " + response.error, tokens: 0, time: "0s" } }
-          return { modelId: model.id, content: response.response || "No response", tokens: response.tokens, time: timeTaken + "s" }
+          if (response.error) { toast.error(response.error); return { modelId: model.id, content: "" + response.error, tokens: 0, time: "0s" } }
+          return { modelId: model.id, content: response.response || "No response", tokens: response.tokens, time: timeTaken + "s", functionCalls: response.function_calls || [] }
         } else {
           return new Promise<{ modelId: string; content: string; tokens: number; time: string }>((resolve) => {
             api.chatStream(
@@ -861,7 +912,7 @@ api.getMessages(sessionId)
           setMessages(prev => {
             const newMessages = [...prev]
             const lastIdx = newMessages.length - 1
-            newMessages[lastIdx] = { ...newMessages[lastIdx], content: "⚠️ " + response.error, tokens: 0, time: "0s", isLoading: false }
+            newMessages[lastIdx] = { ...newMessages[lastIdx], content: "" + response.error, tokens: 0, time: "0s", isLoading: false }
             return newMessages
           })
           setIsLoading(false)
@@ -872,7 +923,7 @@ api.getMessages(sessionId)
         results.forEach(result => {
           const msgIdx = newMessages.findIndex(m => m.modelId === result.modelId && m.groupId === groupId)
           if (msgIdx !== -1) {
-            newMessages[msgIdx] = { ...newMessages[msgIdx], content: result.content, tokens: result.tokens, time: result.time, isLoading: false }
+            newMessages[msgIdx] = { ...newMessages[msgIdx], content: result.content, tokens: result.tokens, time: result.time, isLoading: false, functionCalls: result.functionCalls }
           }
         })
         return newMessages
@@ -916,7 +967,7 @@ api.getMessages(sessionId)
           })
           const endTime = Date.now()
           const timeTaken = ((endTime - startTime) / 1000).toFixed(1)
-          if (response.error) { toast.error(response.error); return { llmId, content: "⚠️ " + response.error, tokens: 0, time: "0s" } }
+          if (response.error) { toast.error(response.error); return { llmId, content: "" + response.error, tokens: 0, time: "0s" } }
           return { llmId, content: response.response || "No response", tokens: response.tokens, time: timeTaken + "s" }
         } else {
           return new Promise<{ llmId: string; content: string; tokens: number; time: string }>((resolve) => {
@@ -965,6 +1016,7 @@ api.getMessages(sessionId)
               tokens: result.tokens,
               time: result.time,
               isLoading: false,
+              functionCalls: result.functionCalls,
             }
           }
         })
@@ -989,7 +1041,7 @@ api.getMessages(sessionId)
     setMessages(prev => [...prev, assistantMsg])
 
     // Check if Claude model (non-streaming) or OpenAI (streaming)
-    const isClaudeModel = selectedLLMs[0]?.startsWith("claude")
+    const isClaudeModel = selectedLLMs[0]?.startsWith("claude") || selectedLLMs[0]?.startsWith("gemini") || selectedLLMs[0]?.startsWith("mistral") || selectedLLMs[0]?.startsWith("ministral")
     let streamContent = ""
 
     try {
@@ -1011,13 +1063,18 @@ api.getMessages(sessionId)
         const timeTaken = ((endTime - startTime) / 1000).toFixed(1)
         
         if (response.error) {
-          toast.error(response.error)
+          const isKeyError = response.error.includes("API key") || response.error.includes("401") || response.error.includes("Unauthorized") || response.error.includes("api_key")
+          if (isKeyError) {
+            toast.error("API key required. Go to Configuration to add your key.", { duration: 5000 })
+          } else {
+            toast.error(response.error)
+          }
           setMessages(prev => {
             const newMessages = [...prev]
             const lastIdx = newMessages.length - 1
             newMessages[lastIdx] = {
               ...newMessages[lastIdx],
-              content: "⚠️ " + response.error,
+              content: isKeyError ? "API key not found. Please go to Configuration to add your API key." : "" + response.error,
               tokens: 0,
               time: "0s",
               isLoading: false,
@@ -1037,6 +1094,7 @@ api.getMessages(sessionId)
             tokens: response.tokens,
             time: timeTaken + "s",
             isLoading: false,
+            functionCalls: response.function_calls || [],
           }
           return newMessages
         })
@@ -1455,7 +1513,12 @@ api.getMessages(sessionId)
                                   <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce [animation-delay:0.4s]" />
                                 </div>
                               ) : (
+                                <>
+                                {compareMsg.functionCalls && compareMsg.functionCalls.length > 0 && (
+                                  <FunctionCallDisplay calls={compareMsg.functionCalls} />
+                                )}
                                 <ContentRenderer content={compareMsg.content} />
+                                </>
                               )}
                               {(compareMsg.tokens || compareMsg.time) && !compareMsg.isLoading && (
                                 <div className="flex items-center gap-3 mt-3 pt-3 border-t border-border">
@@ -1505,7 +1568,12 @@ api.getMessages(sessionId)
                                   <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce [animation-delay:0.4s]" />
                                 </div>
                               ) : (
+                                <>
+                                {msg.functionCalls && msg.functionCalls.length > 0 && (
+                                  <FunctionCallDisplay calls={msg.functionCalls} />
+                                )}
                                 <ContentRenderer content={msg.content} />
+                                </>
                               )}
                               {(msg.tokens || msg.time) && !msg.isLoading && (
                                 <div className="flex items-center gap-3 mt-3 pt-3 border-t border-border">
@@ -1576,22 +1644,33 @@ api.getMessages(sessionId)
                       <Settings2 className="h-4 w-4" />
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-60">
+                  <DropdownMenuContent align="start" className="w-72">
                     <DropdownMenuLabel className="text-xs text-muted-foreground uppercase tracking-wider">LLM Provider</DropdownMenuLabel>
                     <DropdownMenuSeparator />
-                    {llmOptions.map((llm) => {
+                    {llmOptions.filter((llm) => llm.provider === "Schema" || keyStatus.unlimited || keyStatus[llm.provider === "Google" ? "gemini" : llm.provider.toLowerCase()]).map((llm) => {
                       const isSelected = selectedLLMs.includes(llm.id)
                       return (
                         <div
                           key={llm.id}
-                          onClick={() => toggleLLMSelection(llm.id)}
-                          className={cn("flex items-center gap-3 px-2 py-2 cursor-pointer rounded-md transition-colors", isSelected ? "bg-[#0052CC]/10 dark:bg-[#2684FF]/10" : "hover:bg-muted")}
+                          onClick={() => {
+                            const hasKey = true
+                            if (!hasKey) return
+                            toggleLLMSelection(llm.id)
+                          }}
+                          className={cn("flex items-center gap-3 px-2 py-2 rounded-md transition-colors", isSelected ? "bg-[#0052CC]/10 dark:bg-[#2684FF]/10 cursor-pointer" : "hover:bg-muted cursor-pointer")}
                         >
-                          {!compareMode && <Checkbox checked={isSelected} className="pointer-events-none" />}
+                          <Checkbox checked={isSelected} className="pointer-events-none" />
                           <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium">{llm.name}</p>
-                            <p className="text-xs text-muted-foreground">{llm.provider}</p>
+                            <p className="text-xs font-medium">{llm.name}</p>
+                            <p className="text-[10px] text-muted-foreground">{llm.provider}</p>
                           </div>
+                          {!keyStatus.unlimited && llm.provider !== "Schema" && (
+                            keyStatus[llm.provider === "Google" ? "gemini" : llm.provider.toLowerCase()] ? (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 shrink-0">Key</span>
+                            ) : (
+                              <button onClick={(e) => { e.stopPropagation(); const pKey = llm.provider === "Google" ? "gemini" : llm.provider.toLowerCase(); setAddKeyModal({open: true, provider: pKey, providerLabel: llm.provider}); setAddKeyValue(""); setLlmDropdownOpen(false) }} className="text-[9px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 shrink-0">Add Key</button>
+                            )
+                          )}
                           {compareMode && isSelected && <Check className="h-4 w-4 text-[#0052CC] dark:text-[#2684FF]" />}
                         </div>
                       )
@@ -1601,10 +1680,51 @@ api.getMessages(sessionId)
                         <p className="text-[10px] text-muted-foreground">
                           {compareMode ? "Single LLM in compare mode" : "Select up to 2 LLMs"}
                         </p>
+                        {!keyStatus.unlimited && <button onClick={() => { setAddKeyModal({open: true, provider: "", providerLabel: ""}); setAddKeyValue(""); setLlmDropdownOpen(false) }} className="w-full mt-1 py-2 text-sm text-center rounded-md border border-dashed border-muted-foreground/30 text-muted-foreground hover:border-[#0052CC] hover:text-[#0052CC] dark:hover:border-[#2684FF] dark:hover:text-[#2684FF] transition-colors">+ Add LLM Provider</button>}
                       </div>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
+
+                {/* Add Key Modal */}
+                {addKeyModal.open && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center">
+                    <div className="fixed inset-0 bg-black/50" onClick={() => setAddKeyModal({open: false, provider: "", providerLabel: ""})} />
+                    <div className="relative z-50 w-[400px] rounded-lg border border-border bg-card p-6 shadow-xl">
+                      <h3 className="text-sm font-semibold mb-1">Add LLM Provider</h3>
+                      <p className="text-xs text-muted-foreground mb-4">Select a provider and enter your API key.</p>
+                      <div className="flex gap-2 mb-4">
+                        {[{key: "openai", label: "OpenAI"}, {key: "anthropic", label: "Anthropic"}, {key: "gemini", label: "Google"}].map(p => (
+                          <button key={p.key} onClick={() => setAddKeyModal(prev => ({...prev, provider: p.key, providerLabel: p.label}))} className={`flex-1 py-2 text-xs font-medium rounded-md border transition-colors ${addKeyModal.provider === p.key ? "border-[#0052CC] bg-[#0052CC]/10 text-[#0052CC] dark:border-[#2684FF] dark:bg-[#2684FF]/10 dark:text-[#2684FF]" : "border-border hover:bg-muted"}`}>{p.label}</button>
+                        ))}
+                      </div>
+                      <input type="password" placeholder={addKeyModal.provider ? `Enter ${addKeyModal.providerLabel} API key...` : "Select a provider first..."} disabled={!addKeyModal.provider} value={addKeyValue} onChange={e => setAddKeyValue(e.target.value)} className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm font-mono mb-4 focus:outline-none focus:ring-1 focus:ring-[#2684FF] disabled:opacity-50" autoFocus />
+                      <div className="flex justify-end gap-2">
+                        <button onClick={() => setAddKeyModal({open: false, provider: "", providerLabel: ""})} className="px-3 py-1.5 text-sm rounded-md border border-border hover:bg-muted">Cancel</button>
+                        <button disabled={!addKeyValue || !addKeyModal.provider || addKeySaving} onClick={async () => {
+                          setAddKeySaving(true)
+                          try {
+                            const testRes = await fetch("/api/vertical/secrets/test", { method: "POST", headers: {"Content-Type": "application/json"}, credentials: "include", body: JSON.stringify({provider: addKeyModal.provider, api_key: addKeyValue}) })
+                            const testData = await testRes.json()
+                            if (!testData.success) {
+                              toast.error("Invalid API key: " + (testData.error || "Authentication failed"))
+                              setAddKeySaving(false)
+                              return
+                            }
+                            await fetch("/api/vertical/secrets", { method: "POST", headers: {"Content-Type": "application/json"}, credentials: "include", body: JSON.stringify({provider: addKeyModal.provider, secret_name: addKeyModal.provider.toUpperCase() + "_API_KEY", value: addKeyValue, vertical_id: ""}) })
+                            setKeyStatus(prev => ({...prev, [addKeyModal.provider]: true}))
+                            setAddKeyModal({open: false, provider: "", providerLabel: ""})
+                            setAddKeyValue("")
+                            toast.success("API key saved and verified")
+                          } catch { toast.error("Failed to save") }
+                          setAddKeySaving(false)
+                        }} className="px-3 py-1.5 text-sm rounded-md bg-[#0052CC] text-white hover:bg-[#003D99] disabled:opacity-50">
+                          {addKeySaving ? "Verifying..." : "Save Key"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <Button
                   type="submit"

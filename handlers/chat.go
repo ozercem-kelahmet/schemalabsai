@@ -17,8 +17,10 @@ import (
 )
 
 type ChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string          `json:"role"`
+	Content    string          `json:"content"`
+	ToolCallID string          `json:"tool_call_id,omitempty"`
+	ToolCalls  []OpenAIToolCall `json:"tool_calls,omitempty"`
 }
 
 type ChatRequest struct {
@@ -46,16 +48,41 @@ type OpenAIRequest struct {
 	MaxTokens   int           `json:"max_tokens"`
 	Temperature float64       `json:"temperature"`
 	Stream      bool          `json:"stream"`
+	Tools       []OpenAITool  `json:"tools,omitempty"`
+	ToolChoice  interface{}   `json:"tool_choice,omitempty"`
+}
+
+// OpenAI Function Calling types
+type OpenAITool struct {
+	Type     string         `json:"type"`
+	Function OpenAIFunction `json:"function"`
+}
+
+type OpenAIFunction struct {
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	Parameters  interface{} `json:"parameters"`
+}
+
+type OpenAIToolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
 }
 
 type OpenAIResponse struct {
 	Choices []struct {
 		Message struct {
-			Content string `json:"content"`
+			Content   string           `json:"content"`
+			ToolCalls []OpenAIToolCall  `json:"tool_calls,omitempty"`
 		} `json:"message"`
 		Delta struct {
 			Content string `json:"content"`
 		} `json:"delta"`
+		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 	Usage struct {
 		TotalTokens int `json:"total_tokens"`
@@ -69,18 +96,40 @@ type ClaudeRequest struct {
 	System    string          `json:"system"`
 	Messages  []ClaudeMessage `json:"messages"`
 	Stream    bool            `json:"stream"`
+	Tools     []ClaudeTool    `json:"tools,omitempty"`
+}
+
+// Claude Function Calling types
+type ClaudeTool struct {
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	InputSchema interface{} `json:"input_schema"`
 }
 
 type ClaudeMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string      `json:"role"`
+	Content interface{} `json:"content"`
+}
+
+type ClaudeContentBlock struct {
+	Type      string      `json:"type"`
+	Text      string      `json:"text,omitempty"`
+	ID        string      `json:"id,omitempty"`
+	Name      string      `json:"name,omitempty"`
+	Input     interface{} `json:"input,omitempty"`
+	ToolUseID string      `json:"tool_use_id,omitempty"`
+	Content   string      `json:"content,omitempty"`
 }
 
 type ClaudeResponse struct {
 	Content []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
+		Type  string      `json:"type"`
+		Text  string      `json:"text,omitempty"`
+		ID    string      `json:"id,omitempty"`
+		Name  string      `json:"name,omitempty"`
+		Input interface{} `json:"input,omitempty"`
 	} `json:"content"`
+	StopReason string `json:"stop_reason"`
 	Usage struct {
 		InputTokens  int `json:"input_tokens"`
 		OutputTokens int `json:"output_tokens"`
@@ -448,6 +497,7 @@ func saveMessagesToDB(userID, queryID, userMessage, assistantMessage, model stri
 	if len(finetunedModelID) > 0 {
 		ftModelID = finetunedModelID[0]
 	}
+fmt.Printf("[SAVE_DB] called userID=%s queryID=%s msg=%s\n", userID, queryID, userMessage[:min(30, len(userMessage))])
 	if userID == "" || DB == nil {
 		return
 	}
@@ -458,7 +508,7 @@ func saveMessagesToDB(userID, queryID, userMessage, assistantMessage, model stri
 		skipUser = DB.Where("query_id = ? AND role = ? AND compare_group = ?", queryID, "user", compareGroup).First(&existing).Error == nil
 	}
 	if !skipUser {
-		DB.Create(&Message{
+		res := DB.Create(&Message{
 			ID:        uuid.New().String(),
 			Role:      "user",
 			Content:   userMessage,
@@ -466,7 +516,9 @@ func saveMessagesToDB(userID, queryID, userMessage, assistantMessage, model stri
 			UserID:    userID,
 			CompareGroup: compareGroup,
 			CreatedAt: time.Now(),
-		})
+})
+fmt.Printf("[CREATE user] rows=%d err=%v\n", res.RowsAffected, res.Error)
+
 	}
 	// Save assistant message
 	DB.Create(&Message{
@@ -481,7 +533,9 @@ FineTunedModelID: ftModelID,
 	TimeTaken: timeTaken,
 		CreatedAt: time.Now(),
 		CompareGroup:     compareGroup,
-	})
+});
+
+var cnt int64; DB.Model(&Message{}).Where("query_id = ? AND created_at > ?", queryID, time.Now().Add(-5*time.Second)).Count(&cnt); fmt.Printf("[VERIFY] count=%d for query=%s\n", cnt, queryID)
 
 	// Deduct credits and log usage
 	creditCost := float64(tokens) / 1000.0 * 0.01
@@ -523,7 +577,7 @@ func callClaudeAPI(messages []ChatMessage, systemPrompt, model string, stream bo
 	claudeMessages := make([]ClaudeMessage, 0)
 	for _, msg := range messages {
 		if msg.Role != "system" {
-			claudeMessages = append(claudeMessages, ClaudeMessage(msg))
+			claudeMessages = append(claudeMessages, ClaudeMessage{Role: msg.Role, Content: msg.Content})
 		}
 	}
 
@@ -819,6 +873,46 @@ fmt.Println("DEBUG: fineTunedResult does NOT contain vsRaptors")
 	}
 	conversationHistory[historyKey] = history
 	historyMutex.Unlock()
+
+	// ─── Language Layer: Function Calling Mode ───
+	llActive, verticalID := IsLanguageLayerActive(userID, req.FineTunedModel)
+	if llActive {
+		fmt.Printf("[LANGUAGE_LAYER] Active for user=%s vertical=%s model=%s\n", userID, verticalID, req.Model)
+
+		// Resolve provider: user's selected model overrides config
+		provider := &LLMProvider{Model: req.Model}
+		if isClaudeModel(req.Model) {
+			provider.Type = "anthropic"
+		} else if strings.HasPrefix(req.Model, "gemini") {
+			provider.Type = "gemini"
+		} else if strings.HasPrefix(req.Model, "mistral") || strings.HasPrefix(req.Model, "ministral") {
+			provider.Type = "mistral"
+		} else {
+			provider.Type = "openai"
+		}
+
+		response, tokens, funcCalls, err := CallLLMWithFunctions(history, systemPrompt, userID, verticalID, req.FineTunedModel, provider, w)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		funcCallsJSON := ""
+		if len(funcCalls) > 0 {
+			fcBytes, _ := json.Marshal(funcCalls)
+			funcCallsJSON = string(fcBytes)
+		}
+		historyMutex.Lock()
+		conversationHistory[historyKey] = append(conversationHistory[historyKey], ChatMessage{Role: "assistant", Content: response})
+		historyMutex.Unlock()
+		fmt.Printf("[SAVE] sessionID=%s user=%s msg=%s\n", sessionID, userID, req.Message[:min(30, len(req.Message))])
+saveMessagesToDB(userID, sessionID, req.Message, response, req.Model, tokens, req.CompareGroup, fmt.Sprintf("%.1fs", time.Since(startTime).Seconds()), req.FineTunedModel)
+		if funcCallsJSON != "" {
+result := DB.Model(&Message{}).Where("query_id = ? AND role = ?", sessionID, "assistant").Order("created_at desc").Limit(1).Update("function_calls", funcCallsJSON); fmt.Printf("[FUNC_SAVE] rows=%d err=%v\n", result.RowsAffected, result.Error)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"response": response, "model": req.Model, "tokens": tokens, "status": "success", "function_calls": funcCalls})
+		return
+	}
 
 	// Check if Claude model - use non-streaming
 	if isClaudeModel(req.Model) {

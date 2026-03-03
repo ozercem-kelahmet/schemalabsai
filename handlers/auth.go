@@ -113,7 +113,7 @@ func InitAuth() error {
 
 	// AutoMigrate in background to not block startup
 	go func() {
-		DB.AutoMigrate(&User{}, &UploadedFile{}, &Query{}, &Message{}, &QueryFile{}, &FineTunedModel{}, &Folder{}, &Connection{}, &APIKey{}, &VerificationCode{}, &PasswordResetToken{}, &UserQuota{}, &VerticalConfig{}, &VerticalTool{}, &VerticalAgent{}, &Endpoint{})
+		DB.AutoMigrate(&User{}, &UploadedFile{}, &Query{}, &Message{}, &QueryFile{}, &FineTunedModel{}, &Folder{}, &Connection{}, &APIKey{}, &VerificationCode{}, &PasswordResetToken{}, &UserQuota{}, &VerticalConfig{}, &VerticalTool{}, &VerticalAgent{}, &Endpoint{}, &PredictionStore{}, &LLMSecret{})
 		// Create indexes for performance
 		DB.Exec("CREATE INDEX IF NOT EXISTS idx_queries_user_updated ON queries(user_id, updated_at DESC)")
 		DB.Exec("CREATE INDEX IF NOT EXISTS idx_uploaded_files_user ON uploaded_files(user_id, created_at DESC)")
@@ -360,6 +360,7 @@ type Message struct {
 	FineTunedModelID string    `json:"finetuned_model_id"`
 	CompareGroup     string    `json:"compare_group"`
 	TimeTaken        string    `json:"time_taken"`
+	FunctionCalls    string    `json:"function_calls" gorm:"type:jsonb;default:null"`
 }
 
 // QueryFile - many to many
