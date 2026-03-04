@@ -682,6 +682,17 @@ function ConfigurationPageInner() {
         </CardContent>
       </Card>
 
+      {/* Language Layer Config */}
+      <Card className="border-border bg-card">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-foreground"><Settings className="h-5 w-5" /> Language Layer</CardTitle>
+          <CardDescription>Configure conversation behavior, compliance rules, and function capabilities for the Language Layer.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <LanguageConfigPanel />
+        </CardContent>
+      </Card>
+
       </Dialog>
     </div>
   )
@@ -869,6 +880,110 @@ function LanguageLayerConfig() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function LanguageConfigPanel() {
+  const [config, setConfig] = useState<any>({
+    assistant_tone: "professional", compliance_notes: "", confidence_threshold: 0.75,
+    history_lookback_days: 90, capabilities: {
+      run_prediction: true, run_full_inference: true, run_tool: true,
+      lookup_prediction: true, query_predictions: true, get_config: true
+    }
+  })
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    fetch("/api/vertical/language-config", { credentials: "include" })
+      .then(r => r.json()).then(setConfig).catch(() => {})
+  }, [])
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      await fetch("/api/vertical/language-config/save", {
+        method: "POST", headers: {"Content-Type": "application/json"}, credentials: "include",
+        body: JSON.stringify(config)
+      })
+      toast.success("Language config saved")
+    } catch { toast.error("Failed to save") }
+    setSaving(false)
+  }
+
+  const tones = ["professional", "clinical", "technical", "friendly"]
+  const capabilities = ["run_prediction", "run_full_inference", "run_tool", "lookup_prediction", "query_predictions", "get_config"]
+  const capLabels: Record<string, string> = {
+    run_prediction: "Run Prediction", run_full_inference: "Run Full Inference", run_tool: "Run Tool",
+    lookup_prediction: "Lookup Prediction", query_predictions: "Query Predictions", get_config: "Get Config"
+  }
+  const capDescriptions: Record<string, string> = {
+    run_prediction: "Run Schema's neural network on a single data row. Returns prediction, confidence, and class probabilities.",
+    run_full_inference: "Run the complete vertical AI pipeline: Schema prediction + all tools + agent logic. Returns full structured response including final_decision.",
+    run_tool: "Run one specific registered tool on demand without running the whole pipeline.",
+    lookup_prediction: "Retrieve a previously completed prediction by its ID. Used when referencing past decisions.",
+    query_predictions: "Search prediction history with filters like date range, confidence level, or decision type.",
+    get_config: "Read this vertical's system configuration including thresholds, rules, and tool settings."
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label>Assistant Tone</Label>
+          <Select value={config.assistant_tone} onValueChange={v => setConfig((p: any) => ({...p, assistant_tone: v}))}>
+            <SelectTrigger className="border-border bg-background"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {tones.map(t => <SelectItem key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-2">
+          <Label>Confidence Threshold</Label>
+          <Input type="number" min={0} max={1} step={0.05} value={config.confidence_threshold}
+            onChange={e => setConfig((p: any) => ({...p, confidence_threshold: parseFloat(e.target.value) || 0.75}))}
+            className="border-border bg-background" />
+          <p className="text-xs text-muted-foreground">Below this value, human review is recommended</p>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label>History Lookback Days</Label>
+        <Input type="number" min={1} max={365} value={config.history_lookback_days}
+          onChange={e => setConfig((p: any) => ({...p, history_lookback_days: parseInt(e.target.value) || 90}))}
+          className="border-border bg-background w-32" />
+      </div>
+
+      <div className="space-y-2">
+        <Label>Compliance Notes</Label>
+        <textarea value={config.compliance_notes} onChange={e => setConfig((p: any) => ({...p, compliance_notes: e.target.value}))}
+          placeholder="e.g. This vertical operates under HIPAA. Do not repeat patient identifiers..."
+          className="w-full h-20 rounded-md border border-border bg-background px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-[#2684FF]" />
+      </div>
+
+      <div className="space-y-2">
+        <Label>Function Capabilities</Label>
+        <div className="grid grid-cols-2 gap-2">
+          {capabilities.map(cap => (
+            <label key={cap} className="flex items-center gap-2 p-2 rounded border border-border hover:bg-muted/30 cursor-pointer group relative">
+              <input type="checkbox" checked={config.capabilities?.[cap] !== false}
+                onChange={e => setConfig((p: any) => ({...p, capabilities: {...(p.capabilities || {}), [cap]: e.target.checked}}))}
+                className="rounded" />
+              <span className="text-sm">{capLabels[cap]}</span>
+              <div className="relative ml-auto">
+                <Info className="h-3.5 w-3.5 text-muted-foreground/50 hover:text-muted-foreground peer opacity-0 group-hover:opacity-100 transition-opacity" />
+                <div className="absolute bottom-full right-0 mb-2 w-64 p-2 rounded-md bg-popover border border-border shadow-lg text-xs text-muted-foreground hidden peer-hover:block z-50">
+                  {capDescriptions[cap]}
+                </div>
+              </div>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <Button onClick={save} disabled={saving} className="bg-[#0052CC] hover:bg-[#0052CC]/90 text-white">
+        {saving ? "Saving..." : "Save Language Config"}
+      </Button>
     </div>
   )
 }

@@ -3449,11 +3449,11 @@ def load_vertical_runtime(model_id, user_id, vertical_config_id=None):
         
         # Load agents
         cur.execute("""
-            SELECT id, name, code, role FROM vertical_agents 
+            SELECT id, name, code, role, COALESCE(runs_if,''), COALESCE(parallel_with,'') FROM vertical_agents 
             WHERE vertical_id=%s AND user_id=%s AND validation_status='passed'
             ORDER BY pipeline_order ASC
         """, (vertical_id, user_id))
-        agents = [{"id": r[0], "name": r[1], "code": r[2], "role": r[3]} for r in cur.fetchall()]
+        agents = [{"id": r[0], "name": r[1], "code": r[2], "role": r[3], "runs_if": r[4], "parallel_with": r[5]} for r in cur.fetchall()]
         
         cur.close(); conn.close()
         print(f"[VERTICAL] Loaded vertical '{row[1]}': {len(tools)} tools, {len(agents)} agents")
@@ -3519,6 +3519,8 @@ def execute_agent(agent_code, data, schema_output, tool_outputs, tools, config, 
 
 def run_vertical_pipeline(model_id, user_id, data, schema_output, vertical_config_id=None):
     """Full pipeline: pre_inference → schema → post_inference → agent → validator"""
+    import time as _time
+    _start = _time.time()
     runtime = load_vertical_runtime(model_id, user_id, vertical_config_id=vertical_config_id)
     if not runtime['tools'] and not runtime['agents']:
         return None
@@ -3527,33 +3529,109 @@ def run_vertical_pipeline(model_id, user_id, data, schema_output, vertical_confi
     result = {
         "pre_inference": [], "post_inference": [], "agent_outputs": [],
         "validator": [], "flags": [],
-        "meta": {"tools_executed": 0, "agents_executed": 0}
+        "meta": {"tools_executed": 0, "agents_executed": 0, "tools_ran": [], "tools_skipped": [], "agents_ran": [], "timestamp": _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime())}
     }
     
-    # Pre-inference tools
+    # Pre-inference tools — can transform data
     for t in runtime['tools']:
         if t['hook'] == 'pre_inference':
             print(f"[VERTICAL] Pre-inference: {t['name']}")
             r = execute_tool(t['code'], data, {}, config)
             result['pre_inference'].append({"tool": t['name'], "status": r['status'], "output": r.get('output')})
             result['meta']['tools_executed'] += 1
+            result['meta']['tools_ran'].append(t['name'])
+            if r['status'] == 'success' and isinstance(r.get('output'), dict):
+                data.update(r['output'])
     
-    # Post-inference tools
+    # Post-inference tools with on_tool_failure support
     tool_outputs = {}
+    on_tool_failure = 'skip_and_continue'
+    if isinstance(config, dict) and isinstance(config.get('tools'), dict):
+        on_tool_failure = config['tools'].get('on_tool_failure', 'skip_and_continue')
     for t in runtime['tools']:
         if t['hook'] == 'post_inference':
             print(f"[VERTICAL] Post-inference: {t['name']}")
             r = execute_tool(t['code'], data, schema_output, config)
             result['post_inference'].append({"tool": t['name'], "status": r['status'], "output": r.get('output')})
-            tool_outputs[t['name']] = r.get('output', {})
             result['meta']['tools_executed'] += 1
+            if r['status'] == 'success':
+                tool_outputs[t['name']] = r.get('output', {})
+                result['meta']['tools_ran'].append(t['name'])
+            else:
+                result['meta']['tools_skipped'].append(t['name'])
+                if on_tool_failure == 'abort':
+                    print(f"[VERTICAL] Tool {t['name']} failed — aborting")
+                    break
     
-    # Agents
+    # Agents with conditional execution (runs_if support)
+    agent_results = {}
     for a in runtime['agents']:
+        # Check runs_if condition
+        runs_if = a.get('runs_if', '')
+        if runs_if:
+            try:
+                # Evaluate condition against agent_results, e.g. "primary_classifier.output.requires_review == true"
+                parts = runs_if.split('.')
+                if len(parts) >= 3 and parts[0] in agent_results:
+                    val = agent_results[parts[0]]
+                    for p in parts[1:]:
+                        if p.startswith('output'):
+                            continue
+                        if isinstance(val, dict):
+                            val = val.get(p)
+                    condition_parts = runs_if.split('==')
+                    if len(condition_parts) == 2:
+                        expected = condition_parts[1].strip().strip('"').strip("'")
+                        if expected == 'true': expected = True
+                        elif expected == 'false': expected = False
+                        if val != expected:
+                            print(f"[VERTICAL] Agent {a['name']} skipped (runs_if: {runs_if})")
+                            result['meta']['agents_ran'].append(f"{a['name']}:skipped")
+                            continue
+            except Exception as e:
+                print(f"[VERTICAL] runs_if eval error for {a['name']}: {e}")
+        # Check if this agent runs in parallel with another
+        parallel_with = a.get('parallel_with', '')
+        parallel_agent = None
+        if parallel_with:
+            parallel_agent = next((ag for ag in runtime['agents'] if ag['name'] == parallel_with), None)
+        
+        if parallel_agent:
+            import concurrent.futures
+            print(f"[VERTICAL] Agent: {a['name']} (parallel with {parallel_with})")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                f1 = executor.submit(execute_agent, a['code'], data, schema_output, tool_outputs, runtime['tools'], config)
+                f2 = executor.submit(execute_agent, parallel_agent['code'], data, schema_output, tool_outputs, runtime['tools'], config)
+                r = f1.result(timeout=30)
+                r2 = f2.result(timeout=30)
+            # Record both
+            result['agent_outputs'].append({"agent": a['name'], "role": a['role'], "status": r['status'], "output": r.get('output')})
+            agent_results[a['name']] = r.get('output', {})
+            result['meta']['agents_executed'] += 1
+            result['meta']['agents_ran'].append(a['name'])
+            if a['role'] == 'decision_maker' and r['status'] == 'success':
+                result['final_decision'] = r.get('output', {}).get('final_decision')
+            result['agent_outputs'].append({"agent": parallel_agent['name'], "role": parallel_agent['role'], "status": r2['status'], "output": r2.get('output')})
+            agent_results[parallel_agent['name']] = r2.get('output', {})
+            result['meta']['agents_executed'] += 1
+            result['meta']['agents_ran'].append(parallel_agent['name'])
+            if parallel_agent['role'] == 'decision_maker' and r2['status'] == 'success':
+                result['final_decision'] = r2.get('output', {}).get('final_decision')
+            # Skip the parallel agent when we encounter it later
+            runtime['_parallel_done'] = runtime.get('_parallel_done', set())
+            runtime['_parallel_done'].add(parallel_agent['name'])
+            continue
+        
+        # Skip if already executed in parallel
+        if a['name'] in runtime.get('_parallel_done', set()):
+            continue
+        
         print(f"[VERTICAL] Agent: {a['name']}")
         r = execute_agent(a['code'], data, schema_output, tool_outputs, runtime['tools'], config)
         result['agent_outputs'].append({"agent": a['name'], "role": a['role'], "status": r['status'], "output": r.get('output')})
+        agent_results[a['name']] = r.get('output', {})
         result['meta']['agents_executed'] += 1
+        result['meta']['agents_ran'].append(a['name'])
         if a['role'] == 'decision_maker' and r['status'] == 'success':
             result['final_decision'] = r.get('output', {}).get('final_decision')
     
@@ -3565,8 +3643,26 @@ def run_vertical_pipeline(model_id, user_id, data, schema_output, vertical_confi
             r = execute_tool(t['code'], vdata, schema_output, config)
             result['validator'].append({"tool": t['name'], "status": r['status'], "output": r.get('output')})
             result['meta']['tools_executed'] += 1
+            result['meta']['tools_ran'].append(t['name'])
     
-    print(f"[VERTICAL] Done: {result['meta']['tools_executed']}T {result['meta']['agents_executed']}A")
+    # Flags based on config threshold
+    if isinstance(config, dict) and isinstance(config.get('behavior'), dict):
+        threshold = config['behavior'].get('confidence_threshold', 0.7)
+        conf = schema_output.get('confidence', 0) if isinstance(schema_output, dict) else 0
+        if conf < threshold:
+            result['flags'].append({"flagged_for_review": True, "flag_reason": f"Confidence {conf:.2f} below threshold {threshold}", "confidence_below_threshold": True})
+    
+    result['meta']['runtime_ms'] = int((_time.time() - _start) * 1000)
+    
+    # Field renaming via config output.field_labels
+    if isinstance(config, dict) and isinstance(config.get('output'), dict):
+        labels = config['output'].get('field_labels', {})
+        if isinstance(labels, dict):
+            for old_key, new_key in labels.items():
+                if old_key in result:
+                    result[new_key] = result.pop(old_key)
+    
+    print(f"[VERTICAL] Done: {result['meta']['tools_executed']}T {result['meta']['agents_executed']}A in {result['meta']['runtime_ms']}ms")
     return result
 
 # ─── Vertical AI Runtime: Script Validation ───
@@ -3731,7 +3827,10 @@ def validate_script():
         checks.append("Security scan passed")
     
     # Check 4: Interface validation
-    if script_type == 'tool':
+    if hook == 'library':
+        # Library modules don't need def run — they are imported by other tools
+        checks.append("Library module — no interface check required")
+    elif script_type == 'tool':
         # Must have def run(data, schema_output, config)
         has_run = False
         for node in ast.walk(tree):
@@ -3777,7 +3876,9 @@ def validate_script():
             namespace = {}
             exec(code, namespace)
             
-            if script_type == 'tool' and 'run' in namespace:
+            if hook == 'library':
+                checks.append("Library module compiled successfully")
+            elif script_type == 'tool' and 'run' in namespace:
                 synthetic_data = {"col1": 1.0, "col2": "test", "col3": 100}
                 synthetic_schema_output = {"prediction": "class_a", "confidence": 0.85, "class_probabilities": {"class_a": 0.85, "class_b": 0.15}}
                 synthetic_config = {"behavior": {"confidence_threshold": 0.75}}

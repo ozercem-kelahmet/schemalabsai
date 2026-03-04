@@ -39,6 +39,16 @@ export function VerticalPanel({ open, onClose, modelId, modelName }: VerticalPan
   const [uploadDescription, setUploadDescription] = useState("")
   const [uploadCode, setUploadCode] = useState("")
   const [uploadHook, setUploadHook] = useState("post_inference")
+  const [uploadRunsIf, setUploadRunsIf] = useState("")
+  const [secrets, setSecrets] = useState<{id: string; key: string; vertical_id: string}[]>([])
+  const [newSecretKey, setNewSecretKey] = useState("")
+  const [newSecretValue, setNewSecretValue] = useState("")
+  const [secretVerticalId, setSecretVerticalId] = useState("")
+  const [showSecrets, setShowSecrets] = useState(false)
+  const [showVersions, setShowVersions] = useState(false)
+  const [versions, setVersions] = useState<{id: string; version: number; created_at: string; active: boolean}[]>([])
+  const [versionToolId, setVersionToolId] = useState("")
+  const [uploadParallelWith, setUploadParallelWith] = useState("")
   const [uploading, setUploading] = useState(false)
   const [validationResult, setValidationResult] = useState<{status: string, error: string, checks: string[]} | null>(null)
   const [validated, setValidated] = useState(false)
@@ -71,6 +81,42 @@ export function VerticalPanel({ open, onClose, modelId, modelName }: VerticalPan
       }
     } catch (e) { console.error(e) } finally { setLoading(false) }
   }
+
+  const fetchSecrets = async (vId: string) => {
+    try {
+      const res = await fetch(`/api/vertical/secrets/list?vertical_id=${vId}`, { credentials: "include" })
+      if (res.ok) setSecrets(await res.json() || [])
+    } catch { setSecrets([]) }
+  }
+
+  const addSecret = async (vId: string) => {
+    if (!newSecretKey || !newSecretValue) return
+    await fetch("/api/vertical/secrets", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+      body: JSON.stringify({ vertical_id: vId, key: newSecretKey, value: newSecretValue }) })
+    setNewSecretKey(""); setNewSecretValue("")
+    fetchSecrets(vId)
+  }
+
+  const fetchVersions = async (toolId: string) => {
+    try {
+      const res = await fetch(`/api/vertical/tools/versions?tool_id=${toolId}`, { credentials: "include" })
+      if (res.ok) setVersions(await res.json() || [])
+    } catch { setVersions([]) }
+  }
+
+  const rollbackVersion = async (toolId: string, versionId: string) => {
+    await fetch("/api/vertical/tools/rollback", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+      body: JSON.stringify({ tool_id: toolId, version_id: versionId }) })
+    setShowVersions(false)
+    fetchVerticals()
+  }
+
+  const deleteSecret = async (id: string, vId: string) => {
+    await fetch("/api/vertical/secrets/delete", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+      body: JSON.stringify({ id }) })
+    fetchSecrets(vId)
+  }
+
 
   const createVertical = async () => {
     if (!newName) return
@@ -238,10 +284,14 @@ export function VerticalPanel({ open, onClose, modelId, modelName }: VerticalPan
                       }} className={cn("text-[10px] font-medium px-2.5 py-1 rounded transition-colors", v.enabled ? "bg-emerald-500/10 text-emerald-500 hover:bg-red-500/10 hover:text-red-400" : "bg-muted text-muted-foreground hover:text-foreground")}>{v.enabled ? "Deactivate" : "Activate"}</button>
                     </div>
                     <Row label="System Config" tag={`v${v.version}`} onView={() => setViewingCode({ name: v.name, code: v.config_yaml })} onEdit={() => openEdit("config", v, v.id)} onDelete={() => { fetch("/api/vertical/configs/update", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ id: v.id, config_yaml: "" }) }).then(() => { toast.success("Config cleared"); fetchAll() }) }} />
-                    {tools.map((t: any) => <Row key={t.id} label={`${t.name}.py`} tag={t.hook} valid={t.validation_status} onView={() => setViewingCode({ name: t.name, code: t.code })} onEdit={() => openEdit("tool", t, v.id)} onDelete={() => deleteItem("tool", t.id, t.name)} />)}
+                    {tools.map((t: any) => <div key={t.id} className="flex items-center gap-0.5">
+                      <div className="flex-1"><Row label={`${t.name}.py`} tag={t.hook} valid={t.validation_status} onView={() => setViewingCode({ name: t.name, code: t.code })} onEdit={() => openEdit("tool", t, v.id)} onDelete={() => deleteItem("tool", t.id, t.name)} /></div>
+                      <button className="text-[9px] text-muted-foreground hover:text-foreground px-1" title="Versions" onClick={() => { setVersionToolId(t.id); setShowVersions(true); fetchVersions(t.id) }}>v{t.version || 1}</button>
+                    </div>)}
                     <button className="text-[10px] text-muted-foreground hover:text-foreground transition-colors py-1.5 px-2" onClick={() => openUpload("tool", v.id)}>+ Add Tool</button>
                     {agents.map((a: any) => <Row key={a.id} label={`${a.name}.py`} tag={a.role} valid={a.validation_status} onView={() => setViewingCode({ name: a.name, code: a.code })} onEdit={() => openEdit("agent", a, v.id)} onDelete={() => deleteItem("agent", a.id, a.name)} />)}
                     <button className="text-[10px] text-muted-foreground hover:text-foreground transition-colors py-1.5 px-2" onClick={() => openUpload("agent", v.id)}>+ Add Agent</button>
+                    <button className="text-[10px] text-muted-foreground hover:text-foreground transition-colors py-1.5 px-2" onClick={() => { setSecretVerticalId(v.id); setShowSecrets(true); fetchSecrets(v.id) }}>Secrets</button>
 
                     {/* Language Layer Toggle */}
                     <div className="mt-2 pt-2 border-t border-border/50">
@@ -292,10 +342,23 @@ export function VerticalPanel({ open, onClose, modelId, modelName }: VerticalPan
             <div><Label className="text-xs">Description</Label><Input value={uploadDescription} onChange={e => setUploadDescription(e.target.value)} className="border-border bg-background mt-1" /></div>
             {uploadType === "tool" && (
               <div><Label className="text-xs">Hook</Label>
-                <Select value={uploadHook} onValueChange={v => { setUploadHook(v); setValidated(false); setValidationResult(null) }}>
+                <Select value={uploadHook} onValueChange={v => { setUploadHook(v); setValidated(false); setValidationResult(null);
+                    const templates: Record<string,string> = {
+                      pre_inference: "def run(data, schema_output, config):\n    # Transform data before Schema inference\n    # Return dict to merge into data\n    return {}",
+                      post_inference: "def run(data, schema_output, config):\n    # Process after Schema prediction\n    return {}",
+                      validator: "def run(data, schema_output, config):\n    # Validate final output\n    # data contains: original_data, schema_output, tool_outputs, agent_outputs\n    return {\"valid\": True}",
+                      library: "# Shared library module\n# Imported by tools via: from schema_libs import this_module\n\nDEFAULT_THRESHOLD = 0.75\n\ndef calculate_score(value):\n    return value * 0.5"
+                    };
+                    setUploadCode(templates[v] || templates.post_inference) }}>
                   <SelectTrigger className="border-border bg-background mt-1"><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectItem value="pre_inference">Pre-Inference</SelectItem><SelectItem value="post_inference">Post-Inference</SelectItem><SelectItem value="validator">Validator</SelectItem></SelectContent>
+                  <SelectContent className="z-[70]"><SelectItem value="pre_inference">Pre-Inference</SelectItem><SelectItem value="post_inference">Post-Inference</SelectItem><SelectItem value="validator">Validator</SelectItem><SelectItem value="library">Library Module</SelectItem></SelectContent>
                 </Select>
+              </div>
+            )}
+            {uploadType === "agent" && (
+              <div className="space-y-2">
+                <div><Label className="text-xs">Runs If (optional)</Label><Input value={uploadRunsIf} onChange={e => setUploadRunsIf(e.target.value)} className="border-border bg-background mt-1 text-xs" placeholder="primary_classifier.output.requires_review == true" /></div>
+                <div><Label className="text-xs">Parallel With (optional)</Label><Input value={uploadParallelWith} onChange={e => setUploadParallelWith(e.target.value)} className="border-border bg-background mt-1 text-xs" placeholder="Agent name to run in parallel" /></div>
               </div>
             )}
             <div>
@@ -308,7 +371,7 @@ export function VerticalPanel({ open, onClose, modelId, modelName }: VerticalPan
                 height="220px"
                 theme={oneDark}
                 extensions={[uploadType === "config" ? yaml() : python(), EditorView.lineWrapping]}
-                placeholder={uploadType === "config" ? "Write system instructions (plain text or YAML)\n\nExamples:\n  You are a financial risk analyst\n  confidence_threshold: 0.75\n  Flag data with confidence below 0.5" : "def run(data, schema_output, config):\n    return {}"}
+                placeholder={uploadType === "config" ? "Write system instructions (plain text or YAML)\n\nExamples:\n  You are a financial risk analyst\n  confidence_threshold: 0.75\n  Flag data with confidence below 0.5" : uploadHook === "library" ? "# Shared library module\n# No run() needed\n\nMY_CONSTANT = 42\n\ndef helper(x):\n    return x * 2" : uploadHook === "validator" ? "def run(data, schema_output, config):\n    # data has: original_data, schema_output, tool_outputs, agent_outputs\n    return {\"valid\": True}" : uploadHook === "pre_inference" ? "def run(data, schema_output, config):\n    # Transform data before inference\n    return {}" : "def run(data, schema_output, config):\n    return {}"}
                 onChange={(val) => { setUploadCode(val); setValidated(false); setValidationResult(null) }}
                 basicSetup={{
                   lineNumbers: true,
@@ -366,6 +429,49 @@ export function VerticalPanel({ open, onClose, modelId, modelName }: VerticalPan
           <DialogFooter><Button variant="outline" size="sm" onClick={() => setViewingCode(null)}>Close</Button></DialogFooter>
         </DialogContent>
       </Dialog>
+    
+      
+      {/* Tool Versions */}
+      <Dialog open={showVersions} onOpenChange={setShowVersions}>
+        <DialogContent className="border-border bg-card sm:max-w-[400px] z-[60]">
+          <DialogHeader><DialogTitle className="text-sm">Tool Versions</DialogTitle></DialogHeader>
+          <div className="space-y-1 max-h-[300px] overflow-y-auto">
+            {versions.map(v => (
+              <div key={v.id} className="flex items-center justify-between py-1.5 px-2 rounded bg-muted/50 text-xs">
+                <span>v{v.version} — {new Date(v.created_at).toLocaleDateString()}</span>
+                <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => rollbackVersion(versionToolId, v.id)}>Rollback</Button>
+              </div>
+            ))}
+            {versions.length === 0 && <p className="text-xs text-muted-foreground">No previous versions</p>}
+          </div>
+          <DialogFooter><Button variant="outline" size="sm" onClick={() => setShowVersions(false)}>Close</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Secrets */}
+      <Dialog open={showSecrets} onOpenChange={setShowSecrets}>
+        <DialogContent className="border-border bg-card sm:max-w-[400px] z-[60]">
+          <DialogHeader><DialogTitle className="text-sm">Environment Secrets</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1 max-h-[200px] overflow-y-auto">
+              {secrets.map(s => (
+                <div key={s.id} className="flex items-center justify-between py-1 px-2 rounded bg-muted/50 text-xs">
+                  <span className="font-mono">{s.key}</span>
+                  <button className="text-red-500 hover:text-red-400 text-[10px]" onClick={() => deleteSecret(s.id, secretVerticalId)}>Delete</button>
+                </div>
+              ))}
+              {secrets.length === 0 && <p className="text-xs text-muted-foreground">No secrets configured</p>}
+            </div>
+            <div className="flex gap-2">
+              <Input value={newSecretKey} onChange={e => setNewSecretKey(e.target.value)} placeholder="KEY_NAME" className="border-border bg-background text-xs h-8 font-mono" />
+              <Input value={newSecretValue} onChange={e => setNewSecretValue(e.target.value)} placeholder="value" type="password" className="border-border bg-background text-xs h-8" />
+              <Button size="sm" className="h-8 text-xs" onClick={() => addSecret(secretVerticalId)} disabled={!newSecretKey || !newSecretValue}>Add</Button>
+            </div>
+          </div>
+          <DialogFooter><Button variant="outline" size="sm" onClick={() => setShowSecrets(false)}>Close</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
     </>
   )
 }

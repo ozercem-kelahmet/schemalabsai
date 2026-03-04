@@ -149,7 +149,24 @@ type FunctionCallResult struct {
 }
 
 // ExecuteFunctionCall routes a function call from the LLM to the appropriate Runtime operation
-func ExecuteFunctionCall(userID, verticalID, modelID, functionName string, arguments json.RawMessage) FunctionCallResult {
+func ExecuteFunctionCall(userID, verticalID, modelID, sessionID, functionName string, arguments json.RawMessage) FunctionCallResult {
+	
+	// Check per-function capability toggle
+	if verticalID != "" {
+		var vc VerticalConfig
+		if DB.Where("id = ?", verticalID).First(&vc).Error == nil && vc.LanguageConfig != "" {
+			var caps struct {
+				Capabilities map[string]bool `json:"capabilities"`
+			}
+			json.Unmarshal([]byte(vc.LanguageConfig), &caps)
+			if caps.Capabilities != nil {
+				if enabled, exists := caps.Capabilities[functionName]; exists && !enabled {
+					return FunctionCallResult{FunctionName: functionName, Error: fmt.Sprintf("function %s is disabled for this vertical", functionName)}
+				}
+			}
+		}
+	}
+
 	start := time.Now()
 	result := FunctionCallResult{
 		FunctionName: functionName,
@@ -188,12 +205,12 @@ func ExecuteFunctionCall(userID, verticalID, modelID, functionName string, argum
 		functionName, userID, verticalID, result.ExecutionMs, err)
 
 	// Save to DB
-	go saveFunctionCallLog(userID, verticalID, functionName, arguments, result)
+	go saveFunctionCallLog(sessionID, userID, verticalID, functionName, arguments, result)
 
 	return result
 }
 
-func saveFunctionCallLog(userID, verticalID, functionName string, arguments json.RawMessage, result FunctionCallResult) {
+func saveFunctionCallLog(sessionID, userID, verticalID, functionName string, arguments json.RawMessage, result FunctionCallResult) {
 	summary := ""
 	if result.Error != "" {
 		summary = "error: " + result.Error
@@ -205,8 +222,8 @@ func saveFunctionCallLog(userID, verticalID, functionName string, arguments json
 		summary = s
 	}
 	errStr := result.Error
-	DB.Exec(`INSERT INTO function_call_logs (user_id, vertical_id, function_name, arguments, result_summary, error, execution_ms) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		userID, verticalID, functionName, string(arguments), summary, errStr, result.ExecutionMs)
+	DB.Exec(`INSERT INTO function_call_logs (session_id, user_id, vertical_id, function_name, arguments, result_summary, error, execution_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		sessionID, userID, verticalID, functionName, string(arguments), summary, errStr, result.ExecutionMs)
 }
 
 // ─── Bridge Functions ───
@@ -333,6 +350,18 @@ func bridgeQueryPredictions(userID, verticalID string, args json.RawMessage) (in
 	if verticalID != "" {
 		query = query.Where("vertical_id = ?", verticalID)
 	}
+
+	// Enforce history_lookback_days from language config
+	lookbackDays := 90
+	if verticalID != "" {
+		var vc VerticalConfig
+		if DB.Where("id = ?", verticalID).First(&vc).Error == nil && vc.LanguageConfig != "" {
+			var lc struct { HistoryLookbackDays int `json:"history_lookback_days"` }
+			json.Unmarshal([]byte(vc.LanguageConfig), &lc)
+			if lc.HistoryLookbackDays > 0 { lookbackDays = lc.HistoryLookbackDays }
+		}
+	}
+	query = query.Where("created_at >= ?", time.Now().AddDate(0, 0, -lookbackDays))
 
 	// Apply filters
 	if pred, ok := params.Filters["prediction"].(string); ok && pred != "" {
@@ -498,7 +527,7 @@ func IsLanguageLayerActive(userID, modelID string) (bool, string) {
 }
 
 // CallClaudeWithFunctions calls Claude API with function calling support and loops until text response
-func CallClaudeWithFunctions(messages []ClaudeMessage, systemPrompt, model, userID, verticalID, modelID string, w http.ResponseWriter) (string, int, []FunctionCallResult, error) {
+func CallClaudeWithFunctions(messages []ClaudeMessage, systemPrompt, model, userID, verticalID, modelID, sessionID string, w http.ResponseWriter) (string, int, []FunctionCallResult, error) {
 	apiKey := GetAPIKeyForProvider(userID, verticalID, &LLMProvider{Type: "anthropic", Model: model})
 	if apiKey == "" {
 		return "", 0, nil, fmt.Errorf("API key not configured. Please add your Anthropic API key in Settings")
@@ -601,7 +630,7 @@ func CallClaudeWithFunctions(messages []ClaudeMessage, systemPrompt, model, user
 		// Execute each tool call and build tool_result blocks
 		toolResults := make([]ClaudeContentBlock, 0)
 		for _, tu := range toolUseBlocks {
-			result := ExecuteFunctionCall(userID, verticalID, modelID, tu.Name, tu.Input)
+			result := ExecuteFunctionCall(userID, verticalID, modelID, sessionID, tu.Name, tu.Input)
 			allFunctionCalls = append(allFunctionCalls, result)
 
 			resultJSON, _ := json.Marshal(result.Result)
@@ -624,7 +653,7 @@ func CallClaudeWithFunctions(messages []ClaudeMessage, systemPrompt, model, user
 }
 
 // CallOpenAIWithFunctions calls OpenAI API with function calling support and loops until text response
-func CallOpenAIWithFunctions(messages []ChatMessage, model, userID, verticalID, modelID string, w http.ResponseWriter, provider ...*LLMProvider) (string, int, []FunctionCallResult, error) {
+func CallOpenAIWithFunctions(messages []ChatMessage, model, userID, verticalID, modelID, sessionID string, w http.ResponseWriter, provider ...*LLMProvider) (string, int, []FunctionCallResult, error) {
 	var p *LLMProvider
 	if len(provider) > 0 && provider[0] != nil {
 		p = provider[0]
@@ -707,7 +736,7 @@ func CallOpenAIWithFunctions(messages []ChatMessage, model, userID, verticalID, 
 
 		// Execute each tool call
 		for _, tc := range choice.Message.ToolCalls {
-			result := ExecuteFunctionCall(userID, verticalID, modelID, tc.Function.Name, json.RawMessage(tc.Function.Arguments))
+			result := ExecuteFunctionCall(userID, verticalID, modelID, sessionID, tc.Function.Name, json.RawMessage(tc.Function.Arguments))
 			allFunctionCalls = append(allFunctionCalls, result)
 
 			resultJSON, _ := json.Marshal(result.Result)
@@ -840,7 +869,7 @@ return secret.EncryptedValue
 }
 
 // CallLLMWithFunctions is the unified entry point - routes to the correct provider
-func CallLLMWithFunctions(history []ChatMessage, systemPrompt, userID, verticalID, modelID string, provider *LLMProvider, w http.ResponseWriter) (string, int, []FunctionCallResult, error) {
+func CallLLMWithFunctions(history []ChatMessage, systemPrompt, userID, verticalID, modelID, sessionID string, provider *LLMProvider, w http.ResponseWriter) (string, int, []FunctionCallResult, error) {
 	if provider == nil {
 		provider = &LLMProvider{Type: "openai", Model: "gpt-4o"}
 	}
@@ -855,22 +884,22 @@ func CallLLMWithFunctions(history []ChatMessage, systemPrompt, userID, verticalI
 				claudeMessages = append(claudeMessages, ClaudeMessage{Role: msg.Role, Content: msg.Content})
 			}
 		}
-		return CallClaudeWithFunctions(claudeMessages, systemPrompt, provider.Model, userID, verticalID, modelID, w)
+		return CallClaudeWithFunctions(claudeMessages, systemPrompt, provider.Model, userID, verticalID, modelID, sessionID, w)
 
 	case "openai", "custom":
 		msgs := []ChatMessage{{Role: "system", Content: systemPrompt}}
 		msgs = append(msgs, history...)
-		return CallOpenAIWithFunctions(msgs, provider.Model, userID, verticalID, modelID, w, provider)
+		return CallOpenAIWithFunctions(msgs, provider.Model, userID, verticalID, modelID, sessionID, w, provider)
 
 	case "gemini":
 		apiKey := GetAPIKeyForProvider(userID, verticalID, provider)
-		return CallGeminiWithFunctions(history, systemPrompt, provider.Model, apiKey, userID, verticalID, modelID, w)
+		return CallGeminiWithFunctions(history, systemPrompt, provider.Model, apiKey, userID, verticalID, modelID, sessionID, w)
 
 	case "mistral":
 		apiKey := os.Getenv("MISTRAL_API_KEY")
 		msgs := []ChatMessage{{Role: "system", Content: systemPrompt}}
 		msgs = append(msgs, history...)
-		return CallMistralWithFunctions(msgs, provider.Model, apiKey, userID, verticalID, modelID, w)
+		return CallMistralWithFunctions(msgs, provider.Model, apiKey, userID, verticalID, modelID, sessionID, w)
 
 	default:
 		return "", 0, nil, fmt.Errorf("unknown provider type: %s", provider.Type)
@@ -973,7 +1002,7 @@ func TestLLMConnectionHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Simple test: send a hello message
 	testMsg := []ChatMessage{{Role: "user", Content: "Say hello in one word."}}
-	response, _, _, err := CallLLMWithFunctions(testMsg, "You are a test assistant.", userID, "", "", provider, nil)
+	response, _, _, err := CallLLMWithFunctions(testMsg, "You are a test assistant.", userID, "", "", "", provider, nil)
 
 	if err != nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{"status": "error", "error": err.Error()})
@@ -1054,7 +1083,7 @@ func GetGeminiFunctionDefinitions() []GeminiTool {
 }
 
 // CallMistralWithFunctions calls Mistral API with OpenAI-compatible function calling
-func CallMistralWithFunctions(messages []ChatMessage, model, apiKey, userID, verticalID, modelID string, w http.ResponseWriter) (string, int, []FunctionCallResult, error) {
+func CallMistralWithFunctions(messages []ChatMessage, model, apiKey, userID, verticalID, modelID, sessionID string, w http.ResponseWriter) (string, int, []FunctionCallResult, error) {
 	if apiKey == "" {
 		return "", 0, nil, fmt.Errorf("Mistral API key not configured. Add your key in Settings.")
 	}
@@ -1150,7 +1179,7 @@ func CallMistralWithFunctions(messages []ChatMessage, model, apiKey, userID, ver
 			json.Unmarshal([]byte(fnArgs), &args)
 
 			argsJSON, _ := json.Marshal(args)
-			fcResult := ExecuteFunctionCall(userID, verticalID, modelID, fnName, argsJSON)
+			fcResult := ExecuteFunctionCall(userID, verticalID, modelID, sessionID, fnName, argsJSON)
 			allFuncCalls = append(allFuncCalls, fcResult)
 
 			resultJSON, _ := json.Marshal(fcResult.Result)
@@ -1171,7 +1200,7 @@ func mustJSON(v interface{}) []byte {
 }
 
 // CallGeminiWithFunctions calls Gemini API with function calling support
-func CallGeminiWithFunctions(history []ChatMessage, systemPrompt, model, apiKey, userID, verticalID, modelID string, w http.ResponseWriter) (string, int, []FunctionCallResult, error) {
+func CallGeminiWithFunctions(history []ChatMessage, systemPrompt, model, apiKey, userID, verticalID, modelID, sessionID string, w http.ResponseWriter) (string, int, []FunctionCallResult, error) {
 	if apiKey == "" {
 return "", 0, nil, fmt.Errorf("API key not configured. Please add your Gemini API key in Settings")
 	}
@@ -1267,7 +1296,7 @@ return "", 0, nil, fmt.Errorf("API key not configured. Please add your Gemini AP
 		for _, part := range candidate.Content.Parts {
 			if part.FunctionCall != nil {
 				argsJSON, _ := json.Marshal(part.FunctionCall.Args)
-				result := ExecuteFunctionCall(userID, verticalID, modelID, part.FunctionCall.Name, argsJSON)
+				result := ExecuteFunctionCall(userID, verticalID, modelID, sessionID, part.FunctionCall.Name, argsJSON)
 				allFunctionCalls = append(allFunctionCalls, result)
 
 				responseParts = append(responseParts, GeminiPart{
@@ -1441,4 +1470,302 @@ func fetchGeminiModels(apiKey string) []LLMModelInfo {
 		{ID: "gemini-2.0-flash-001", Name: "Gemini 2.0 Flash 001", Provider: "Google"},
 		{ID: "gemini-2.0-flash-lite", Name: "Gemini 2.0 Flash-Lite", Provider: "Google"},
 	}
+}
+
+// ─── Conversation Session API Endpoints ───
+
+// CreateSessionHandler creates a new conversation session
+func CreateSessionHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	userID := r.Header.Get("X-User-ID")
+	if userID == "" {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	var req struct {
+		VerticalID      string      `json:"vertical_id"`
+		ProviderOverride *LLMProvider `json:"provider_override"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+
+	sessionID := fmt.Sprintf("sess_%d", time.Now().UnixNano())
+
+	historyMutex.Lock()
+	conversationSessions[sessionID] = &ChatSession{
+		Messages:     []ChatMessage{},
+		CreatedAt:    time.Now(),
+		LastActive:   time.Now(),
+		ExpiresAt:    time.Now().Add(sessionTTLMinutes * time.Minute),
+		UserID:       userID,
+		SessionID:    sessionID,
+		VerticalID:   req.VerticalID,
+		Status:       "active",
+	}
+	historyMutex.Unlock()
+
+	// Get vertical name
+	verticalName := ""
+	if req.VerticalID != "" {
+		var vc VerticalConfig
+		if DB.Where("id = ?", req.VerticalID).First(&vc).Error == nil {
+			verticalName = vc.Name
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"session_id":     sessionID,
+		"vertical_name":  verticalName,
+		"expires_at":     time.Now().Add(sessionTTLMinutes * time.Minute).Format(time.RFC3339),
+		"active_provider": "mistral",
+		"active_model":    "mistral-medium-2505",
+		"status":          "active",
+	})
+}
+
+// GetSessionHistoryHandler returns session history and function call log
+func GetSessionHistoryHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	userID := r.Header.Get("X-User-ID")
+	sessionID := r.URL.Query().Get("session_id")
+	if sessionID == "" {
+		http.Error(w, `{"error":"session_id required"}`, http.StatusBadRequest)
+		return
+	}
+
+	historyMutex.RLock()
+	sess, exists := conversationSessions[sessionID]
+	historyMutex.RUnlock()
+
+	if !exists {
+		http.Error(w, `{"error":"session not found"}`, http.StatusNotFound)
+		return
+	}
+	if sess.UserID != "" && sess.UserID != userID {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusForbidden)
+		return
+	}
+
+	// Get function call logs for this session
+	var fcLogs []struct {
+		FunctionName string    `json:"function_name"`
+		Arguments    string    `json:"arguments"`
+		ResultSummary string   `json:"result_summary"`
+		Error        string    `json:"error"`
+		ExecutionMs  int       `json:"execution_ms"`
+		CreatedAt    time.Time `json:"created_at"`
+	}
+	DB.Table("function_call_logs").Where("session_id = ?", sessionID).Order("created_at asc").Find(&fcLogs)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"session_id":        sessionID,
+		"messages":          sess.Messages,
+		"function_call_log": fcLogs,
+		"opened_at":         sess.CreatedAt.Format(time.RFC3339),
+		"status":            sess.Status,
+		"message_count":     sess.MessageCount,
+	})
+}
+
+// CloseSessionHandler closes a conversation session
+func CloseSessionHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	userID := r.Header.Get("X-User-ID")
+	sessionID := r.URL.Query().Get("session_id")
+	if sessionID == "" {
+		http.Error(w, `{"error":"session_id required"}`, http.StatusBadRequest)
+		return
+	}
+
+	historyMutex.Lock()
+	sess, exists := conversationSessions[sessionID]
+	if exists {
+		if sess.UserID != "" && sess.UserID != userID {
+			historyMutex.Unlock()
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusForbidden)
+			return
+		}
+		sess.Status = "closed"
+		delete(conversationSessions, sessionID)
+	}
+	historyMutex.Unlock()
+
+	if !exists {
+		http.Error(w, `{"error":"session not found"}`, http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"session_id": sessionID,
+		"status":     "closed",
+	})
+}
+
+// CreateComparisonSessionHandler creates a comparison mode session
+func CreateComparisonSessionHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	userID := r.Header.Get("X-User-ID")
+	if userID == "" {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	var req struct {
+		VerticalID string        `json:"vertical_id"`
+		Providers  []LLMProvider `json:"providers"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+
+	if len(req.Providers) < 2 {
+		http.Error(w, `{"error":"comparison mode requires at least 2 providers"}`, http.StatusBadRequest)
+		return
+	}
+	if len(req.Providers) > 4 {
+		http.Error(w, `{"error":"maximum 4 providers in comparison mode"}`, http.StatusBadRequest)
+		return
+	}
+
+	sessionID := fmt.Sprintf("comp_%d", time.Now().UnixNano())
+
+	providerList := make([]map[string]string, 0)
+	for _, p := range req.Providers {
+		providerList = append(providerList, map[string]string{
+			"type":  p.Type,
+			"model": p.Model,
+		})
+	}
+
+	historyMutex.Lock()
+	conversationSessions[sessionID] = &ChatSession{
+		Messages:     []ChatMessage{},
+		CreatedAt:    time.Now(),
+		LastActive:   time.Now(),
+		ExpiresAt:    time.Now().Add(sessionTTLMinutes * time.Minute),
+		UserID:       userID,
+		SessionID:    sessionID,
+		VerticalID:   req.VerticalID,
+		Status:       "active",
+	}
+	historyMutex.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"session_id":      sessionID,
+		"comparison_mode": true,
+		"providers":       providerList,
+		"status":          "active",
+		"expires_at":      time.Now().Add(sessionTTLMinutes * time.Minute).Format(time.RFC3339),
+	})
+}
+
+// GetLanguageConfigHandler returns language config for a vertical
+func GetLanguageConfigHandler(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get("X-User-ID")
+	verticalID := r.URL.Query().Get("vertical_id")
+	if verticalID == "" {
+		// Get first active vertical for user
+		var vc VerticalConfig
+		if err := DB.Where("user_id = ? AND enabled = true", userID).First(&vc).Error; err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"assistant_tone": "professional", "compliance_notes": "", "confidence_threshold": 0.75,
+				"history_lookback_days": 90, "capabilities": map[string]bool{
+					"run_prediction": true, "run_full_inference": true, "run_tool": true,
+					"lookup_prediction": true, "query_predictions": true, "get_config": true,
+				},
+			})
+			return
+		}
+		verticalID = vc.ID
+	}
+
+	var vc VerticalConfig
+	if err := DB.Where("id = ? AND user_id = ?", verticalID, userID).First(&vc).Error; err != nil {
+		http.Error(w, `{"error":"vertical not found"}`, http.StatusNotFound)
+		return
+	}
+
+	defaults := map[string]interface{}{
+		"assistant_tone": "professional", "compliance_notes": "", "confidence_threshold": 0.75,
+		"history_lookback_days": 90, "capabilities": map[string]bool{
+			"run_prediction": true, "run_full_inference": true, "run_tool": true,
+			"lookup_prediction": true, "query_predictions": true, "get_config": true,
+		},
+	}
+
+	if vc.LanguageConfig != "" {
+		var cfg map[string]interface{}
+		if json.Unmarshal([]byte(vc.LanguageConfig), &cfg) == nil {
+			for k, v := range cfg {
+				defaults[k] = v
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(defaults)
+}
+
+// SaveLanguageConfigHandler saves language config for a vertical
+func SaveLanguageConfigHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	userID := r.Header.Get("X-User-ID")
+
+	var req struct {
+		VerticalID          string          `json:"vertical_id"`
+		AssistantTone       string          `json:"assistant_tone"`
+		ComplianceNotes     string          `json:"compliance_notes"`
+		ConfidenceThreshold float64         `json:"confidence_threshold"`
+		HistoryLookbackDays int             `json:"history_lookback_days"`
+		Capabilities        map[string]bool `json:"capabilities"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request"}`, http.StatusBadRequest)
+		return
+	}
+
+	verticalID := req.VerticalID
+	if verticalID == "" {
+		var vc VerticalConfig
+		if err := DB.Where("user_id = ? AND enabled = true", userID).First(&vc).Error; err != nil {
+			http.Error(w, `{"error":"no active vertical found"}`, http.StatusNotFound)
+			return
+		}
+		verticalID = vc.ID
+	}
+
+	cfgJSON, _ := json.Marshal(map[string]interface{}{
+		"assistant_tone":        req.AssistantTone,
+		"compliance_notes":      req.ComplianceNotes,
+		"confidence_threshold":  req.ConfidenceThreshold,
+		"history_lookback_days": req.HistoryLookbackDays,
+		"capabilities":          req.Capabilities,
+	})
+
+	result := DB.Model(&VerticalConfig{}).Where("id = ? AND user_id = ?", verticalID, userID).Update("language_config", string(cfgJSON))
+	if result.Error != nil {
+		http.Error(w, `{"error":"failed to save"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"status": "saved", "vertical_id": verticalID})
 }

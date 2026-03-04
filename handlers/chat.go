@@ -158,10 +158,15 @@ type FlaskAnalyzeResponse struct {
 
 // Session with TTL and message limits
 type ChatSession struct {
-	Messages    []ChatMessage
-	CreatedAt   time.Time
-	LastActive  time.Time
+	Messages     []ChatMessage
+	CreatedAt    time.Time
+	LastActive   time.Time
 	MessageCount int
+	VerticalID   string
+	UserID       string
+	SessionID    string
+	Status       string // active | expired | closed
+	ExpiresAt    time.Time
 }
 
 const (
@@ -901,7 +906,7 @@ fmt.Println("DEBUG: fineTunedResult does NOT contain vsRaptors")
 	historyMutex.Lock()
 	sess, exists := conversationSessions[historyKey]
 	if !exists {
-		sess = &ChatSession{Messages: []ChatMessage{}, CreatedAt: time.Now(), LastActive: time.Now()}
+		sess = &ChatSession{Messages: []ChatMessage{}, CreatedAt: time.Now(), LastActive: time.Now(), ExpiresAt: time.Now().Add(sessionTTLMinutes * time.Minute), UserID: userID, SessionID: sessionID, Status: "active"}
 		conversationSessions[historyKey] = sess
 	}
 	if sess.MessageCount >= maxMessagesPerSession {
@@ -922,6 +927,7 @@ fmt.Println("DEBUG: fineTunedResult does NOT contain vsRaptors")
 	// ─── Language Layer: Function Calling Mode ───
 	llActive, verticalID := IsLanguageLayerActive(userID, req.FineTunedModel)
 	if llActive {
+		sess.VerticalID = verticalID
 		fmt.Printf("[LANGUAGE_LAYER] Active for user=%s vertical=%s model=%s\n", userID, verticalID, req.Model)
 
 		// Resolve provider: user's selected model overrides config
@@ -936,7 +942,7 @@ fmt.Println("DEBUG: fineTunedResult does NOT contain vsRaptors")
 			provider.Type = "openai"
 		}
 
-		response, tokens, funcCalls, err := CallLLMWithFunctions(history, systemPrompt, userID, verticalID, req.FineTunedModel, provider, w)
+		response, tokens, funcCalls, err := CallLLMWithFunctions(history, systemPrompt, userID, verticalID, req.FineTunedModel, sessionID, provider, w)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

@@ -581,12 +581,35 @@ func GetVerticalContext(userID, modelID string) string {
 
 	if config.ConfigYAML == "" && len(tools) == 0 && len(agents) == 0 { return "" }
 
+	// Parse language config for tone, compliance, threshold
+	var langCfg struct {
+		AssistantTone       string  `json:"assistant_tone"`
+		ComplianceNotes     string  `json:"compliance_notes"`
+		ConfidenceThreshold float64 `json:"confidence_threshold"`
+		HistoryLookbackDays int     `json:"history_lookback_days"`
+	}
+	if config.LanguageConfig != "" {
+		json.Unmarshal([]byte(config.LanguageConfig), &langCfg)
+	}
+	if langCfg.AssistantTone == "" { langCfg.AssistantTone = "professional" }
+	if langCfg.ConfidenceThreshold == 0 { langCfg.ConfidenceThreshold = 0.75 }
+	if langCfg.HistoryLookbackDays == 0 { langCfg.HistoryLookbackDays = 90 }
+
 	ctx := "\n\n=== VERTICAL AI RUNTIME ===\n"
-	ctx += "Active Vertical: " + config.Name + "\n"
+	ctx += fmt.Sprintf("Active Vertical: %s\n", config.Name)
+	if config.Description != "" {
+		ctx += fmt.Sprintf("Description: %s\n", config.Description)
+	}
+	ctx += fmt.Sprintf("Tone: %s\n", langCfg.AssistantTone)
 
 	if config.ConfigYAML != "" {
 		ctx += "\n--- System Config Rules ---\n"
 		ctx += config.ConfigYAML + "\n"
+	}
+
+	if langCfg.ComplianceNotes != "" {
+		ctx += "\n--- Compliance Requirements ---\n"
+		ctx += langCfg.ComplianceNotes + "\n"
 	}
 
 	ctx += "\nIMPORTANT: The Vertical AI Runtime processed this data with custom tools and agents.\n"
@@ -595,6 +618,10 @@ func GetVerticalContext(userID, modelID string) string {
 	ctx += "- If a tool calculated risk scores or metrics, include them prominently\n"
 	ctx += "- If an agent made a final_decision, state it clearly at the beginning of your response\n"
 	ctx += "- Follow the behavioral rules defined in the System Config above\n"
+	ctx += fmt.Sprintf("- When confidence is below %.0f%%, note that human review is recommended\n", langCfg.ConfidenceThreshold*100)
+	ctx += fmt.Sprintf("- History queries are limited to the last %d days\n", langCfg.HistoryLookbackDays)
+	ctx += "- All function calls you make are logged for compliance audit\n"
+	ctx += "- You have no access to other users' verticals, predictions, or data\n"
 
 	for _, t := range tools {
 		ctx += fmt.Sprintf("- Tool: %s (%s)\n", t.Name, t.Hook)
@@ -604,4 +631,202 @@ func GetVerticalContext(userID, modelID string) string {
 	}
 
 	return ctx
+}
+
+// Batch upload tools
+func BatchUploadToolsHandler(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get("X-User-ID")
+	if userID == "" { http.Error(w, "Unauthorized", 401); return }
+
+	var req struct {
+		Tools []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Code        string `json:"code"`
+			Hook        string `json:"hook"`
+			VerticalID  string `json:"vertical_id"`
+		} `json:"tools"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", 400); return
+	}
+
+	results := []map[string]interface{}{}
+	for _, t := range req.Tools {
+		if t.Name == "" || t.Code == "" || t.VerticalID == "" {
+			results = append(results, map[string]interface{}{"name": t.Name, "status": "failed", "error": "Missing required fields"})
+			continue
+		}
+		var maxOrder int
+		DB.Model(&VerticalTool{}).Where("vertical_id = ?", t.VerticalID).Select("COALESCE(MAX(execution_order), 0)").Scan(&maxOrder)
+		hook := t.Hook
+		if hook == "" { hook = "post_inference" }
+		tool := VerticalTool{
+			ID: uuid.New().String(), UserID: userID, VerticalID: t.VerticalID,
+			Name: t.Name, Description: t.Description, Code: t.Code,
+			Hook: hook, Enabled: true, Version: 1,
+			ValidationStatus: "pending", ExecutionOrder: maxOrder + 1,
+		}
+		if err := DB.Create(&tool).Error; err != nil {
+			results = append(results, map[string]interface{}{"name": t.Name, "status": "failed", "error": err.Error()})
+		} else {
+			results = append(results, map[string]interface{}{"name": t.Name, "status": "created", "id": tool.ID})
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(results)
+}
+
+// Batch upload agents
+func BatchUploadAgentsHandler(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get("X-User-ID")
+	if userID == "" { http.Error(w, "Unauthorized", 401); return }
+
+	var req struct {
+		Agents []struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Code        string `json:"code"`
+			Role        string `json:"role"`
+			VerticalID  string `json:"vertical_id"`
+		} `json:"agents"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", 400); return
+	}
+
+	results := []map[string]interface{}{}
+	for _, a := range req.Agents {
+		if a.Name == "" || a.Code == "" || a.VerticalID == "" {
+			results = append(results, map[string]interface{}{"name": a.Name, "status": "failed", "error": "Missing required fields"})
+			continue
+		}
+		var maxOrder int
+		DB.Model(&VerticalAgent{}).Where("vertical_id = ?", a.VerticalID).Select("COALESCE(MAX(pipeline_order), 0)").Scan(&maxOrder)
+		role := a.Role
+		if role == "" { role = "default" }
+		agent := VerticalAgent{
+			ID: uuid.New().String(), UserID: userID, VerticalID: a.VerticalID,
+			Name: a.Name, Description: a.Description, Code: a.Code,
+			Role: role, Enabled: true, Version: 1,
+			ValidationStatus: "pending", PipelineOrder: maxOrder + 1,
+		}
+		if err := DB.Create(&agent).Error; err != nil {
+			results = append(results, map[string]interface{}{"name": a.Name, "status": "failed", "error": err.Error()})
+		} else {
+			results = append(results, map[string]interface{}{"name": a.Name, "status": "created", "id": agent.ID})
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(results)
+}
+
+// Tool version history
+type ToolVersion struct {
+	ID        string    `json:"id" gorm:"primaryKey"`
+	ToolID    string    `json:"tool_id"`
+	UserID    string    `json:"user_id"`
+	Code      string    `json:"code"`
+	Version   int       `json:"version"`
+	Active    bool      `json:"active"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+func ListToolVersionsHandler(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get("X-User-ID")
+	if userID == "" { http.Error(w, "Unauthorized", 401); return }
+	toolID := r.URL.Query().Get("tool_id")
+	if toolID == "" { http.Error(w, "tool_id required", 400); return }
+	var versions []ToolVersion
+	DB.Where("tool_id = ? AND user_id = ?", toolID, userID).Order("version desc").Find(&versions)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(versions)
+}
+
+func RollbackToolVersionHandler(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get("X-User-ID")
+	if userID == "" { http.Error(w, "Unauthorized", 401); return }
+	var req struct {
+		ToolID    string `json:"tool_id"`
+		VersionID string `json:"version_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", 400); return
+	}
+	var ver ToolVersion
+	if DB.Where("id = ? AND tool_id = ? AND user_id = ?", req.VersionID, req.ToolID, userID).First(&ver).Error != nil {
+		http.Error(w, "Version not found", 404); return
+	}
+	DB.Model(&VerticalTool{}).Where("id = ? AND user_id = ?", req.ToolID, userID).Updates(map[string]interface{}{
+		"code": ver.Code, "version": ver.Version, "validation_status": "pending",
+	})
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "rolled_back", "version": fmt.Sprintf("%d", ver.Version)})
+}
+
+// Secrets management for vertical tools
+type VerticalSecret struct {
+	ID         string    `json:"id" gorm:"primaryKey"`
+	UserID     string    `json:"user_id"`
+	VerticalID string    `json:"vertical_id"`
+	Key        string    `json:"key"`
+	Value      string    `json:"-" gorm:"column:encrypted_value"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+func ListVerticalSecretsHandler(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get("X-User-ID")
+	if userID == "" { http.Error(w, "Unauthorized", 401); return }
+	verticalID := r.URL.Query().Get("vertical_id")
+	var secrets []VerticalSecret
+	q := DB.Where("user_id = ?", userID)
+	if verticalID != "" { q = q.Where("vertical_id = ?", verticalID) }
+	q.Find(&secrets)
+	// Only return keys, not values
+	out := []map[string]interface{}{}
+	for _, s := range secrets {
+		out = append(out, map[string]interface{}{"id": s.ID, "key": s.Key, "vertical_id": s.VerticalID, "created_at": s.CreatedAt})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+func SetVerticalSecretHandler(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get("X-User-ID")
+	if userID == "" { http.Error(w, "Unauthorized", 401); return }
+	var req struct {
+		VerticalID string `json:"vertical_id"`
+		Key        string `json:"key"`
+		Value      string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", 400); return
+	}
+	if req.Key == "" || req.Value == "" || req.VerticalID == "" {
+		http.Error(w, "Missing fields", 400); return
+	}
+	// Upsert
+	var existing VerticalSecret
+	if DB.Where("user_id = ? AND vertical_id = ? AND key = ?", userID, req.VerticalID, req.Key).First(&existing).Error == nil {
+		DB.Model(&existing).Update("encrypted_value", req.Value)
+	} else {
+		DB.Create(&VerticalSecret{ID: uuid.New().String(), UserID: userID, VerticalID: req.VerticalID, Key: req.Key, Value: req.Value})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "saved", "key": req.Key})
+}
+
+func DeleteVerticalSecretHandler(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get("X-User-ID")
+	if userID == "" { http.Error(w, "Unauthorized", 401); return }
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", 400); return
+	}
+	DB.Where("id = ? AND user_id = ?", req.ID, userID).Delete(&VerticalSecret{})
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
 }
