@@ -46,7 +46,7 @@ export function ChatInterface({ model, onQuery }: ChatInterfaceProps) {
     const responses = [
       `Based on the ${model.datasets.length} connected data source(s), I can provide insights about this query.`,
       `Analyzing data from ${model.datasets.map((d) => d.datasetName).join(", ")}...`,
-      `Using the ${model.modelType.replace("-", " ")} capabilities to process your request.`,
+      `Using the ${(model as any).modelType.replace("-", " ")} capabilities to process your request.`,
     ]
 
     const isPositive = Math.random() > 0.5

@@ -33,6 +33,7 @@ interface FineTunedModel {
   schedule_desc?: string
   next_sync_at?: string
   last_sync_at?: string
+  connection_ids?: string
 }
 
 function ChartWithTooltip({ data, label, finalValue, isLoss = false }: { data: number[]; label: string; finalValue: string; isLoss?: boolean }) {

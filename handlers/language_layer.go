@@ -117,7 +117,7 @@ func GetOpenAIFunctionDefinitions() []OpenAITool {
 				Name:        "get_config",
 				Description: "Read this vertical's system configuration. Use when the user asks about thresholds, rules, tool settings, agent behavior, or any configured parameter.",
 				Parameters: map[string]interface{}{
-					"type": "object",
+					"type":       "object",
 					"properties": map[string]interface{}{},
 				},
 			},
@@ -150,7 +150,7 @@ type FunctionCallResult struct {
 
 // ExecuteFunctionCall routes a function call from the LLM to the appropriate Runtime operation
 func ExecuteFunctionCall(userID, verticalID, modelID, sessionID, functionName string, arguments json.RawMessage) FunctionCallResult {
-	
+
 	// Check per-function capability toggle
 	if verticalID != "" {
 		var vc VerticalConfig
@@ -321,7 +321,7 @@ func bridgeRunTool(userID, modelID string, args json.RawMessage) (interface{}, e
 }
 
 // bridgeLookupPrediction queries prediction_store by ID
-func bridgeLookupPrediction(userID, verticalID string, args json.RawMessage) (interface{}, error) {
+func bridgeLookupPrediction(userID, _ string, args json.RawMessage) (interface{}, error) {
 	var params struct {
 		PredictionID string `json:"prediction_id"`
 	}
@@ -356,9 +356,13 @@ func bridgeQueryPredictions(userID, verticalID string, args json.RawMessage) (in
 	if verticalID != "" {
 		var vc VerticalConfig
 		if DB.Where("id = ?", verticalID).First(&vc).Error == nil && vc.LanguageConfig != "" {
-			var lc struct { HistoryLookbackDays int `json:"history_lookback_days"` }
+			var lc struct {
+				HistoryLookbackDays int `json:"history_lookback_days"`
+			}
 			json.Unmarshal([]byte(vc.LanguageConfig), &lc)
-			if lc.HistoryLookbackDays > 0 { lookbackDays = lc.HistoryLookbackDays }
+			if lc.HistoryLookbackDays > 0 {
+				lookbackDays = lc.HistoryLookbackDays
+			}
 		}
 	}
 	query = query.Where("created_at >= ?", time.Now().AddDate(0, 0, -lookbackDays))
@@ -429,13 +433,13 @@ func bridgeGetConfig(userID, verticalID string) (interface{}, error) {
 	}
 
 	return map[string]interface{}{
-		"name":        config.Name,
-		"description": config.Description,
-		"config_yaml": config.ConfigYAML,
-		"enabled":     config.Enabled,
-		"version":     config.Version,
-		"tools":       toolNames,
-		"agents":      agentNames,
+		"name":            config.Name,
+		"description":     config.Description,
+		"config_yaml":     config.ConfigYAML,
+		"enabled":         config.Enabled,
+		"version":         config.Version,
+		"tools":           toolNames,
+		"agents":          agentNames,
 		"language_config": config.LanguageConfig,
 	}, nil
 }
@@ -488,19 +492,19 @@ func savePrediction(userID, verticalID, modelID string, rowData map[string]inter
 	}
 
 	pred := PredictionStore{
-		ID:                uuid.New().String(),
-		UserID:            userID,
-		VerticalID:        verticalID,
-		ModelID:           modelID,
-		RowData:           string(rowDataJSON),
-		SchemaPrediction:  prediction,
-		SchemaConfidence:  confidence,
+		ID:                 uuid.New().String(),
+		UserID:             userID,
+		VerticalID:         verticalID,
+		ModelID:            modelID,
+		RowData:            string(rowDataJSON),
+		SchemaPrediction:   prediction,
+		SchemaConfidence:   confidence,
 		ClassProbabilities: string(classProbJSON),
-		ToolOutputs:       string(toolOutputsJSON),
-		AgentOutput:       string(agentOutputJSON),
-		FinalDecision:     finalDecision,
-		Flags:             string(flagsJSON),
-		CreatedAt:         time.Now(),
+		ToolOutputs:        string(toolOutputsJSON),
+		AgentOutput:        string(agentOutputJSON),
+		FinalDecision:      finalDecision,
+		Flags:              string(flagsJSON),
+		CreatedAt:          time.Now(),
 	}
 	DB.Create(&pred)
 }
@@ -616,9 +620,10 @@ func CallClaudeWithFunctions(messages []ClaudeMessage, systemPrompt, model, user
 		assistantContent := make([]ClaudeContentBlock, 0)
 		for _, block := range claudeResp.Content {
 			cb := ClaudeContentBlock{Type: block.Type}
-			if block.Type == "text" {
+			switch block.Type {
+			case "text":
 				cb.Text = block.Text
-			} else if block.Type == "tool_use" {
+			case "tool_use":
 				cb.ID = block.ID
 				cb.Name = block.Name
 				cb.Input = block.Input
@@ -761,10 +766,10 @@ func CallOpenAIWithFunctions(messages []ChatMessage, model, userID, verticalID, 
 // ─── LLM Provider Abstraction ───
 
 type LLMProvider struct {
-	Type     string `json:"type"`     // openai, anthropic, gemini, ministral, custom
-	Model    string `json:"model"`
+	Type      string `json:"type"` // openai, anthropic, gemini, ministral, custom
+	Model     string `json:"model"`
 	APIKeyEnv string `json:"api_key_env"` // secret name from llm_secrets
-	Endpoint string `json:"endpoint"`    // custom endpoint URL
+	Endpoint  string `json:"endpoint"`    // custom endpoint URL
 }
 
 // GetProviderForVertical returns the configured LLM provider for a vertical
@@ -812,12 +817,12 @@ func GetAPIKeyForProvider(userID, verticalID string, provider *LLMProvider) stri
 	// Check user plan
 	isUnlimited := false
 	var quota UserQuota
-if err := DB.Raw("SELECT * FROM user_quotas WHERE user_id = ? LIMIT 1", userID).Scan(&quota).Error; err == nil && quota.ID != "" {
+	if err := DB.Raw("SELECT * FROM user_quotas WHERE user_id = ? LIMIT 1", userID).Scan(&quota).Error; err == nil && quota.ID != "" {
 		isUnlimited = quota.Plan == "alpha_unlimited"
-fmt.Printf("[LANGUAGE_LAYER] User %s plan=%s isUnlimited=%v\n", userID, quota.Plan, isUnlimited)
-} else {
-fmt.Printf("[LANGUAGE_LAYER] Quota not found for user %s\n", userID)
-}
+		fmt.Printf("[LANGUAGE_LAYER] User %s plan=%s isUnlimited=%v\n", userID, quota.Plan, isUnlimited)
+	} else {
+		fmt.Printf("[LANGUAGE_LAYER] Quota not found for user %s\n", userID)
+	}
 
 	// 1. Always check llm_secrets first (user's own key)
 	var secret LLMSecret
@@ -829,8 +834,8 @@ fmt.Printf("[LANGUAGE_LAYER] Quota not found for user %s\n", userID)
 		secretNames = []string{"ANTHROPIC_API_KEY", "anthropic"}
 	case "gemini":
 		secretNames = []string{"GEMINI_API_KEY", "gemini"}
-case "mistral":
-secretNames = []string{"MISTRAL_API_KEY", "mistral"}
+	case "mistral":
+		secretNames = []string{"MISTRAL_API_KEY", "mistral"}
 	}
 	if provider.APIKeyEnv != "" {
 		secretNames = append([]string{provider.APIKeyEnv}, secretNames...)
@@ -841,11 +846,11 @@ secretNames = []string{"MISTRAL_API_KEY", "mistral"}
 			return secret.EncryptedValue
 		}
 	}
-// Also try by provider field
-if err := DB.Where("user_id = ? AND provider = ?", userID, provider.Type).First(&secret).Error; err == nil {
-fmt.Printf("[LANGUAGE_LAYER] Using user own API key by provider: %s\n", provider.Type)
-return secret.EncryptedValue
-}
+	// Also try by provider field
+	if err := DB.Where("user_id = ? AND provider = ?", userID, provider.Type).First(&secret).Error; err == nil {
+		fmt.Printf("[LANGUAGE_LAYER] Using user own API key by provider: %s\n", provider.Type)
+		return secret.EncryptedValue
+	}
 
 	// 2. Unlimited plan -> fallback to env vars
 	if isUnlimited {
@@ -1020,9 +1025,9 @@ func TestLLMConnectionHandler(w http.ResponseWriter, r *http.Request) {
 // ─── Gemini Provider ───
 
 type GeminiRequest struct {
-	Contents         []GeminiContent  `json:"contents"`
-	Tools            []GeminiTool     `json:"tools,omitempty"`
-	SystemInstruction *GeminiContent  `json:"system_instruction,omitempty"`
+	Contents          []GeminiContent        `json:"contents"`
+	Tools             []GeminiTool           `json:"tools,omitempty"`
+	SystemInstruction *GeminiContent         `json:"system_instruction,omitempty"`
 	GenerationConfig  map[string]interface{} `json:"generation_config,omitempty"`
 }
 
@@ -1032,8 +1037,8 @@ type GeminiContent struct {
 }
 
 type GeminiPart struct {
-	Text             string                 `json:"text,omitempty"`
-	FunctionCall     *GeminiFunctionCall    `json:"functionCall,omitempty"`
+	Text             string                  `json:"text,omitempty"`
+	FunctionCall     *GeminiFunctionCall     `json:"functionCall,omitempty"`
 	FunctionResponse *GeminiFunctionResponse `json:"functionResponse,omitempty"`
 }
 
@@ -1059,8 +1064,8 @@ type GeminiFunctionDeclaration struct {
 
 type GeminiResponse struct {
 	Candidates []struct {
-		Content       GeminiContent `json:"content"`
-		FinishReason  string        `json:"finishReason"`
+		Content      GeminiContent `json:"content"`
+		FinishReason string        `json:"finishReason"`
 	} `json:"candidates"`
 	UsageMetadata struct {
 		PromptTokenCount     int `json:"promptTokenCount"`
@@ -1155,9 +1160,9 @@ func CallMistralWithFunctions(messages []ChatMessage, model, apiKey, userID, ver
 				ID:   toolCallID,
 				Type: "function",
 				Function: struct {
-				Name      string `json:"name"`
-				Arguments string `json:"arguments"`
-			}{Name: fnName, Arguments: fnArgs},
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				}{Name: fnName, Arguments: fnArgs},
 			})
 		}
 		messages = append(messages, ChatMessage{
@@ -1202,7 +1207,7 @@ func mustJSON(v interface{}) []byte {
 // CallGeminiWithFunctions calls Gemini API with function calling support
 func CallGeminiWithFunctions(history []ChatMessage, systemPrompt, model, apiKey, userID, verticalID, modelID, sessionID string, w http.ResponseWriter) (string, int, []FunctionCallResult, error) {
 	if apiKey == "" {
-return "", 0, nil, fmt.Errorf("API key not configured. Please add your Gemini API key in Settings")
+		return "", 0, nil, fmt.Errorf("API key not configured. Please add your Gemini API key in Settings")
 	}
 
 	if model == "" {
@@ -1329,38 +1334,38 @@ type LLMModelInfo struct {
 
 // KeyStatusHandler returns which providers have API keys configured
 func KeyStatusHandler(w http.ResponseWriter, r *http.Request) {
-userID := r.Header.Get("X-User-ID")
-if userID == "" {
-http.Error(w, "unauthorized", 401)
-return
-}
+	userID := r.Header.Get("X-User-ID")
+	if userID == "" {
+		http.Error(w, "unauthorized", 401)
+		return
+	}
 
-// Check plan
-isUnlimited := false
-var quota UserQuota
-if err := DB.Raw("SELECT * FROM user_quotas WHERE user_id = ? LIMIT 1", userID).Scan(&quota).Error; err == nil && quota.ID != "" {
-isUnlimited = quota.Plan == "alpha_unlimited"
-}
+	// Check plan
+	isUnlimited := false
+	var quota UserQuota
+	if err := DB.Raw("SELECT * FROM user_quotas WHERE user_id = ? LIMIT 1", userID).Scan(&quota).Error; err == nil && quota.ID != "" {
+		isUnlimited = quota.Plan == "alpha_unlimited"
+	}
 
-// If unlimited, all providers have keys (from env)
-if isUnlimited {
-w.Header().Set("Content-Type", "application/json")
-json.NewEncoder(w).Encode(map[string]interface{}{
-"openai": true, "anthropic": true, "gemini": true, "unlimited": true,
-})
-return
-}
+	// If unlimited, all providers have keys (from env)
+	if isUnlimited {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"openai": true, "anthropic": true, "gemini": true, "unlimited": true,
+		})
+		return
+	}
 
-// Check llm_secrets for each provider
-providers := []string{"openai", "anthropic", "gemini"}
-result := map[string]interface{}{"unlimited": false}
-for _, p := range providers {
-var count int64
-DB.Model(&LLMSecret{}).Where("user_id = ? AND provider = ?", userID, p).Count(&count)
-result[p] = count > 0
-}
-w.Header().Set("Content-Type", "application/json")
-json.NewEncoder(w).Encode(result)
+	// Check llm_secrets for each provider
+	providers := []string{"openai", "anthropic", "gemini"}
+	result := map[string]interface{}{"unlimited": false}
+	for _, p := range providers {
+		var count int64
+		DB.Model(&LLMSecret{}).Where("user_id = ? AND provider = ?", userID, p).Count(&count)
+		result[p] = count > 0
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
 }
 
 // ListAvailableModelsHandler returns available LLM models per provider
@@ -1427,7 +1432,7 @@ func fetchMistralModels(apiKey string) []LLMModelInfo {
 
 	var result struct {
 		Data []struct {
-			ID           string   `json:"id"`
+			ID           string `json:"id"`
 			Capabilities struct {
 				FunctionCalling bool `json:"function_calling"`
 			} `json:"capabilities"`
@@ -1450,16 +1455,17 @@ func fetchMistralModels(apiKey string) []LLMModelInfo {
 		if !m.Capabilities.FunctionCalling {
 			continue
 		}
-		if mapped, ok := nameMap[m.ID]; ok {
-			// Schema-branded models only - other Mistral models excluded
-			models = append(models, LLMModelInfo{ID: m.ID, Name: mapped, Provider: "Schema"})
+		name := m.ID
+		if mapped, ok := nameMap[name]; ok {
+			name = mapped
 		}
+		models = append(models, LLMModelInfo{ID: m.ID, Name: name, Provider: "Schema"})
 	}
 	fmt.Printf("[MISTRAL] Fetched %d models with function calling\n", len(models))
 	return models
 }
 
-func fetchGeminiModels(apiKey string) []LLMModelInfo {
+func fetchGeminiModels(_ string) []LLMModelInfo {
 	// Cached Gemini model list - updated periodically
 	// API call yapılmıyor, stabil model listesi döndürülüyor
 	return []LLMModelInfo{
@@ -1486,7 +1492,7 @@ func CreateSessionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		VerticalID      string      `json:"vertical_id"`
+		VerticalID       string       `json:"vertical_id"`
 		ProviderOverride *LLMProvider `json:"provider_override"`
 	}
 	json.NewDecoder(r.Body).Decode(&req)
@@ -1495,14 +1501,14 @@ func CreateSessionHandler(w http.ResponseWriter, r *http.Request) {
 
 	historyMutex.Lock()
 	conversationSessions[sessionID] = &ChatSession{
-		Messages:     []ChatMessage{},
-		CreatedAt:    time.Now(),
-		LastActive:   time.Now(),
-		ExpiresAt:    time.Now().Add(sessionTTLMinutes * time.Minute),
-		UserID:       userID,
-		SessionID:    sessionID,
-		VerticalID:   req.VerticalID,
-		Status:       "active",
+		Messages:   []ChatMessage{},
+		CreatedAt:  time.Now(),
+		LastActive: time.Now(),
+		ExpiresAt:  time.Now().Add(sessionTTLMinutes * time.Minute),
+		UserID:     userID,
+		SessionID:  sessionID,
+		VerticalID: req.VerticalID,
+		Status:     "active",
 	}
 	historyMutex.Unlock()
 
@@ -1517,9 +1523,9 @@ func CreateSessionHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"session_id":     sessionID,
-		"vertical_name":  verticalName,
-		"expires_at":     time.Now().Add(sessionTTLMinutes * time.Minute).Format(time.RFC3339),
+		"session_id":      sessionID,
+		"vertical_name":   verticalName,
+		"expires_at":      time.Now().Add(sessionTTLMinutes * time.Minute).Format(time.RFC3339),
 		"active_provider": "mistral",
 		"active_model":    "mistral-medium-2505",
 		"status":          "active",
@@ -1554,12 +1560,12 @@ func GetSessionHistoryHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Get function call logs for this session
 	var fcLogs []struct {
-		FunctionName string    `json:"function_name"`
-		Arguments    string    `json:"arguments"`
-		ResultSummary string   `json:"result_summary"`
-		Error        string    `json:"error"`
-		ExecutionMs  int       `json:"execution_ms"`
-		CreatedAt    time.Time `json:"created_at"`
+		FunctionName  string    `json:"function_name"`
+		Arguments     string    `json:"arguments"`
+		ResultSummary string    `json:"result_summary"`
+		Error         string    `json:"error"`
+		ExecutionMs   int       `json:"execution_ms"`
+		CreatedAt     time.Time `json:"created_at"`
 	}
 	DB.Table("function_call_logs").Where("session_id = ?", sessionID).Order("created_at asc").Find(&fcLogs)
 
@@ -1651,14 +1657,14 @@ func CreateComparisonSessionHandler(w http.ResponseWriter, r *http.Request) {
 
 	historyMutex.Lock()
 	conversationSessions[sessionID] = &ChatSession{
-		Messages:     []ChatMessage{},
-		CreatedAt:    time.Now(),
-		LastActive:   time.Now(),
-		ExpiresAt:    time.Now().Add(sessionTTLMinutes * time.Minute),
-		UserID:       userID,
-		SessionID:    sessionID,
-		VerticalID:   req.VerticalID,
-		Status:       "active",
+		Messages:   []ChatMessage{},
+		CreatedAt:  time.Now(),
+		LastActive: time.Now(),
+		ExpiresAt:  time.Now().Add(sessionTTLMinutes * time.Minute),
+		UserID:     userID,
+		SessionID:  sessionID,
+		VerticalID: req.VerticalID,
+		Status:     "active",
 	}
 	historyMutex.Unlock()
 

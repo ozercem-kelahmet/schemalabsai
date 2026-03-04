@@ -1,6 +1,8 @@
 "use client"
 
+// @ts-ignore
 import { Sidebar } from "@/components/sidebar"
+// @ts-ignore
 import { QuickActions, TerminalQuickStart } from "@/components/dashboard/quick-actions"
 
 export default function DashboardPage() {

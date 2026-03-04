@@ -435,8 +435,7 @@ export function ConfigStep({
               id="model-name"
               value={modelName}
               onChange={(e) => onModelNameChange(e.target.value)}
-              placeholder="e.g., Customer Intelligence Model" className="w-full"
-              className="border-border bg-background text-foreground"
+              placeholder="e.g., Customer Intelligence Model" className="w-full border-border bg-background text-foreground"
             />
           </div>
 

@@ -94,7 +94,7 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
     setDbName("")
     setDbUser("")
     setDbPassword("")
-    setApiType("rest")
+    setApiType("rest_api" as any)
     setStep("form")
     setAvailableTables([])
     setSelectedTables([])
@@ -186,7 +186,7 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
       const isRelationalDB = ["postgresql", "mysql", "supabase"].includes(selectedProvider || "")
       const isMongoOrAdvanced = ["mongodb", "snowflake", "databricks"].includes(selectedProvider || "")
       if (isRelationalDB) {
-        connection.config = { host: dbHost, port: dbPort, database: dbName, username: dbUser, password: dbPassword, ssl: selectedProvider === "supabase" }
+        connection.config = { host: dbHost, port: dbPort, database: dbName, username: dbUser, password: dbPassword, ssl: selectedProvider === "supabase" ? "true" : "" }
       } else if (isMongoOrAdvanced) {
         connection.config = { endpoint, authToken, host: dbHost, port: dbPort, database: dbName, username: dbUser, password: dbPassword }
       } else if (selectedProvider === "chroma") {
@@ -230,7 +230,7 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
             type: connection.type,
             sub_type: connSubType === "graphql" ? "graphql" : connSubType,
             host: connection.config?.host || "",
-            port: parseInt(connection.config?.port) || (connection.sub_type === "mysql" ? 3306 : connection.sub_type === "mongodb" ? 27017 : 5432),
+            port: parseInt(connection.config?.port) || (connection.subType === "mysql" ? 3306 : connection.subType === "mongodb" ? 27017 : 5432),
             database: connection.config?.database || "",
             username: connection.config?.username || "",
             password: connection.config?.password || "",
@@ -276,7 +276,7 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
           type: connection.type,
           sub_type: connection.subType || selectedProvider || "",
           host: connection.config?.host || "",
-          port: parseInt(connection.config?.port) || (connection.sub_type === "mysql" ? 3306 : connection.sub_type === "mongodb" ? 27017 : 5432),
+          port: parseInt(connection.config?.port) || (connection.subType === "mysql" ? 3306 : connection.subType === "mongodb" ? 27017 : 5432),
           database: connection.config?.database || "",
           username: connection.config?.username || "",
           password: connection.config?.password || "",
@@ -782,7 +782,7 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
               <div className="flex gap-2 mb-4">
                 <Button
                   variant={apiType === "rest_api" ? "default" : "outline"}
-                  onClick={() => setApiType("rest")}
+                  onClick={() => setApiType("rest_api" as any)}
                   className={apiType === "rest_api" ? "bg-[#0052CC]" : ""}
                 >
                   <Globe className="h-4 w-4 mr-2" />

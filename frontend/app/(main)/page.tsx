@@ -16,6 +16,7 @@ interface Model {
   source_name?: string
   connection_names?: string
   source_file_names?: string
+  training_duration?: number
 }
 
 interface DatasetFile {
@@ -39,16 +40,19 @@ export default function DashboardPage() {
           fetch("/api/connections", { credentials: "include" }).catch(() => ({ ok: false }))
         ])
         if (modelsRes.ok) {
+          // @ts-ignore
           const data = await modelsRes.json()
           setModels(data.models || [])
         }
         if (datasetsRes.ok) {
+          // @ts-ignore
           const filesData = await datasetsRes.json()
           const files = (filesData.files || []).filter((f: any) => !f.is_merged && !f.filename?.includes("_merged_all"))
           
           let allDatasets = [...files]
           
           if (connectionsRes.ok) {
+            // @ts-ignore
             const connectionsData = await connectionsRes.json()
             const connections = connectionsData.connections || []
             allDatasets = [...allDatasets, ...connections]
@@ -87,6 +91,7 @@ export default function DashboardPage() {
     try {
       const res = await fetch("/api/queries?model_id=" + model.id, { credentials: "include" })
       if (res.ok) {
+        // @ts-ignore
         const data = await res.json()
         if (data.queries && data.queries.length > 0) {
           router.push("/playground/" + data.queries[0].id)

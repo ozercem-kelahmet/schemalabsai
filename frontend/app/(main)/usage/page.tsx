@@ -20,6 +20,8 @@ interface Model {
   epochs: number
   llm_model?: string
   created_at: string
+  base_model?: string
+  training_duration?: number
 }
 
 interface Query {
@@ -36,6 +38,8 @@ interface Endpoint {
   path: string
   calls: number
   created_at: string
+  fine_tuned_model_id?: string
+  finetuned_model_id?: string
 }
 
 interface UsageEvent {

@@ -107,7 +107,7 @@ export function VerticalPanel({ open, onClose, modelId, modelName }: VerticalPan
     await fetch("/api/vertical/tools/rollback", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
       body: JSON.stringify({ tool_id: toolId, version_id: versionId }) })
     setShowVersions(false)
-    fetchVerticals()
+    // fetchVerticals() - reload handled by parent
   }
 
   const createVertical = async () => {

@@ -10,6 +10,7 @@ interface SourceBadgeProps {
 }
 
 const sourceConfig: Record<DataSource, { label: string; color: string; icon: React.ReactNode }> = {
+  "uploaded-files": { label: "Uploaded Files", color: "bg-blue-500/10 text-blue-500", icon: <Upload className="h-3 w-3" /> },
   databricks: {
     label: "Databricks",
     color: "bg-orange-500/20 text-orange-400 border-orange-500/30",

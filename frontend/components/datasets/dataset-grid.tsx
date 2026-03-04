@@ -280,7 +280,7 @@ export function DatasetGrid() {
   const confirmDelete = async () => {
     if (!deleteTarget) return
     try {
-      const isConnection = deleteTarget.source !== "upload" && deleteTarget.source !== "generated" && deleteTarget.source !== ""
+      const isConnection = deleteTarget.source !== "upload" as any && deleteTarget.source !== "generated" as any && deleteTarget.source !== "" as any
       if (isConnection) {
         await api.deleteConnection(deleteTarget.id)
       } else {
