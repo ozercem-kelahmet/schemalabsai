@@ -1558,7 +1558,7 @@ api.getMessages(sessionId)
                         <div className="flex items-start gap-3">
                           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted">
                             <img src="/images/icon-dark.svg" alt="Schema" className="h-4 w-4 dark:hidden" />
-                            <img src="/images/icon-light.svg" alt="Schema" className="h-4 w-4 hidden dark:block" />
+                                            <img src="/images/icon-light.svg" alt="Schema" className="h-4 w-4 hidden dark:block" />
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="rounded-2xl rounded-tl-md border border-border bg-card p-4 overflow-hidden break-words max-w-full">

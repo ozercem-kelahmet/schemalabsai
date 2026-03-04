@@ -317,7 +317,7 @@ function ConfigurationPageInner() {
       <Card className="border-border bg-card">
         <CardHeader className="flex flex-row items-center justify-between">
           <div>
-            <CardTitle className="flex items-center gap-2 text-foreground">API Keys</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-foreground"><Key className="h-5 w-5" /> API Keys</CardTitle>
             <CardDescription>Manage your API keys for accessing Schema models</CardDescription>
           </div>
           <Button onClick={() => setCreateKeyModalOpen(true)} disabled={fineTunedModels.length === 0} className="gap-2 bg-[#0052CC] text-white hover:bg-[#003D99]">
@@ -399,7 +399,7 @@ function ConfigurationPageInner() {
       <Card className="border-border bg-card">
         <CardHeader className="flex flex-row items-center justify-between">
           <div>
-            <CardTitle className="flex items-center gap-2 text-foreground">Endpoints</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-foreground"><Globe className="h-5 w-5" /> Endpoints</CardTitle>
             <CardDescription>Create and manage your model API endpoints</CardDescription>
           </div>
           <Button onClick={() => setCreateEndpointModalOpen(true)} disabled={fineTunedModels.length === 0} className="gap-2 bg-[#0052CC] text-white hover:bg-[#003D99]">
@@ -673,7 +673,7 @@ function ConfigurationPageInner() {
       <Card className="border-border bg-card">
         <CardHeader className="flex flex-row items-center justify-between">
           <div>
-            <CardTitle className="flex items-center gap-2 text-foreground">LLM Settings</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-foreground"><Brain className="h-5 w-5" /> LLM Settings</CardTitle>
             <CardDescription>Add your API keys to use GPT-4o, Claude, Gemini and other LLMs in the Playground chat. Keys are encrypted and stored securely.</CardDescription>
           </div>
         </CardHeader>
@@ -685,7 +685,7 @@ function ConfigurationPageInner() {
       {/* Language Layer Config */}
       <Card className="border-border bg-card">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-foreground">Language Layer</CardTitle>
+          <CardTitle className="flex items-center gap-2 text-foreground"><Settings className="h-5 w-5" /> Language Layer</CardTitle>
           <CardDescription>Configure conversation behavior, compliance rules, and function capabilities for the Language Layer.</CardDescription>
         </CardHeader>
         <CardContent>

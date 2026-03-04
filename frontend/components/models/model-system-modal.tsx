@@ -4,7 +4,6 @@ import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
 import CodeMirror from "@uiw/react-codemirror"
 import { python } from "@codemirror/lang-python"
 import { yaml } from "@codemirror/lang-yaml"
@@ -20,9 +19,14 @@ interface VTool { id: string; name: string; description: string; code: string; h
 interface VAgent { id: string; name: string; description: string; code: string; role: string; enabled: boolean; version: number; pipeline_order: number; runs_if: string; parallel_with: string; validation_status: string; validation_error: string }
 interface VConfig { id: string; name: string; description: string; config_yaml: string; enabled: boolean; version: number; model_id: string; language_config?: string }
 
-interface VerticalPanelProps { open: boolean; onClose: () => void; modelId: string; modelName: string }
+interface ModelSystemModalProps { 
+  open: boolean
+  onClose: () => void
+  modelId: string
+  modelName: string 
+}
 
-export function VerticalPanel({ open, onClose, modelId, modelName }: VerticalPanelProps) {
+export function ModelSystemModal({ open, onClose, modelId, modelName }: ModelSystemModalProps) {
   const [verticals, setVerticals] = useState<VConfig[]>([])
   const [toolsMap, setToolsMap] = useState<Record<string, VTool[]>>({})
   const [agentsMap, setAgentsMap] = useState<Record<string, VAgent[]>>({})
@@ -57,9 +61,11 @@ export function VerticalPanel({ open, onClose, modelId, modelName }: VerticalPan
   // Auto-open system config editor after creating a new configuration
   useEffect(() => {
     if (pendingConfigEdit && !loading) {
+      // Find the actual config from fetched data or use the pending one
       const actualConfig = verticals.find(v => v.id === pendingConfigEdit.id) || pendingConfigEdit
       setSelectedId(actualConfig.id)
       setExpanded(prev => ({ ...prev, [actualConfig.id]: true }))
+      // Open the config editor
       setUploadType("config")
       setEditingId(actualConfig.id)
       setTargetVerticalId(actualConfig.id)
@@ -107,7 +113,7 @@ export function VerticalPanel({ open, onClose, modelId, modelName }: VerticalPan
     await fetch("/api/vertical/tools/rollback", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
       body: JSON.stringify({ tool_id: toolId, version_id: versionId }) })
     setShowVersions(false)
-    fetchVerticals()
+    fetchAll()
   }
 
   const createVertical = async () => {
@@ -214,8 +220,6 @@ export function VerticalPanel({ open, onClose, modelId, modelName }: VerticalPan
     setUploadCode(""); setUploadHook("post_inference"); setValidationResult(null); setValidated(false)
   }
 
-  if (!open) return null
-
   const Row = ({ label, tag, valid, onView, onEdit, onDelete }: { label: string; tag?: string; valid?: string; onView?: () => void; onEdit?: () => void; onDelete?: () => void }) => (
     <div className="group flex items-center justify-between py-1.5 px-2 rounded hover:bg-muted/50 transition-colors">
       <div className="flex items-center gap-2 min-w-0">
@@ -234,97 +238,100 @@ export function VerticalPanel({ open, onClose, modelId, modelName }: VerticalPan
 
   return (
     <>
-      <div className="fixed inset-0 z-40 bg-black/50" onClick={onClose} />
-      <div className="fixed right-0 top-0 z-50 h-full w-[440px] bg-card border-l border-border shadow-2xl overflow-y-auto">
-        <div className="sticky top-0 z-10 bg-card border-b border-border p-4 flex items-center justify-between">
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">Model System</h2>
-            <p className="text-xs text-muted-foreground">{modelName}</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setCreateOpen(true)}>
-              <Plus className="h-3 w-3 mr-1" /> New Configuration
-            </Button>
-            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose}><X className="h-4 w-4" /></Button>
-          </div>
-        </div>
-
-        <div className="p-3 space-y-1">
-          {loading ? <div className="py-12 text-center text-xs text-muted-foreground">Loading...</div> : verticals.length === 0 ? (
-            <div className="py-12 text-center">
-              <p className="text-xs text-muted-foreground">No configurations yet</p>
-              <Button variant="outline" size="sm" className="mt-3 text-xs" onClick={() => setCreateOpen(true)}><Plus className="h-3 w-3 mr-1" /> New Configuration</Button>
+      <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+        <DialogContent className="border-border bg-card sm:max-w-[700px] max-h-[85vh] overflow-hidden flex flex-col p-0">
+          <DialogHeader className="px-6 py-4 border-b border-border flex-shrink-0">
+            <div className="flex items-center justify-between">
+              <div>
+                <DialogTitle className="text-base font-semibold">Model System</DialogTitle>
+                <DialogDescription className="text-xs text-muted-foreground mt-0.5">{modelName}</DialogDescription>
+              </div>
+              <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setCreateOpen(true)}>
+                <Plus className="h-3 w-3 mr-1" /> New Configuration
+              </Button>
             </div>
-          ) : verticals.map(v => {
-            const tools = toolsMap[v.id] || []
-            const agents = agentsMap[v.id] || []
-            const isOpen = expanded[v.id]
-            return (
-              <div key={v.id} className={cn("rounded-lg border transition-all", selectedId === v.id ? "border-foreground/20 bg-muted/40" : "border-transparent")}>
-                {/* Vertical header - click to select */}
-                <div className={cn("group flex items-center justify-between px-3 py-2.5 cursor-pointer rounded-lg transition-colors", selectedId !== v.id && "hover:bg-muted/30")} onClick={() => setSelectedId(selectedId === v.id ? null : v.id)}>
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className={cn("text-sm truncate", selectedId === v.id ? "font-semibold text-foreground" : "text-muted-foreground")}>{v.name}</span>
-                    {v.enabled && <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500">Active</span>}
-                    {(() => { const t = toolsMap[v.id] || []; const a = agentsMap[v.id] || []; const hasConfig = v.config_yaml && v.config_yaml !== `name: "${v.name}"`; const complete = hasConfig && t.length > 0 && a.length > 0; return !complete ? <span className="text-[9px] text-amber-500">incomplete</span> : null })()}
-                  </div>
-                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground" onClick={e => { e.stopPropagation(); openEdit("config", v, v.id) }}><Pencil className="h-3 w-3" /></Button>
-                    <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-red-500" onClick={e => { e.stopPropagation(); deleteVertical(v.id, v.name) }}><Trash2 className="h-3 w-3" /></Button>
-                  </div>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto p-4 space-y-1">
+            {loading ? <div className="py-12 text-center text-xs text-muted-foreground">Loading...</div> : verticals.length === 0 ? (
+              <div className="py-12 text-center">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted mx-auto mb-3">
+                  <Settings className="h-5 w-5 text-muted-foreground" />
                 </div>
-
-                {selectedId === v.id && (
-                  <div className="px-3 pb-2 space-y-0.5 border-t border-border/50 pt-1">
-                    <div className="flex items-center justify-end pb-1">
-                      <button onClick={() => {
-                        if (!v.enabled) {
-                          const t = toolsMap[v.id] || []; const a = agentsMap[v.id] || []
-                          const missing: string[] = []
-                          if (!v.config_yaml || v.config_yaml === `name: "${v.name}"`) missing.push("System Config")
-                          if (t.length === 0) missing.push("Tool")
-                          if (a.length === 0) missing.push("Agent")
-                          if (missing.length > 0) { toast.error(`Complete all 3 first: ${missing.join(", ")}`); return }
-                        }
-                        activateVertical(v.id)
-                      }} className={cn("text-[10px] font-medium px-2.5 py-1 rounded transition-colors", v.enabled ? "bg-emerald-500/10 text-emerald-500 hover:bg-red-500/10 hover:text-red-400" : "bg-muted text-muted-foreground hover:text-foreground")}>{v.enabled ? "Deactivate" : "Activate"}</button>
+                <p className="text-sm font-medium text-foreground mb-1">No configurations yet</p>
+                <p className="text-xs text-muted-foreground mb-4 max-w-xs mx-auto">Create a configuration to define system instructions, then add tools and agents to customize your model's behavior.</p>
+                <Button variant="outline" size="sm" className="text-xs" onClick={() => setCreateOpen(true)}><Plus className="h-3 w-3 mr-1" /> New Configuration</Button>
+              </div>
+            ) : verticals.map(v => {
+              const tools = toolsMap[v.id] || []
+              const agents = agentsMap[v.id] || []
+              return (
+                <div key={v.id} className={cn("rounded-lg border transition-all", selectedId === v.id ? "border-foreground/20 bg-muted/40" : "border-transparent")}>
+                  {/* Vertical header */}
+                  <div className={cn("group flex items-center justify-between px-3 py-2.5 cursor-pointer rounded-lg transition-colors", selectedId !== v.id && "hover:bg-muted/30")} onClick={() => setSelectedId(selectedId === v.id ? null : v.id)}>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className={cn("text-sm truncate", selectedId === v.id ? "font-semibold text-foreground" : "text-muted-foreground")}>{v.name}</span>
+                      {v.enabled && <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500">Active</span>}
+                      {(() => { const t = toolsMap[v.id] || []; const a = agentsMap[v.id] || []; const hasConfig = v.config_yaml && v.config_yaml !== `name: "${v.name}"`; const complete = hasConfig && t.length > 0 && a.length > 0; return !complete ? <span className="text-[9px] text-amber-500">incomplete</span> : null })()}
                     </div>
-                    <Row label="System Config" tag={`v${v.version}`} onView={() => setViewingCode({ name: v.name, code: v.config_yaml })} onEdit={() => openEdit("config", v, v.id)} onDelete={() => { fetch("/api/vertical/configs/update", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ id: v.id, config_yaml: "" }) }).then(() => { toast.success("Config cleared"); fetchAll() }) }} />
-                    {tools.map((t: any) => <div key={t.id} className="flex items-center gap-0.5">
-                      <div className="flex-1"><Row label={`${t.name}.py`} tag={t.hook} valid={t.validation_status} onView={() => setViewingCode({ name: t.name, code: t.code })} onEdit={() => openEdit("tool", t, v.id)} onDelete={() => deleteItem("tool", t.id, t.name)} /></div>
-                      <button className="text-[9px] text-muted-foreground hover:text-foreground px-1" title="Versions" onClick={() => { setVersionToolId(t.id); setShowVersions(true); fetchVersions(t.id) }}>v{t.version || 1}</button>
-                    </div>)}
-                    <button className="text-[10px] text-muted-foreground hover:text-foreground transition-colors py-1.5 px-2" onClick={() => openUpload("tool", v.id)}>+ Add Tool</button>
-                    {agents.map((a: any) => <Row key={a.id} label={`${a.name}.py`} tag={a.role} valid={a.validation_status} onView={() => setViewingCode({ name: a.name, code: a.code })} onEdit={() => openEdit("agent", a, v.id)} onDelete={() => deleteItem("agent", a.id, a.name)} />)}
-                    <button className="text-[10px] text-muted-foreground hover:text-foreground transition-colors py-1.5 px-2" onClick={() => openUpload("agent", v.id)}>+ Add Agent</button>
+                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground" onClick={e => { e.stopPropagation(); openEdit("config", v, v.id) }}><Pencil className="h-3 w-3" /></Button>
+                      <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-red-500" onClick={e => { e.stopPropagation(); deleteVertical(v.id, v.name) }}><Trash2 className="h-3 w-3" /></Button>
+                    </div>
+                  </div>
 
-                    {/* Language Layer Toggle */}
-                    <div className="mt-2 pt-2 border-t border-border/50">
-                      <div className="flex items-center justify-between px-2 py-1.5">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[10px] font-medium text-muted-foreground">Language Layer</span>
-                          {(() => { try { const lc = JSON.parse(v.language_config || "{}"); return lc.enabled ? <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#2684FF]/10 text-[#2684FF]">ON</span> : null } catch { return null } })()}
+                  {selectedId === v.id && (
+                    <div className="px-3 pb-2 space-y-0.5 border-t border-border/50 pt-1">
+                      <div className="flex items-center justify-end pb-1">
+                        <button onClick={() => {
+                          if (!v.enabled) {
+                            const t = toolsMap[v.id] || []; const a = agentsMap[v.id] || []
+                            const missing: string[] = []
+                            if (!v.config_yaml || v.config_yaml === `name: "${v.name}"`) missing.push("System Config")
+                            if (t.length === 0) missing.push("Tool")
+                            if (a.length === 0) missing.push("Agent")
+                            if (missing.length > 0) { toast.error(`Complete all 3 first: ${missing.join(", ")}`); return }
+                          }
+                          activateVertical(v.id)
+                        }} className={cn("text-[10px] font-medium px-2.5 py-1 rounded transition-colors", v.enabled ? "bg-emerald-500/10 text-emerald-500 hover:bg-red-500/10 hover:text-red-400" : "bg-muted text-muted-foreground hover:text-foreground")}>{v.enabled ? "Deactivate" : "Activate"}</button>
+                      </div>
+                      <Row label="System Config" tag={`v${v.version}`} onView={() => setViewingCode({ name: v.name, code: v.config_yaml })} onEdit={() => openEdit("config", v, v.id)} onDelete={() => { fetch("/api/vertical/configs/update", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ id: v.id, config_yaml: "" }) }).then(() => { toast.success("Config cleared"); fetchAll() }) }} />
+                      {tools.map((t: any) => <div key={t.id} className="flex items-center gap-0.5">
+                        <div className="flex-1"><Row label={`${t.name}.py`} tag={t.hook} valid={t.validation_status} onView={() => setViewingCode({ name: t.name, code: t.code })} onEdit={() => openEdit("tool", t, v.id)} onDelete={() => deleteItem("tool", t.id, t.name)} /></div>
+                        <button className="text-[9px] text-muted-foreground hover:text-foreground px-1" title="Versions" onClick={() => { setVersionToolId(t.id); setShowVersions(true); fetchVersions(t.id) }}>v{t.version || 1}</button>
+                      </div>)}
+                      <button className="text-[10px] text-muted-foreground hover:text-foreground transition-colors py-1.5 px-2" onClick={() => openUpload("tool", v.id)}>+ Add Tool</button>
+                      {agents.map((a: any) => <Row key={a.id} label={`${a.name}.py`} tag={a.role} valid={a.validation_status} onView={() => setViewingCode({ name: a.name, code: a.code })} onEdit={() => openEdit("agent", a, v.id)} onDelete={() => deleteItem("agent", a.id, a.name)} />)}
+                      <button className="text-[10px] text-muted-foreground hover:text-foreground transition-colors py-1.5 px-2" onClick={() => openUpload("agent", v.id)}>+ Add Agent</button>
+
+                      {/* Language Layer Toggle */}
+                      <div className="mt-2 pt-2 border-t border-border/50">
+                        <div className="flex items-center justify-between px-2 py-1.5">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-medium text-muted-foreground">Language Layer</span>
+                            {(() => { try { const lc = JSON.parse(v.language_config || "{}"); return lc.enabled ? <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#2684FF]/10 text-[#2684FF]">ON</span> : null } catch { return null } })()}
+                          </div>
+                          <button onClick={async () => {
+                            const current = (() => { try { return JSON.parse(v.language_config || "{}") } catch { return {} } })()
+                            const newEnabled = !current.enabled
+                            const newConfig = JSON.stringify({ ...current, enabled: newEnabled, provider: current.provider || { type: "openai", model: "gpt-4o" } })
+                            await fetch("/api/vertical/configs/update", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ id: v.id, language_config: newConfig }) })
+                            setVerticals(prev => prev.map(vc => vc.id === v.id ? { ...vc, language_config: newConfig } : vc))
+                          }} className={(() => { try { const lc = JSON.parse(v.language_config || "{}"); return lc.enabled ? "text-[10px] font-medium px-2.5 py-1 rounded bg-[#2684FF]/10 text-[#2684FF] hover:bg-red-500/10 hover:text-red-400 transition-colors" : "text-[10px] font-medium px-2.5 py-1 rounded bg-muted text-muted-foreground hover:text-foreground transition-colors" } catch { return "text-[10px] font-medium px-2.5 py-1 rounded bg-muted text-muted-foreground hover:text-foreground transition-colors" } })()}>
+                            {(() => { try { const lc = JSON.parse(v.language_config || "{}"); return lc.enabled ? "Disable" : "Enable" } catch { return "Enable" } })()}
+                          </button>
                         </div>
-                        <button onClick={async () => {
-                          const current = (() => { try { return JSON.parse(v.language_config || "{}") } catch { return {} } })()
-                          const newEnabled = !current.enabled
-                          const newConfig = JSON.stringify({ ...current, enabled: newEnabled, provider: current.provider || { type: "openai", model: "gpt-4o" } })
-                          await fetch("/api/vertical/configs/update", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ id: v.id, language_config: newConfig }) })
-                          setVerticals(prev => prev.map(vc => vc.id === v.id ? { ...vc, language_config: newConfig } : vc))
-                        }} className={(() => { try { const lc = JSON.parse(v.language_config || "{}"); return lc.enabled ? "text-[10px] font-medium px-2.5 py-1 rounded bg-[#2684FF]/10 text-[#2684FF] hover:bg-red-500/10 hover:text-red-400 transition-colors" : "text-[10px] font-medium px-2.5 py-1 rounded bg-muted text-muted-foreground hover:text-foreground transition-colors" } catch { return "text-[10px] font-medium px-2.5 py-1 rounded bg-muted text-muted-foreground hover:text-foreground transition-colors" } })()}>
-                          {(() => { try { const lc = JSON.parse(v.language_config || "{}"); return lc.enabled ? "Disable" : "Enable" } catch { return "Enable" } })()}
-                        </button>
                       </div>
                     </div>
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </DialogContent>
+      </Dialog>
 
-      {/* Create Configuration */}
+      {/* Create Configuration Dialog */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="border-border bg-card sm:max-w-[400px] z-[60]">
           <DialogHeader>
@@ -341,7 +348,7 @@ export function VerticalPanel({ open, onClose, modelId, modelName }: VerticalPan
         </DialogContent>
       </Dialog>
 
-      {/* Upload/Edit */}
+      {/* Upload/Edit Dialog */}
       <Dialog open={uploadType !== null} onOpenChange={o => { if (!o) resetUpload() }}>
         <DialogContent className="border-border bg-card sm:max-w-[600px] z-[60]">
           <DialogHeader>
@@ -418,7 +425,7 @@ export function VerticalPanel({ open, onClose, modelId, modelName }: VerticalPan
         </DialogContent>
       </Dialog>
 
-      {/* View Code */}
+      {/* View Code Dialog */}
       <Dialog open={viewingCode !== null} onOpenChange={o => { if (!o) setViewingCode(null) }}>
         <DialogContent className="border-border bg-card sm:max-w-[700px] z-[60]">
           <DialogHeader><DialogTitle className="text-sm">{viewingCode?.name}</DialogTitle></DialogHeader>
@@ -445,8 +452,7 @@ export function VerticalPanel({ open, onClose, modelId, modelName }: VerticalPan
         </DialogContent>
       </Dialog>
     
-      
-      {/* Tool Versions */}
+      {/* Tool Versions Dialog */}
       <Dialog open={showVersions} onOpenChange={setShowVersions}>
         <DialogContent className="border-border bg-card sm:max-w-[400px] z-[60]">
           <DialogHeader><DialogTitle className="text-sm">Tool Versions</DialogTitle></DialogHeader>
@@ -463,7 +469,8 @@ export function VerticalPanel({ open, onClose, modelId, modelName }: VerticalPan
         </DialogContent>
       </Dialog>
 
-          </>
+      
+    </>
   )
 }
 

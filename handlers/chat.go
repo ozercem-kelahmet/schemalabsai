@@ -578,10 +578,9 @@ FineTunedModelID: ftModelID,
 
 var cnt int64; DB.Model(&Message{}).Where("query_id = ? AND created_at > ?", queryID, time.Now().Add(-5*time.Second)).Count(&cnt); fmt.Printf("[VERIFY] count=%d for query=%s\n", cnt, queryID)
 
-	// Deduct credits and log usage
-	creditCost := float64(tokens) / 1000.0 * 0.01
-	if creditCost < 0.01 { creditCost = 0.01 }
-	if creditCost > 5.0 { creditCost = 5.0 }
+	// Deduct credits - real model-based pricing
+	creditCost := CalculateTokenCost(model, tokens)
+	if creditCost < 0.000001 { creditCost = 0.000001 }
 
 	var quota UserQuota
 	if DB.Where("user_id = ?", userID).First(&quota).Error == nil {
@@ -896,6 +895,12 @@ fmt.Println("DEBUG: fineTunedResult does NOT contain vsRaptors")
 		systemPrompt = basePrompt
 	}
 
+	// Schema model guardrail - brand identity
+	if strings.HasPrefix(req.Model, "mistral") || strings.HasPrefix(req.Model, "ministral") {
+		schemaGuardrail := getSchemaGuardrail(req.Model)
+		systemPrompt = schemaGuardrail + "\n\n" + systemPrompt
+	}
+
 	// Model-specific history key for compare mode
 	historyKey := sessionID
 	if req.CompareGroup != "" && req.FineTunedModel != "" {
@@ -961,6 +966,10 @@ saveMessagesToDB(userID, sessionID, req.Message, response, req.Model, tokens, re
 result := DB.Model(&Message{}).Where("query_id = ? AND role = ?", sessionID, "assistant").Order("created_at desc").Limit(1).Update("function_calls", funcCallsJSON); fmt.Printf("[FUNC_SAVE] rows=%d err=%v\n", result.RowsAffected, result.Error)
 		}
 		w.Header().Set("Content-Type", "application/json")
+		// Sanitize Schema model responses
+		if strings.HasPrefix(req.Model, "mistral") || strings.HasPrefix(req.Model, "ministral") {
+			response = SanitizeSchemaResponse(response)
+		}
 		json.NewEncoder(w).Encode(map[string]interface{}{"response": response, "model": req.Model, "tokens": tokens, "status": "success", "function_calls": funcCalls})
 		return
 	}

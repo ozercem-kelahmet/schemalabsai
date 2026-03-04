@@ -40,6 +40,11 @@ export function VerticalPanel({ open, onClose, modelId, modelName }: VerticalPan
   const [uploadCode, setUploadCode] = useState("")
   const [uploadHook, setUploadHook] = useState("post_inference")
   const [uploadRunsIf, setUploadRunsIf] = useState("")
+  const [secrets, setSecrets] = useState<{id: string; key: string; vertical_id: string}[]>([])
+  const [newSecretKey, setNewSecretKey] = useState("")
+  const [newSecretValue, setNewSecretValue] = useState("")
+  const [secretVerticalId, setSecretVerticalId] = useState("")
+  const [showSecrets, setShowSecrets] = useState(false)
   const [showVersions, setShowVersions] = useState(false)
   const [versions, setVersions] = useState<{id: string; version: number; created_at: string; active: boolean}[]>([])
   const [versionToolId, setVersionToolId] = useState("")
@@ -49,28 +54,9 @@ export function VerticalPanel({ open, onClose, modelId, modelName }: VerticalPan
   const [validated, setValidated] = useState(false)
   const [validating, setValidating] = useState(false)
   const [viewingCode, setViewingCode] = useState<{name: string, code: string} | null>(null)
-  const [pendingConfigEdit, setPendingConfigEdit] = useState<VConfig | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => { if (open && modelId) fetchAll() }, [open, modelId])
-
-  // Auto-open system config editor after creating a new configuration
-  useEffect(() => {
-    if (pendingConfigEdit && !loading) {
-      const actualConfig = verticals.find(v => v.id === pendingConfigEdit.id) || pendingConfigEdit
-      setSelectedId(actualConfig.id)
-      setExpanded(prev => ({ ...prev, [actualConfig.id]: true }))
-      setUploadType("config")
-      setEditingId(actualConfig.id)
-      setTargetVerticalId(actualConfig.id)
-      setUploadName(actualConfig.name)
-      setUploadDescription(actualConfig.description || "")
-      setUploadCode("")
-      setValidated(false)
-      setValidationResult(null)
-      setPendingConfigEdit(null)
-    }
-  }, [pendingConfigEdit, loading, verticals])
 
   const fetchAll = async () => {
     setLoading(true)
@@ -96,6 +82,21 @@ export function VerticalPanel({ open, onClose, modelId, modelName }: VerticalPan
     } catch (e) { console.error(e) } finally { setLoading(false) }
   }
 
+  const fetchSecrets = async (vId: string) => {
+    try {
+      const res = await fetch(`/api/vertical/secrets/list?vertical_id=${vId}`, { credentials: "include" })
+      if (res.ok) setSecrets(await res.json() || [])
+    } catch { setSecrets([]) }
+  }
+
+  const addSecret = async (vId: string) => {
+    if (!newSecretKey || !newSecretValue) return
+    await fetch("/api/vertical/secrets", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+      body: JSON.stringify({ vertical_id: vId, key: newSecretKey, value: newSecretValue }) })
+    setNewSecretKey(""); setNewSecretValue("")
+    fetchSecrets(vId)
+  }
+
   const fetchVersions = async (toolId: string) => {
     try {
       const res = await fetch(`/api/vertical/tools/versions?tool_id=${toolId}`, { credentials: "include" })
@@ -107,27 +108,20 @@ export function VerticalPanel({ open, onClose, modelId, modelName }: VerticalPan
     await fetch("/api/vertical/tools/rollback", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
       body: JSON.stringify({ tool_id: toolId, version_id: versionId }) })
     setShowVersions(false)
-    fetchVerticals()
+    fetchAll()
   }
+
+  const deleteSecret = async (id: string, vId: string) => {
+    await fetch("/api/vertical/secrets/delete", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+      body: JSON.stringify({ id }) })
+    fetchSecrets(vId)
+  }
+
 
   const createVertical = async () => {
     if (!newName) return
-    const configName = newName
-    const configDesc = newDesc
-    try {
-      const res = await fetch("/api/vertical/configs/create", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ model_id: modelId, name: newName, description: newDesc, config_yaml: "" }) })
-      if (!res.ok) throw new Error("API not available")
-      const created = await res.json()
-      toast.success("Configuration created - now add your system instructions")
-      setCreateOpen(false)
-      setNewName(""); setNewDesc("")
-      await fetchAll()
-      const newConfig: VConfig = { id: created.id || created.config_id, name: configName, description: configDesc, config_yaml: "", enabled: false, version: 1, model_id: modelId }
-      setPendingConfigEdit(newConfig)
-    } catch (e) {
-      console.error(e)
-      toast.error("Failed to create configuration")
-    }
+    await fetch("/api/vertical/configs/create", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ model_id: modelId, name: newName, description: newDesc, config_yaml: `name: "${newName}"` }) })
+    toast.success("Created"); setCreateOpen(false); setNewName(""); setNewDesc(""); fetchAll()
   }
 
   const activateVertical = async (id: string) => {
@@ -238,12 +232,12 @@ export function VerticalPanel({ open, onClose, modelId, modelName }: VerticalPan
       <div className="fixed right-0 top-0 z-50 h-full w-[440px] bg-card border-l border-border shadow-2xl overflow-y-auto">
         <div className="sticky top-0 z-10 bg-card border-b border-border p-4 flex items-center justify-between">
           <div>
-            <h2 className="text-sm font-semibold text-foreground">Model System</h2>
+            <h2 className="text-sm font-semibold text-foreground">Vertical AI Runtime</h2>
             <p className="text-xs text-muted-foreground">{modelName}</p>
           </div>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setCreateOpen(true)}>
-              <Plus className="h-3 w-3 mr-1" /> New Configuration
+              <Plus className="h-3 w-3 mr-1" /> New Vertical
             </Button>
             <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose}><X className="h-4 w-4" /></Button>
           </div>
@@ -252,8 +246,8 @@ export function VerticalPanel({ open, onClose, modelId, modelName }: VerticalPan
         <div className="p-3 space-y-1">
           {loading ? <div className="py-12 text-center text-xs text-muted-foreground">Loading...</div> : verticals.length === 0 ? (
             <div className="py-12 text-center">
-              <p className="text-xs text-muted-foreground">No configurations yet</p>
-              <Button variant="outline" size="sm" className="mt-3 text-xs" onClick={() => setCreateOpen(true)}><Plus className="h-3 w-3 mr-1" /> New Configuration</Button>
+              <p className="text-xs text-muted-foreground">No verticals yet</p>
+              <Button variant="outline" size="sm" className="mt-3 text-xs" onClick={() => setCreateOpen(true)}><Plus className="h-3 w-3 mr-1" /> Create Vertical</Button>
             </div>
           ) : verticals.map(v => {
             const tools = toolsMap[v.id] || []
@@ -297,6 +291,7 @@ export function VerticalPanel({ open, onClose, modelId, modelName }: VerticalPan
                     <button className="text-[10px] text-muted-foreground hover:text-foreground transition-colors py-1.5 px-2" onClick={() => openUpload("tool", v.id)}>+ Add Tool</button>
                     {agents.map((a: any) => <Row key={a.id} label={`${a.name}.py`} tag={a.role} valid={a.validation_status} onView={() => setViewingCode({ name: a.name, code: a.code })} onEdit={() => openEdit("agent", a, v.id)} onDelete={() => deleteItem("agent", a.id, a.name)} />)}
                     <button className="text-[10px] text-muted-foreground hover:text-foreground transition-colors py-1.5 px-2" onClick={() => openUpload("agent", v.id)}>+ Add Agent</button>
+                    <button className="text-[10px] text-muted-foreground hover:text-foreground transition-colors py-1.5 px-2" onClick={() => { setSecretVerticalId(v.id); setShowSecrets(true); fetchSecrets(v.id) }}>Secrets</button>
 
                     {/* Language Layer Toggle */}
                     <div className="mt-2 pt-2 border-t border-border/50">
@@ -324,20 +319,15 @@ export function VerticalPanel({ open, onClose, modelId, modelName }: VerticalPan
         </div>
       </div>
 
-      {/* Create Configuration */}
+      {/* Create Vertical */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="border-border bg-card sm:max-w-[400px] z-[60]">
-          <DialogHeader>
-            <DialogTitle>New Configuration</DialogTitle>
-            <DialogDescription className="text-xs text-muted-foreground">
-              Step 1 of 3: Name your configuration. Next, you'll add system instructions, then tools and agents.
-            </DialogDescription>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>New Vertical</DialogTitle></DialogHeader>
           <div className="space-y-3">
-            <div><Label className="text-xs">Name</Label><Input value={newName} onChange={e => setNewName(e.target.value)} className="border-border bg-background mt-1" placeholder="e.g., Finance Analyzer" /></div>
-            <div><Label className="text-xs">Description (optional)</Label><Input value={newDesc} onChange={e => setNewDesc(e.target.value)} className="border-border bg-background mt-1" placeholder="Brief description of this configuration" /></div>
+            <div><Label className="text-xs">Name</Label><Input value={newName} onChange={e => setNewName(e.target.value)} className="border-border bg-background mt-1" placeholder="Finance Detector" /></div>
+            <div><Label className="text-xs">Description</Label><Input value={newDesc} onChange={e => setNewDesc(e.target.value)} className="border-border bg-background mt-1" placeholder="Optional" /></div>
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button><Button onClick={createVertical} disabled={!newName} className="bg-[#0052CC] text-white hover:bg-[#003D99]">Continue</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button><Button onClick={createVertical} disabled={!newName} className="bg-[#0052CC] text-white hover:bg-[#003D99]">Create</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -345,12 +335,7 @@ export function VerticalPanel({ open, onClose, modelId, modelName }: VerticalPan
       <Dialog open={uploadType !== null} onOpenChange={o => { if (!o) resetUpload() }}>
         <DialogContent className="border-border bg-card sm:max-w-[600px] z-[60]">
           <DialogHeader>
-            <DialogTitle>{editingId ? "Edit" : uploadType === "config" ? "Add" : "Upload"} {uploadType === "config" ? "System Instructions" : uploadType === "tool" ? "Tool" : "Agent"}</DialogTitle>
-            {uploadType === "config" && !editingId && (
-              <DialogDescription className="text-xs text-muted-foreground">
-                Step 2 of 3: Define system instructions for your model. After this, add tools and agents to complete your configuration.
-              </DialogDescription>
-            )}
+            <DialogTitle>{editingId ? "Edit" : "Upload"} {uploadType === "config" ? "System Config" : uploadType === "tool" ? "Tool" : "Agent"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <div><Label className="text-xs">Name</Label><Input value={uploadName} onChange={e => setUploadName(e.target.value)} className="border-border bg-background mt-1" /></div>
@@ -463,7 +448,31 @@ export function VerticalPanel({ open, onClose, modelId, modelName }: VerticalPan
         </DialogContent>
       </Dialog>
 
-          </>
+      {/* Secrets */}
+      <Dialog open={showSecrets} onOpenChange={setShowSecrets}>
+        <DialogContent className="border-border bg-card sm:max-w-[400px] z-[60]">
+          <DialogHeader><DialogTitle className="text-sm">Environment Secrets</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1 max-h-[200px] overflow-y-auto">
+              {secrets.map(s => (
+                <div key={s.id} className="flex items-center justify-between py-1 px-2 rounded bg-muted/50 text-xs">
+                  <span className="font-mono">{s.key}</span>
+                  <button className="text-red-500 hover:text-red-400 text-[10px]" onClick={() => deleteSecret(s.id, secretVerticalId)}>Delete</button>
+                </div>
+              ))}
+              {secrets.length === 0 && <p className="text-xs text-muted-foreground">No secrets configured</p>}
+            </div>
+            <div className="flex gap-2">
+              <Input value={newSecretKey} onChange={e => setNewSecretKey(e.target.value)} placeholder="KEY_NAME" className="border-border bg-background text-xs h-8 font-mono" />
+              <Input value={newSecretValue} onChange={e => setNewSecretValue(e.target.value)} placeholder="value" type="password" className="border-border bg-background text-xs h-8" />
+              <Button size="sm" className="h-8 text-xs" onClick={() => addSecret(secretVerticalId)} disabled={!newSecretKey || !newSecretValue}>Add</Button>
+            </div>
+          </div>
+          <DialogFooter><Button variant="outline" size="sm" onClick={() => setShowSecrets(false)}>Close</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+    </>
   )
 }
 

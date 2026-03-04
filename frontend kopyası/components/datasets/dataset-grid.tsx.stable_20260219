@@ -55,7 +55,6 @@ export function DatasetGrid() {
   const [searchQuery, setSearchQuery] = useState("")
   const [showMobileFilters, setShowMobileFilters] = useState(false)
   const [folders, setFolders] = useState<DataFolder[]>([])
-  const [rateLimitNotified, setRateLimitNotified] = useState<Set<string>>(new Set())
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -69,7 +68,7 @@ export function DatasetGrid() {
         
         // Show files as soon as they arrive (fastest path)
         const [filesData, modelsData, connectionsData] = await Promise.all([filesPromise, modelsPromise, connectionsPromise])
-        const files = (filesData.files || []).filter((f: any) => !f.is_merged && !f.filename?.includes("_merged_all") && !f.file_id?.startsWith("conn_") && f.source !== "connection")
+        const files = (filesData.files || []).filter((f: any) => !f.is_merged && !f.filename?.includes("_merged_all"))
         const models = modelsData.models || []
         const connections = connectionsData.connections || []
         const fileDatasets: Dataset[] = files.map((f: any) => {
@@ -87,8 +86,7 @@ export function DatasetGrid() {
     columns: cols.length,
     schema: cols.map((col: string) => ({ name: col.trim(), type: "string", nullable: true, description: "" })),
     sampleData: [],
-    syncStatus: "synced",
-    sizeMB: (f.size || 0) / (1024 * 1024),
+    syncStatus: "outdated",
   }
         })
         const connDatasets: Dataset[] = []
@@ -97,20 +95,7 @@ export function DatasetGrid() {
           const c = connections[ci]
           let totalRows = c.total_rows || 0
           let totalCols = c.total_cols || 0
-          let schemaDetails: any[] = []
-          if (c.table_details && c.table_details.length > 0) {
-            schemaDetails = c.table_details.map((t: any) => {
-              const estMB = ((t.rows || 0) * Math.max(t.columns || 1, 10) * 20) / (1024 * 1024)
-              const mbStr = estMB >= 0.005 ? (estMB < 1 ? estMB.toFixed(2) : estMB.toFixed(1)) + " MB" : ""
-              const parts = []
-              if (t.rows > 0) parts.push(t.rows.toLocaleString() + " rows")
-              if (t.columns > 0) parts.push(t.columns + " cols")
-              if (mbStr) parts.push(mbStr)
-              return { name: t.name, type: "string" as const, description: parts.join(", ") }
-            })
-          } else {
-            schemaDetails = (c.schema || []).map((s: string) => ({ name: s, type: "string" as const, description: "" }))
-          }
+          let schemaDetails: any[] = (c.schema || []).map((s: string) => ({ name: s, type: "string" as const, description: "" }))
           connDatasets.push({
             id: c.id,
             name: c.name,
@@ -123,20 +108,7 @@ export function DatasetGrid() {
             columns: totalCols,
             schema: schemaDetails,
             sampleData: [],
-            sizeMB: c.table_details && c.table_details.length > 0
-              ? c.table_details.reduce((sum: number, t: any) => {
-                  const raw = ((t.rows || 0) * Math.max(t.columns || 1, 10) * 20) / (1024 * 1024)
-                  const rounded = raw < 1 ? parseFloat(raw.toFixed(2)) : parseFloat(raw.toFixed(1))
-                  return sum + rounded
-                }, 0)
-              : (totalRows * Math.max(totalCols || 1, 10) * 20) / (1024 * 1024),
-            syncStatus: "synced", rateLimit: c.rate_limit || "",
-            rateLimitDaily: c.rate_limit_daily || 0,
-            rateLimitRemaining: c.rate_limit_remaining || 0,
-            rateLimitResetAt: c.rate_limit_reset_at || null,
-            rateLimitPaused: c.rate_limit_paused || false,
-            apiCallsCount: c.api_calls_count || 0,
-            lastPollAt: c.last_poll_at || null,
+            syncStatus: "synced",
           })
         }
         setDatasets([...fileDatasets, ...connDatasets])
@@ -174,24 +146,6 @@ export function DatasetGrid() {
         console.error("Load error:", e)
       }
   }
-
-  
-  useEffect(() => {
-    const paused = datasets.filter((d: any) => d.rateLimitPaused && !rateLimitNotified.has(d.id))
-    if (paused.length > 0) {
-      paused.forEach((d: any) => {
-        toast.warning(`⏸️ ${d.name} - Rate limited`, {
-          description: d.rateLimitResetAt ? `Resumes at ${new Date(d.rateLimitResetAt).toLocaleTimeString()}` : "Polling paused",
-          duration: 8000,
-        })
-      })
-      setRateLimitNotified(prev => {
-        const next = new Set(prev)
-        paused.forEach((d: any) => next.add(d.id))
-        return next
-      })
-    }
-  }, [datasets])
 
   useEffect(() => {
     loadData().finally(() => setLoading(false))
@@ -280,7 +234,7 @@ export function DatasetGrid() {
   const confirmDelete = async () => {
     if (!deleteTarget) return
     try {
-      const isConnection = deleteTarget.source !== "upload" && deleteTarget.source !== "generated" && deleteTarget.source !== ""
+      const isConnection = deleteTarget.syncStatus === "synced" || deleteTarget.syncStatus === "pending"
       if (isConnection) {
         await api.deleteConnection(deleteTarget.id)
       } else {
@@ -289,8 +243,6 @@ export function DatasetGrid() {
       toast.success("Dataset deleted successfully")
       setDatasets(prev => prev.filter(d => d.id !== deleteTarget.id))
       setDeleteTarget(null)
-      // Refresh quota after deletion
-      try { await fetch("/api/quota", { credentials: "include" }) } catch {}
     } catch (error) {
       console.error("Delete failed:", error)
       toast.error("Failed to delete dataset")
@@ -340,11 +292,11 @@ export function DatasetGrid() {
         setPythonScript("")
         loadData()
       } else {
-        toast.error(response.error || "Generation failed")
+        toast.error("Generation failed")
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error("Generate error:", error)
-      toast.error(error?.message || error?.error || "Generation failed")
+      toast.error("Generation failed")
     } finally {
       setIsGenerating(false)
     }
@@ -480,7 +432,7 @@ export function DatasetGrid() {
         open={isConnectModalOpen} 
         onOpenChange={setIsConnectModalOpen}
         onConnect={async (connection) => {
-          if ((connection as any).type === "skip") {
+          if (connection.type === "skip") {
             loadData()
             return
           }
@@ -489,73 +441,26 @@ export function DatasetGrid() {
             loadData()
             return
           }
-          if ((connection as any).type === "upload" && connection.files) {
-            let uploadToastId: string | number = ""
+          if (connection.type === "upload" && connection.files) {
             try {
-              const files = connection.files as File[]
-              
-              // Check max 10 files
-              if (files.length > 10) {
-                toast.error("Maximum 10 files per upload. Please remove some files.")
-                return
-              }
-              
               // Get limits from API
               const limits = await api.getUploadLimits()
               const maxFileSize = (limits.max_file_size_mb || 50) * 1024 * 1024
               
-              for (const file of files) {
+              for (const file of connection.files) {
                 if (file.size > maxFileSize) {
-                  toast.error("File " + file.name + " exceeds " + (limits.max_file_size_mb || 50) + "MB limit")
+                  toast.error(`File "${file.name}" exceeds ${limits.max_file_size_mb || 50}MB limit`)
                   return
                 }
               }
-              
-              // Upload files sequentially to avoid connection issues
-              uploadToastId = toast.loading("Uploading " + files.length + " files...")
-              let uploaded = 0
-              const allSheets: {name: string, rows: number, columns: number, file_id: string}[] = []
-              let mainFileId = ""
-              for (const file of files) {
-                const result = await api.upload(file, undefined)
-                if (result?.warning) {
-                  toast.dismiss(uploadToastId)
-                  toast.error(result.warning, { duration: 8000 })
-                  return
-                }
-                uploaded++
-                toast.dismiss(uploadToastId)
-                toast.loading("Uploaded " + uploaded + "/" + files.length + " files...", { id: uploadToastId })
-                // Check for Excel multi-sheet files
-                if (result?.sheets && result.sheets.length > 0) {
-                  mainFileId = result.file_id
-                  // Add main sheet (Sheet1)
-                  allSheets.push({ name: "(main_xlsx)", rows: 0, columns: 0, file_id: result.file_id })
-                  // Add extra sheets
-                  result.sheets.forEach((s: any) => {
-                    allSheets.push({ name: s.filename, rows: 0, columns: 0, file_id: s.file_id })
-                  })
-                }
-              }
-              toast.dismiss(uploadToastId)
-              // If Excel had multiple sheets, show selection dialog
-              if (allSheets.length > 0) {
-                const sheetOnly = allSheets.filter(s => s.name !== "(main_xlsx)")
-                setAvailableTables(sheetOnly.map(s => ({ name: s.name, rows: s.rows, columns: s.columns })))
-                setSelectedTables(sheetOnly.map(s => s.name))
-                // First id is main xlsx (to delete), rest are sheets
-                setPendingConnectionId("excel_sheets:" + allSheets.map(s => s.file_id).join(","))
-                setIsTableSelectOpen(true)
-                toast.success("Select which sheets to keep.")
-                return // Don't loadData yet, wait for sheet selection
-              } else {
-                toast.success(uploaded + " files uploaded successfully!")
-              }
+              // Upload all files in parallel
+              await Promise.all(connection.files.map((file: File) => api.upload(file, undefined)))
+              toast.dismiss()
+              toast.success("Files uploaded successfully!")
             } catch (error) {
-              toast.dismiss(uploadToastId)
-              toast.error("File upload failed: " + (error instanceof Error ? error.message : "Unknown error"))
+              toast.error("File upload failed")
             }
-          } else if ((connection as any).type === "database") {
+          } else if (connection.type === "database") {
             try {
               toast.loading("Connecting to database...")
               let connData: any = {
@@ -596,7 +501,7 @@ export function DatasetGrid() {
             } catch (error) {
               toast.error("Database connection failed")
             }
-          } else if ((connection as any).type === "api") {
+          } else if (connection.type === "api") {
             try {
               toast.loading("Connecting to API...")
               await api.createConnection({
@@ -611,7 +516,7 @@ export function DatasetGrid() {
             } catch (error) {
               toast.error("API connection failed")
             }
-          } else if ((connection as any).type === "cloud") {
+          } else if (connection.type === "cloud") {
             try {
               toast.loading("Connecting to cloud storage...")
               await api.createConnection({
@@ -670,32 +575,18 @@ export function DatasetGrid() {
               <Button variant="outline" onClick={() => setIsTableSelectOpen(false)}>Cancel</Button>
               <Button onClick={async () => {
                 if (pendingConnectionId) {
-                  if (pendingConnectionId.startsWith("excel_sheets:")) {
-                    const fileIds = pendingConnectionId.replace("excel_sheets:", "").split(",")
-                    // First id is main xlsx - always delete it
-                    try { await api.deleteFile(fileIds[0]) } catch {}
-                    // Rest are sheet CSVs - delete unselected
-                    const sheetIds = fileIds.slice(1)
-                    const allNames = availableTables.map(t => t.name)
-                    for (let i = 0; i < allNames.length; i++) {
-                      if (!selectedTables.includes(allNames[i])) {
-                        try { await api.deleteFile(sheetIds[i]) } catch {}
-                      }
-                    }
-                  } else {
-                    await fetch("/api/connections/update", {
-                      method: "POST",
-                      credentials: "include",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ id: pendingConnectionId, selected_tables: selectedTables })
-                    })
-                  }
+                  await fetch("/api/connections/update", {
+                    method: "POST",
+                    credentials: "include",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ id: pendingConnectionId, selected_tables: selectedTables })
+                  })
                 }
                 setIsTableSelectOpen(false)
-                toast.success(pendingConnectionId?.startsWith("excel_sheets:") ? "Sheets selected!" : "Connected successfully!")
+                toast.success("Connected successfully!")
                 loadData()
               }} disabled={selectedTables.length === 0}>
-                Save ({selectedTables.length} {pendingConnectionId?.startsWith("excel_sheets:") ? "sheets" : "tables"})
+                Save ({selectedTables.length} tables)
               </Button>
             </div>
           </div>
