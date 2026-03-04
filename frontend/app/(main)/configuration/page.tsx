@@ -40,6 +40,7 @@ interface Endpoint {
   created_at: string
   vertical_config_id?: string
   vertical_config_name?: string
+  endpoint_type?: string
 }
 
 interface VConfig {

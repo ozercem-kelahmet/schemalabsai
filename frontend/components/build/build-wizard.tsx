@@ -244,9 +244,6 @@ export function BuildWizard() {
             const elapsed = Math.floor(Date.now() / 1000 - progress.start_time)
             if (elapsed > 0) setElapsedTime(elapsed)
           }
-          if (bestAcc) setCurrentAccuracy(bestAcc)
-          if (bestLoss) setCurrentLoss(bestLoss)
-          if (bestEpoch) setCurrentEpoch(bestEpoch)
           if (progress.epochs) setTotalEpochs(progress.epochs)
         }
       } catch (e) {

@@ -1450,11 +1450,10 @@ func fetchMistralModels(apiKey string) []LLMModelInfo {
 		if !m.Capabilities.FunctionCalling {
 			continue
 		}
-		name := m.ID
-		if mapped, ok := nameMap[name]; ok {
-			name = mapped
+		if mapped, ok := nameMap[m.ID]; ok {
+			// Schema-branded models only - other Mistral models excluded
+			models = append(models, LLMModelInfo{ID: m.ID, Name: mapped, Provider: "Schema"})
 		}
-		models = append(models, LLMModelInfo{ID: m.ID, Name: name, Provider: "Schema"})
 	}
 	fmt.Printf("[MISTRAL] Fetched %d models with function calling\n", len(models))
 	return models
