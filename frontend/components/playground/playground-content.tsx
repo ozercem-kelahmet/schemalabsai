@@ -203,16 +203,17 @@ export function PlaygroundContent({ sessionId: propSessionId }: PlaygroundConten
       .then((models: {id: string; name: string; provider: string}[]) => {
         if (models && models.length > 0) {
           setLlmOptions(models.map(m => ({ id: m.id, name: m.name, provider: m.provider })))
-          // Set default LLM - only keep models that are visible in dropdown
+          // Set default LLM - prefer Claude, fallback to Schema
+          const claudeModels = models.filter(m => m.provider === "Anthropic")
           const schemaModels = models.filter(m => m.provider === "Schema")
-          const defaultId = schemaModels.length > 0 ? schemaModels[0].id : ""
+          const defaultId = claudeModels.length > 0 ? claudeModels[0].id : (schemaModels.length > 0 ? schemaModels[0].id : "")
           // Force reset to Schema model - ignore any restored non-visible models
           setTimeout(() => {
             setSelectedLLMs(prev => {
               const filtered = prev.filter(id => {
                 const model = models.find(m => m.id === id)
                 if (!model) return false
-                if (model.provider === "Schema") return true
+                if (model.provider === "Schema" || model.provider === "Anthropic") return true
                 // Check keyStatus for other providers
                 return false
               })
