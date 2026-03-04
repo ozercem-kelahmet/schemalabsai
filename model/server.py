@@ -3846,18 +3846,21 @@ def predict_single():
         model_id = data.get('model_id', '')
         user_id = data.get('user_id', '')
         row_data = data.get('row_data', {})
+        model_path = data.get('model_path', '')
         run_pipeline = data.get('run_pipeline', False)
         vertical_config_id = data.get('vertical_config_id', '')
         
         if not model_id:
             return jsonify({"status": "error", "error": "No model_id provided"}), 400
         
+        print(f"DEBUG: Received model_path: {model_path}")
+        
         # Load model
         import pandas as pd
         df = pd.DataFrame([row_data])
         
         # Get model config
-        model_config = get_cached_finetuned_model(model_id, None)
+        model_config = get_cached_finetuned_model(model_id, None, model_path=model_path)
         if model_config is None:
             return jsonify({"status": "error", "error": f"Model {model_id} not found"}), 404
         

@@ -187,7 +187,26 @@ func ExecuteFunctionCall(userID, verticalID, modelID, functionName string, argum
 	fmt.Printf("[LANGUAGE_LAYER] Function: %s, User: %s, Vertical: %s, Duration: %dms, Error: %v\n",
 		functionName, userID, verticalID, result.ExecutionMs, err)
 
+	// Save to DB
+	go saveFunctionCallLog(userID, verticalID, functionName, arguments, result)
+
 	return result
+}
+
+func saveFunctionCallLog(userID, verticalID, functionName string, arguments json.RawMessage, result FunctionCallResult) {
+	summary := ""
+	if result.Error != "" {
+		summary = "error: " + result.Error
+	} else if resultJSON, err := json.Marshal(result.Result); err == nil {
+		s := string(resultJSON)
+		if len(s) > 200 {
+			s = s[:200] + "..."
+		}
+		summary = s
+	}
+	errStr := result.Error
+	DB.Exec(`INSERT INTO function_call_logs (user_id, vertical_id, function_name, arguments, result_summary, error, execution_ms) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		userID, verticalID, functionName, string(arguments), summary, errStr, result.ExecutionMs)
 }
 
 // ─── Bridge Functions ───
@@ -201,10 +220,17 @@ func bridgeRunPrediction(userID, modelID string, args json.RawMessage) (interfac
 		return nil, fmt.Errorf("invalid arguments: %v", err)
 	}
 
+	// Get model_path from DB
+	var ftm FineTunedModel
+	if err := DB.Where("id = ?", modelID).First(&ftm).Error; err != nil {
+		return nil, fmt.Errorf("model not found: %v", err)
+	}
+
 	payload := map[string]interface{}{
-		"user_id":  userID,
-		"model_id": modelID,
-		"row_data": params.RowData,
+		"user_id":    userID,
+		"model_id":   modelID,
+		"model_path": ftm.ModelPath,
+		"row_data":   params.RowData,
 	}
 	return callFlask("/predict_single", payload)
 }
@@ -224,9 +250,16 @@ func bridgeRunFullInference(userID, modelID string, args json.RawMessage) (inter
 		return nil, fmt.Errorf("no active vertical config found")
 	}
 
+	// Get model_path from DB
+	var ftm FineTunedModel
+	if err := DB.Where("id = ?", modelID).First(&ftm).Error; err != nil {
+		return nil, fmt.Errorf("model not found: %v", err)
+	}
+
 	payload := map[string]interface{}{
 		"user_id":            userID,
 		"model_id":           modelID,
+		"model_path":         ftm.ModelPath,
 		"row_data":           params.RowData,
 		"vertical_config_id": config.ID,
 		"run_pipeline":       true,
@@ -591,10 +624,20 @@ func CallClaudeWithFunctions(messages []ClaudeMessage, systemPrompt, model, user
 }
 
 // CallOpenAIWithFunctions calls OpenAI API with function calling support and loops until text response
-func CallOpenAIWithFunctions(messages []ChatMessage, model, userID, verticalID, modelID string, w http.ResponseWriter) (string, int, []FunctionCallResult, error) {
-	apiKey := GetAPIKeyForProvider(userID, verticalID, &LLMProvider{Type: "openai", Model: model})
-	if apiKey == "" {
-		return "", 0, nil, fmt.Errorf("API key not configured. Please add your OpenAI API key in Settings")
+func CallOpenAIWithFunctions(messages []ChatMessage, model, userID, verticalID, modelID string, w http.ResponseWriter, provider ...*LLMProvider) (string, int, []FunctionCallResult, error) {
+	var p *LLMProvider
+	if len(provider) > 0 && provider[0] != nil {
+		p = provider[0]
+	} else {
+		p = &LLMProvider{Type: "openai", Model: model}
+	}
+	apiKey := GetAPIKeyForProvider(userID, verticalID, p)
+	if apiKey == "" && p.Type != "custom" {
+		return "", 0, nil, fmt.Errorf("API key not configured. Please add your API key in Settings")
+	}
+	apiURL := "https://api.openai.com/v1/chat/completions"
+	if p.Endpoint != "" {
+		apiURL = p.Endpoint
 	}
 
 	modelMap := map[string]string{
@@ -623,9 +666,11 @@ func CallOpenAIWithFunctions(messages []ChatMessage, model, userID, verticalID, 
 
 		reqBody, _ := json.Marshal(openAIReq)
 		client := &http.Client{Timeout: 120 * time.Second}
-		httpReq, _ := http.NewRequest("POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(reqBody))
+		httpReq, _ := http.NewRequest("POST", apiURL, bytes.NewBuffer(reqBody))
 		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+		if apiKey != "" {
+			httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+		}
 
 		resp, err := client.Do(httpReq)
 		if err != nil {
@@ -815,17 +860,17 @@ func CallLLMWithFunctions(history []ChatMessage, systemPrompt, userID, verticalI
 	case "openai", "custom":
 		msgs := []ChatMessage{{Role: "system", Content: systemPrompt}}
 		msgs = append(msgs, history...)
-		return CallOpenAIWithFunctions(msgs, provider.Model, userID, verticalID, modelID, w)
+		return CallOpenAIWithFunctions(msgs, provider.Model, userID, verticalID, modelID, w, provider)
 
 	case "gemini":
 		apiKey := GetAPIKeyForProvider(userID, verticalID, provider)
 		return CallGeminiWithFunctions(history, systemPrompt, provider.Model, apiKey, userID, verticalID, modelID, w)
 
 	case "mistral":
-		// Ministral OpenAI-compatible API kullanır
+		apiKey := os.Getenv("MISTRAL_API_KEY")
 		msgs := []ChatMessage{{Role: "system", Content: systemPrompt}}
 		msgs = append(msgs, history...)
-		return CallOpenAIWithFunctions(msgs, provider.Model, userID, verticalID, modelID, w)
+		return CallMistralWithFunctions(msgs, provider.Model, apiKey, userID, verticalID, modelID, w)
 
 	default:
 		return "", 0, nil, fmt.Errorf("unknown provider type: %s", provider.Type)
@@ -1069,10 +1114,27 @@ func CallMistralWithFunctions(messages []ChatMessage, model, apiKey, userID, ver
 			return content, totalTokens, allFuncCalls, nil
 		}
 
-		// Process tool calls
+		// Process tool calls - build proper assistant message with tool_calls
+		var parsedToolCalls []OpenAIToolCall
+		for _, tc := range toolCalls {
+			toolCall := tc.(map[string]interface{})
+			fn := toolCall["function"].(map[string]interface{})
+			fnName, _ := fn["name"].(string)
+			fnArgs, _ := fn["arguments"].(string)
+			toolCallID, _ := toolCall["id"].(string)
+			parsedToolCalls = append(parsedToolCalls, OpenAIToolCall{
+				ID:   toolCallID,
+				Type: "function",
+				Function: struct {
+				Name      string `json:"name"`
+				Arguments string `json:"arguments"`
+			}{Name: fnName, Arguments: fnArgs},
+			})
+		}
 		messages = append(messages, ChatMessage{
-			Role:    "assistant",
-			Content: string(mustJSON(message)),
+			Role:      "assistant",
+			Content:   "",
+			ToolCalls: parsedToolCalls,
 		})
 
 		for _, tc := range toolCalls {

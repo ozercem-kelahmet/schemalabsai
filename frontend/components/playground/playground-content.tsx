@@ -191,7 +191,7 @@ export function PlaygroundContent({ sessionId: propSessionId }: PlaygroundConten
   const [currentQueryId, setCurrentQueryId] = useState<string | null>(null)
   const [llmOptions, setLlmOptions] = useState(defaultLLMOptions)
   const [keyStatus, setKeyStatus] = useState<Record<string, boolean>>({})
-  const [addKeyModal, setAddKeyModal] = useState<{open: boolean; provider: string; providerLabel: string}>({open: false, provider: "", providerLabel: ""})
+  const [addKeyModal, setAddKeyModal] = useState<{open: boolean; provider: string; providerLabel: string; endpoint: string}>({open: false, provider: "", providerLabel: "", endpoint: ""})
   const [addKeyValue, setAddKeyValue] = useState("")
   const [addKeySaving, setAddKeySaving] = useState(false)
   const [selectedLLMs, setSelectedLLMs] = useState<string[]>([])
@@ -1668,7 +1668,7 @@ api.getMessages(sessionId)
                             keyStatus[llm.provider === "Google" ? "gemini" : llm.provider.toLowerCase()] ? (
                               <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 shrink-0">Key</span>
                             ) : (
-                              <button onClick={(e) => { e.stopPropagation(); const pKey = llm.provider === "Google" ? "gemini" : llm.provider.toLowerCase(); setAddKeyModal({open: true, provider: pKey, providerLabel: llm.provider}); setAddKeyValue(""); setLlmDropdownOpen(false) }} className="text-[9px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 shrink-0">Add Key</button>
+                              <button onClick={(e) => { e.stopPropagation(); const pKey = llm.provider === "Google" ? "gemini" : llm.provider.toLowerCase(); setAddKeyModal({open: true, provider: pKey, providerLabel: llm.provider, endpoint: ""}); setAddKeyValue(""); setLlmDropdownOpen(false) }} className="text-[9px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 shrink-0">Add Key</button>
                             )
                           )}
                           {compareMode && isSelected && <Check className="h-4 w-4 text-[#0052CC] dark:text-[#2684FF]" />}
@@ -1680,7 +1680,7 @@ api.getMessages(sessionId)
                         <p className="text-[10px] text-muted-foreground">
                           {compareMode ? "Single LLM in compare mode" : "Select up to 2 LLMs"}
                         </p>
-                        {!keyStatus.unlimited && <button onClick={() => { setAddKeyModal({open: true, provider: "", providerLabel: ""}); setAddKeyValue(""); setLlmDropdownOpen(false) }} className="w-full mt-1 py-2 text-sm text-center rounded-md border border-dashed border-muted-foreground/30 text-muted-foreground hover:border-[#0052CC] hover:text-[#0052CC] dark:hover:border-[#2684FF] dark:hover:text-[#2684FF] transition-colors">+ Add LLM Provider</button>}
+                        {!keyStatus.unlimited && <button onClick={() => { setAddKeyModal({open: true, provider: "", providerLabel: "", endpoint: ""}); setAddKeyValue(""); setLlmDropdownOpen(false) }} className="w-full mt-1 py-2 text-sm text-center rounded-md border border-dashed border-muted-foreground/30 text-muted-foreground hover:border-[#0052CC] hover:text-[#0052CC] dark:hover:border-[#2684FF] dark:hover:text-[#2684FF] transition-colors">+ Add LLM Provider</button>}
                       </div>
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -1689,19 +1689,21 @@ api.getMessages(sessionId)
                 {/* Add Key Modal */}
                 {addKeyModal.open && (
                   <div className="fixed inset-0 z-50 flex items-center justify-center">
-                    <div className="fixed inset-0 bg-black/50" onClick={() => setAddKeyModal({open: false, provider: "", providerLabel: ""})} />
+                    <div className="fixed inset-0 bg-black/50" onClick={() => setAddKeyModal({open: false, provider: "", providerLabel: "", endpoint: ""})} />
                     <div className="relative z-50 w-[400px] rounded-lg border border-border bg-card p-6 shadow-xl">
                       <h3 className="text-sm font-semibold mb-1">Add LLM Provider</h3>
                       <p className="text-xs text-muted-foreground mb-4">Select a provider and enter your API key.</p>
                       <div className="flex gap-2 mb-4">
-                        {[{key: "openai", label: "OpenAI"}, {key: "anthropic", label: "Anthropic"}, {key: "gemini", label: "Google"}].map(p => (
-                          <button key={p.key} onClick={() => setAddKeyModal(prev => ({...prev, provider: p.key, providerLabel: p.label}))} className={`flex-1 py-2 text-xs font-medium rounded-md border transition-colors ${addKeyModal.provider === p.key ? "border-[#0052CC] bg-[#0052CC]/10 text-[#0052CC] dark:border-[#2684FF] dark:bg-[#2684FF]/10 dark:text-[#2684FF]" : "border-border hover:bg-muted"}`}>{p.label}</button>
+                        {[{key: "openai", label: "OpenAI"}, {key: "anthropic", label: "Anthropic"}, {key: "gemini", label: "Google"}, {key: "custom", label: "Custom"}].map(p => (
+                          <button key={p.key} onClick={() => setAddKeyModal(prev => ({...prev, provider: p.key, providerLabel: p.label, endpoint: ""}))} className={`flex-1 py-2 text-xs font-medium rounded-md border transition-colors ${addKeyModal.provider === p.key ? "border-[#0052CC] bg-[#0052CC]/10 text-[#0052CC] dark:border-[#2684FF] dark:bg-[#2684FF]/10 dark:text-[#2684FF]" : "border-border hover:bg-muted"}`}>{p.label}</button>
                         ))}
                       </div>
-                      <input type="password" placeholder={addKeyModal.provider ? `Enter ${addKeyModal.providerLabel} API key...` : "Select a provider first..."} disabled={!addKeyModal.provider} value={addKeyValue} onChange={e => setAddKeyValue(e.target.value)} className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm font-mono mb-4 focus:outline-none focus:ring-1 focus:ring-[#2684FF] disabled:opacity-50" autoFocus />
+                      <input type="password" placeholder={addKeyModal.provider ? `Enter ${addKeyModal.providerLabel} API key...` : "Select a provider first..."} disabled={!addKeyModal.provider} value={addKeyValue} onChange={e => setAddKeyValue(e.target.value)} className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm font-mono mb-2 focus:outline-none focus:ring-1 focus:ring-[#2684FF] disabled:opacity-50" autoFocus />
+                      {addKeyModal.provider === "custom" && <input type="text" placeholder="Endpoint URL (e.g. http://localhost:8000/v1/chat/completions)" value={addKeyModal.endpoint} onChange={e => setAddKeyModal(prev => ({...prev, endpoint: e.target.value}))} className="w-full h-9 rounded-md border border-border bg-background px-3 text-sm font-mono mb-2 focus:outline-none focus:ring-1 focus:ring-[#2684FF]" />}
+                      <p className="text-[10px] text-muted-foreground mb-4">{addKeyModal.provider === "custom" ? "OpenAI-compatible endpoint. Leave API key empty if not required." : ""}</p>
                       <div className="flex justify-end gap-2">
-                        <button onClick={() => setAddKeyModal({open: false, provider: "", providerLabel: ""})} className="px-3 py-1.5 text-sm rounded-md border border-border hover:bg-muted">Cancel</button>
-                        <button disabled={!addKeyValue || !addKeyModal.provider || addKeySaving} onClick={async () => {
+                        <button onClick={() => setAddKeyModal({open: false, provider: "", providerLabel: "", endpoint: ""})} className="px-3 py-1.5 text-sm rounded-md border border-border hover:bg-muted">Cancel</button>
+                        <button disabled={(!addKeyValue && addKeyModal.provider !== "custom") || !addKeyModal.provider || addKeySaving || (addKeyModal.provider === "custom" && !addKeyModal.endpoint)} onClick={async () => {
                           setAddKeySaving(true)
                           try {
                             const testRes = await fetch("/api/vertical/secrets/test", { method: "POST", headers: {"Content-Type": "application/json"}, credentials: "include", body: JSON.stringify({provider: addKeyModal.provider, api_key: addKeyValue}) })
@@ -1711,9 +1713,9 @@ api.getMessages(sessionId)
                               setAddKeySaving(false)
                               return
                             }
-                            await fetch("/api/vertical/secrets", { method: "POST", headers: {"Content-Type": "application/json"}, credentials: "include", body: JSON.stringify({provider: addKeyModal.provider, secret_name: addKeyModal.provider.toUpperCase() + "_API_KEY", value: addKeyValue, vertical_id: ""}) })
+                            await fetch("/api/vertical/secrets", { method: "POST", headers: {"Content-Type": "application/json"}, credentials: "include", body: JSON.stringify({provider: addKeyModal.provider, secret_name: addKeyModal.provider.toUpperCase() + "_API_KEY", value: addKeyValue, vertical_id: "", endpoint: addKeyModal.endpoint}) })
                             setKeyStatus(prev => ({...prev, [addKeyModal.provider]: true}))
-                            setAddKeyModal({open: false, provider: "", providerLabel: ""})
+                            setAddKeyModal({open: false, provider: "", providerLabel: "", endpoint: ""})
                             setAddKeyValue("")
                             toast.success("API key saved and verified")
                           } catch { toast.error("Failed to save") }

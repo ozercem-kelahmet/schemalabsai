@@ -695,6 +695,7 @@ function LanguageLayerConfig() {
   const [secretName, setSecretName] = useState("")
   const [showKey, setShowKey] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [customEndpoint, setCustomEndpoint] = useState("")
 
   const [providerModels, setProviderModels] = useState<Record<string, {id: string; name: string}[]>>({
     openai: [{ id: "gpt-4o", name: "GPT-4o" }],
@@ -702,7 +703,7 @@ function LanguageLayerConfig() {
     gemini: [{ id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" }],
   })
 
-  const providerLabels: Record<string, string> = { openai: "OpenAI", anthropic: "Anthropic", gemini: "Google Gemini" }
+  const providerLabels: Record<string, string> = { openai: "OpenAI", anthropic: "Anthropic", gemini: "Google Gemini", custom: "Custom Endpoint" }
 
   // Fetch models from API
   useEffect(() => {
@@ -744,7 +745,7 @@ function LanguageLayerConfig() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ provider, secret_name: secretName, value: apiKey, vertical_id: "" })
+        body: JSON.stringify({ provider, secret_name: secretName, value: apiKey, vertical_id: "", endpoint: provider === "custom" ? customEndpoint : "" })
       })
       toast.success(editingId ? `"${secretName}" updated` : `"${secretName}" saved`)
       setApiKey(""); setSecretName(""); setEditingId(null)
@@ -796,6 +797,7 @@ function LanguageLayerConfig() {
               <SelectItem value="openai">OpenAI</SelectItem>
               <SelectItem value="anthropic">Anthropic</SelectItem>
               <SelectItem value="gemini">Google Gemini</SelectItem>
+              <SelectItem value="custom">Custom Endpoint</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -816,6 +818,14 @@ function LanguageLayerConfig() {
         <Label>Secret Name</Label>
         <Input placeholder="e.g. OPENAI_API_KEY" value={secretName} onChange={e => setSecretName(e.target.value)} className="border-border bg-background font-mono"  />
       </div>
+
+      {provider === "custom" && (
+        <div className="space-y-2">
+          <Label>Endpoint URL</Label>
+          <Input placeholder="e.g. http://localhost:8000/v1/chat/completions" value={customEndpoint} onChange={e => setCustomEndpoint(e.target.value)} className="border-border bg-background font-mono" />
+          <p className="text-xs text-muted-foreground">OpenAI-compatible endpoint URL. Leave API key empty if not required.</p>
+        </div>
+      )}
 
       <div className="space-y-2">
         <Label>{editingId ? "New API Key" : "API Key"}</Label>

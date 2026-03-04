@@ -156,11 +156,47 @@ type FlaskAnalyzeResponse struct {
 	Status      string                 `json:"status"`
 }
 
-var (
-	conversationHistory = make(map[string][]ChatMessage)
-	historyMutex        = sync.RWMutex{}
-	maxHistoryTurns     = 1000
+// Session with TTL and message limits
+type ChatSession struct {
+	Messages    []ChatMessage
+	CreatedAt   time.Time
+	LastActive  time.Time
+	MessageCount int
+}
+
+const (
+	sessionTTLMinutes       = 60
+	maxMessagesPerSession   = 50
+	maxHistoryTurns         = 1000
+	sessionCleanupInterval  = 5 * time.Minute
 )
+
+var (
+	conversationSessions = make(map[string]*ChatSession)
+	historyMutex         = sync.RWMutex{}
+)
+
+func init() {
+	// Background goroutine to clean expired sessions
+	go func() {
+		for {
+			time.Sleep(sessionCleanupInterval)
+			historyMutex.Lock()
+			now := time.Now()
+			expired := 0
+			for k, s := range conversationSessions {
+				if now.Sub(s.LastActive) > time.Duration(sessionTTLMinutes)*time.Minute {
+					delete(conversationSessions, k)
+					expired++
+				}
+			}
+			if expired > 0 {
+				fmt.Printf("[SESSION] Cleaned %d expired sessions, %d active\n", expired, len(conversationSessions))
+			}
+			historyMutex.Unlock()
+		}
+	}()
+}
 
 func getModelAnalysis(fileID, query string) string {
 	reqBody, _ := json.Marshal(FlaskAnalyzeRequest{
@@ -863,15 +899,24 @@ fmt.Println("DEBUG: fineTunedResult does NOT contain vsRaptors")
 		historyKey = sessionID + "_" + req.Model
 	}
 	historyMutex.Lock()
-	history, exists := conversationHistory[historyKey]
+	sess, exists := conversationSessions[historyKey]
 	if !exists {
-		history = []ChatMessage{}
+		sess = &ChatSession{Messages: []ChatMessage{}, CreatedAt: time.Now(), LastActive: time.Now()}
+		conversationSessions[historyKey] = sess
 	}
-	history = append(history, ChatMessage{Role: "user", Content: req.Message})
-	if len(history) > maxHistoryTurns*2 {
-		history = history[len(history)-maxHistoryTurns*2:]
+	if sess.MessageCount >= maxMessagesPerSession {
+		historyMutex.Unlock()
+		http.Error(w, `{"error":"Session message limit reached (50). Please start a new chat."}`, http.StatusTooManyRequests)
+		return
 	}
-	conversationHistory[historyKey] = history
+	sess.LastActive = time.Now()
+	sess.Messages = append(sess.Messages, ChatMessage{Role: "user", Content: req.Message})
+	sess.MessageCount++
+	if len(sess.Messages) > maxHistoryTurns*2 {
+		sess.Messages = sess.Messages[len(sess.Messages)-maxHistoryTurns*2:]
+	}
+	history := make([]ChatMessage, len(sess.Messages))
+	copy(history, sess.Messages)
 	historyMutex.Unlock()
 
 	// ─── Language Layer: Function Calling Mode ───
@@ -902,7 +947,7 @@ fmt.Println("DEBUG: fineTunedResult does NOT contain vsRaptors")
 			funcCallsJSON = string(fcBytes)
 		}
 		historyMutex.Lock()
-		conversationHistory[historyKey] = append(conversationHistory[historyKey], ChatMessage{Role: "assistant", Content: response})
+		conversationSessions[historyKey].Messages = append(conversationSessions[historyKey].Messages, ChatMessage{Role: "assistant", Content: response})
 		historyMutex.Unlock()
 		fmt.Printf("[SAVE] sessionID=%s user=%s msg=%s\n", sessionID, userID, req.Message[:min(30, len(req.Message))])
 saveMessagesToDB(userID, sessionID, req.Message, response, req.Model, tokens, req.CompareGroup, fmt.Sprintf("%.1fs", time.Since(startTime).Seconds()), req.FineTunedModel)
@@ -932,7 +977,7 @@ result := DB.Model(&Message{}).Where("query_id = ? AND role = ?", sessionID, "as
 			historyMutex.Lock()
 			fmt.Printf("DEBUG LLM Response: %s\n", response)
 			if len(response) > 10 {
-				conversationHistory[historyKey] = append(conversationHistory[historyKey], ChatMessage{Role: "assistant", Content: response})
+				conversationSessions[historyKey].Messages = append(conversationSessions[historyKey].Messages, ChatMessage{Role: "assistant", Content: response})
 			}
 			historyMutex.Unlock()
 
@@ -956,7 +1001,7 @@ result := DB.Model(&Message{}).Where("query_id = ? AND role = ?", sessionID, "as
 		historyMutex.Lock()
 		fmt.Printf("DEBUG LLM Response: %s\n", response)
 		if len(response) > 10 {
-			conversationHistory[historyKey] = append(conversationHistory[historyKey], ChatMessage{Role: "assistant", Content: response})
+			conversationSessions[historyKey].Messages = append(conversationSessions[historyKey].Messages, ChatMessage{Role: "assistant", Content: response})
 		}
 		historyMutex.Unlock()
 
@@ -1067,7 +1112,7 @@ result := DB.Model(&Message{}).Where("query_id = ? AND role = ?", sessionID, "as
 		// Save history
 		historyMutex.Lock()
 		if fullResponse.Len() > 10 {
-			conversationHistory[historyKey] = append(conversationHistory[historyKey], ChatMessage{Role: "assistant", Content: fullResponse.String()})
+			conversationSessions[historyKey].Messages = append(conversationSessions[historyKey].Messages, ChatMessage{Role: "assistant", Content: fullResponse.String()})
 		}
 		historyMutex.Unlock()
 
@@ -1120,7 +1165,7 @@ result := DB.Model(&Message{}).Where("query_id = ? AND role = ?", sessionID, "as
 
 	historyMutex.Lock()
 	if len(assistantMsg) > 10 {
-		conversationHistory[historyKey] = append(conversationHistory[historyKey], ChatMessage{Role: "assistant", Content: assistantMsg})
+		conversationSessions[historyKey].Messages = append(conversationSessions[historyKey].Messages, ChatMessage{Role: "assistant", Content: assistantMsg})
 	}
 	historyMutex.Unlock()
 
@@ -1146,7 +1191,7 @@ func ClearChatHistoryHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewDecoder(r.Body).Decode(&req)
 	historyMutex.Lock()
-	delete(conversationHistory, req.SessionID)
+	delete(conversationSessions, req.SessionID)
 	historyMutex.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "cleared"})
