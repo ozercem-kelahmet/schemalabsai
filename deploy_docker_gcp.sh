@@ -123,7 +123,13 @@ echo "====== STEP 7: Docker build ======"
 sudo docker compose build
 echo "✅ Docker build OK"
 
-echo "====== STEP 8: Docker up ======"
+echo "====== STEP 7b: Final port cleanup ======"
+sudo pkill -9 -f "server.py" 2>/dev/null || true
+sudo pkill -9 -f "schemalabsai" 2>/dev/null || true
+sudo pkill -9 -f "next" 2>/dev/null || true
+sudo fuser -k 6000/tcp 3000/tcp 8080/tcp 2>/dev/null || true
+sleep 3
+ss -tlnp | grep -E ":3000|:6000|:8080" && echo "PORTS STILL BUSY" || echo "All ports free"echo "====== STEP 8: Docker up ======"
 sudo docker compose up -d
 sleep 5
 
