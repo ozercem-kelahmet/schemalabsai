@@ -77,23 +77,6 @@ sudo systemctl stop schemalabsai schemalabs-frontend schemalabsai-flask 2>/dev/n
 sudo rm -f /etc/systemd/system/schemalabsai.service /etc/systemd/system/schemalabsai-flask.service /etc/systemd/system/schemalabs-frontend.service 2>/dev/null || true
 sudo systemctl daemon-reload 2>/dev/null || truesudo systemctl disable schemalabsai schemalabs-frontend schemalabsai-flask 2>/dev/null || true
 
-echo "====== STEP 4: Ensure PostgreSQL healthy ======"
-PG_OK=0
-for i in 1 2 3; do
-  if sudo -u postgres psql -c "SELECT 1" > /dev/null 2>&1; then
-    echo "✅ PostgreSQL OK"
-    PG_OK=1
-    break
-  fi
-  echo "PostgreSQL unhealthy, restarting... ($i/3)"
-  sudo systemctl restart postgresql
-  sleep 5
-done
-if [ "$PG_OK" -eq 0 ]; then
-  echo "❌ PostgreSQL failed!"
-  exit 1
-fi
-
 echo "====== STEP 5: Swap check ======"
 SWAP=$(free -m | awk '/Swap/{print $2}')
 if [ "$SWAP" -lt 1000 ]; then
@@ -138,7 +121,23 @@ echo "====== STEP 8: Docker up ======"
 sudo docker compose up -d
 sleep 5
 
-echo "====== STEP 9: Flask health check ======"
+
+echo "====== STEP 8b: Ensure PostgreSQL healthy ======"
+PG_OK=0
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  if sudo docker exec schemalabs-postgres pg_isready -U schemalabs > /dev/null 2>&1; then
+    echo "✅ PostgreSQL OK (attempt $i)"
+    PG_OK=1
+    break
+  fi
+  echo "Waiting for PostgreSQL... ($i/10)"
+  sleep 3
+done
+if [ "$PG_OK" -eq 0 ]; then
+  echo "❌ PostgreSQL failed!"
+  sudo docker logs schemalabs-postgres --tail 10
+  exit 1
+fiecho "====== STEP 9: Flask health check ======"
 FLASK_OK=0
 for i in $(seq 1 30); do
   HEALTH=$(curl -s --max-time 3 http://localhost:6000/health 2>/dev/null || echo "")
