@@ -214,7 +214,7 @@ export function BuildWizard() {
       try {
         const progress = await api.getTrainingProgress(trainingQueryIdRef.current)
         // Skip if training already completed (epoch >= epochs means done)
-        if (progress.status === "training" && progress.epoch < progress.epochs) {
+        if (progress.status === "training") {
           // Use whichever is more recent: server or localStorage
           const savedMetrics = localStorage.getItem("trainingCurrentMetrics")
           let bestEpoch = progress.epoch
