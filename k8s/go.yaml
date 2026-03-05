@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: go
+  namespace: schemalabs
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: go
+  template:
+    metadata:
+      labels:
+        app: go
+    spec:
+      containers:
+      - name: go
+        image: gcr.io/schema-478207/schemalabsai-go:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: API_PORT
+          value: "8080"
+        - name: FLASK_URL
+          value: "http://flask:6000"
+        - name: DOCKER_MODE
+          value: "true"
+        - name: FRONTEND_HOST
+          value: "frontend"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: schemalabs-secrets
+              key: DATABASE_URL
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: schemalabs-secrets
+              key: REDIS_URL
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: schemalabs-secrets
+              key: REDIS_PASSWORD
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 15
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: go
+  namespace: schemalabs
+spec:
+  selector:
+    app: go
+  ports:
+  - port: 8080
+    targetPort: 8080
