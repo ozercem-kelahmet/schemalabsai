@@ -75,7 +75,8 @@ fi
 echo "====== STEP 3: Disable old systemd services ======"
 sudo systemctl stop schemalabsai schemalabs-frontend schemalabsai-flask 2>/dev/null || true
 sudo rm -f /etc/systemd/system/schemalabsai.service /etc/systemd/system/schemalabsai-flask.service /etc/systemd/system/schemalabs-frontend.service 2>/dev/null || true
-sudo systemctl daemon-reload 2>/dev/null || truesudo systemctl disable schemalabsai schemalabs-frontend schemalabsai-flask 2>/dev/null || true
+sudo systemctl daemon-reload 2>/dev/null || true
+sudo systemctl disable schemalabsai schemalabs-frontend schemalabsai-flask 2>/dev/null || true
 
 echo "====== STEP 5: Swap check ======"
 SWAP=$(free -m | awk '/Swap/{print $2}')
@@ -137,7 +138,9 @@ if [ "$PG_OK" -eq 0 ]; then
   echo "❌ PostgreSQL failed!"
   sudo docker logs schemalabs-postgres --tail 10
   exit 1
-fiecho "====== STEP 9: Flask health check ======"
+fi
+
+echo "====== STEP 9: Flask health check ======"
 FLASK_OK=0
 for i in $(seq 1 30); do
   HEALTH=$(curl -s --max-time 3 http://localhost:6000/health 2>/dev/null || echo "")
