@@ -17,8 +17,8 @@ git push origin main || true
 # 2. Sync files - single rsync call (fast)
 echo "📁 Syncing files..."
 
-# Unlock directories for sync - MUST succeed
-ssh $SERVER 'sudo chattr -i /opt/schemalabsai/frontend 2>/dev/null; sudo chattr -i / 2>/dev/null; echo "UNLOCKED"'
+# Unlock directories and clean .next lock for sync - MUST succeed
+ssh $SERVER 'sudo chattr -i /opt/schemalabsai/frontend 2>/dev/null; sudo chattr -R -i /opt/schemalabsai/frontend/.next 2>/dev/null; sudo rm -rf /opt/schemalabsai/frontend/.next; sudo chattr -i / 2>/dev/null; echo "UNLOCKED"'
 
 # Sync with rsync, use temp dir then sudo move if permission issues
 rsync -avz -e ssh \
@@ -73,7 +73,8 @@ grep -q 'vm.overcommit_memory=1' /etc/sysctl.conf || echo 'vm.overcommit_memory=
 echo "✅ sysctl OK"
 
 echo "====== STEP 2: Graceful stop all services ======"
-sudo systemctl stop schemalabsai schemalabs-frontend schemalabsai-flask 2>/dev/null || true
+sudo systemctl stop schemalabs-go schemalabs-frontend schemalabsai-flask 2>/dev/null || true
+sudo systemctl stop schemalabsai 2>/dev/null || true
 sleep 3
 
 echo "====== STEP 3: Ensure all processes dead ======"
@@ -169,16 +170,54 @@ echo "✅ Go build OK"
 echo "====== STEP 8: Build Frontend ======"
 cd /opt/schemalabsai/frontend
 sudo chattr -i /opt/schemalabsai/frontend 2>/dev/null || true
-sudo rm -rf .next/lock .next node_modules/.cache
+sudo chattr -R -i /opt/schemalabsai/frontend/.next 2>/dev/null || true
+sudo rm -rf .next node_modules/.cache
 sudo npm install || true
 sudo npm run build || { echo "❌ Frontend build failed"; exit 1; }
 BUILD_ID=$(cat .next/BUILD_ID 2>/dev/null || echo "unknown")
 CHUNK_COUNT=$(ls .next/static/chunks/ 2>/dev/null | wc -l)
 echo "✅ Frontend build OK (BUILD_ID=$BUILD_ID, chunks=$CHUNK_COUNT)"
 
-echo "====== STEP 9: Reset systemd ======"
-sudo systemctl reset-failed schemalabsai schemalabsai-flask schemalabs-frontend 2>/dev/null || true
+echo "====== STEP 9: Create/Update systemd services from .env ======"
+sudo systemctl stop schemalabsai 2>/dev/null || true
+sudo systemctl disable schemalabsai 2>/dev/null || true
+
+DB_URL=$(grep '^DATABASE_URL=' /opt/schemalabsai/.env | cut -d= -f2-)
+REDIS_URL=$(grep '^REDIS_URL=' /opt/schemalabsai/.env | cut -d= -f2-)
+REDIS_PW=$(grep '^REDIS_PASSWORD=' /opt/schemalabsai/.env | cut -d= -f2-)
+
+cat << SVCEOF | sudo tee /etc/systemd/system/schemalabs-go.service > /dev/null
+[Unit]
+Description=SchemaLabs AI
+After=network.target redis-server.service postgresql.service
+
+[Service]
+Type=simple
+User=ozercemkelahmet
+WorkingDirectory=/opt/schemalabsai
+ExecStart=/opt/schemalabsai/schemalabsai
+Restart=always
+RestartSec=5
+KillMode=control-group
+KillSignal=SIGTERM
+TimeoutStopSec=10
+Environment=FLASK_PORT=6000
+Environment=FLASK_URL=http://localhost:6000
+Environment=FRONTEND_PORT=3000
+Environment=API_PORT=8080
+Environment=PYTHON_PATH=/opt/schemalabsai/venv/bin/python
+Environment=DATABASE_URL=${DB_URL}
+Environment=REDIS_URL=${REDIS_URL}
+Environment=REDIS_PASSWORD=${REDIS_PW}
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+
 sudo systemctl daemon-reload
+sudo systemctl enable schemalabs-go schemalabsai-flask schemalabs-frontend 2>/dev/null || true
+sudo systemctl reset-failed schemalabs-go schemalabsai-flask schemalabs-frontend 2>/dev/null || true
+echo "✅ Services created and updated from .env"
 
 echo "====== STEP 10: Start Flask ======"
 sudo systemctl start schemalabsai-flask
@@ -240,7 +279,7 @@ if [ "$NEXT_OK" -eq 0 ]; then
 fi
 
 echo "====== STEP 12: Start Go ======"
-sudo systemctl start schemalabsai
+sudo systemctl start schemalabs-go
 
 GO_OK=0
 for i in $(seq 1 10); do
@@ -255,13 +294,12 @@ done
 
 if [ "$GO_OK" -eq 0 ]; then
   echo "❌ Go failed to start!"
-  sudo journalctl -u schemalabsai -n 20 --no-pager
+  sudo journalctl -u schemalabs-go -n 20 --no-pager
   exit 1
 fi
 
 echo "====== STEP 13: Lock directories ======"
 sudo chattr +i / 2>/dev/null || true
-sudo chattr +i /opt/schemalabsai/frontend 2>/dev/null || true
 echo "✅ Directories locked"
 
 echo "====== STEP 14: Post-deploy malware scan ======"
@@ -281,9 +319,36 @@ if [ "$CLEAN" -eq 1 ]; then
 fi
 
 echo ""
+echo "========== FINAL HEALTH CHECK =========="
+
+# Auto-restart any failed services
+for svc in schemalabsai-flask schemalabs-go schemalabs-frontend; do
+  if ! systemctl is-active --quiet $svc; then
+    echo "⚠️ $svc not active, restarting..."
+    sudo systemctl restart $svc
+    sleep 3
+  fi
+done
+
+# Wait for Flask specifically (slow starter)
+FLASK_FINAL=0
+for i in $(seq 1 10); do
+  HEALTH=$(curl -s --max-time 3 http://localhost:6000/health 2>/dev/null || echo "")
+  if echo "$HEALTH" | grep -q '"status":"ok"'; then
+    FLASK_FINAL=1
+    break
+  fi
+  if ! systemctl is-active --quiet schemalabsai-flask; then
+    sudo systemctl restart schemalabsai-flask
+  fi
+  sleep 3
+done
+
+# Final status
+echo ""
 echo "========== FINAL STATUS =========="
 echo "Services:"
-for svc in schemalabsai schemalabsai-flask schemalabs-frontend; do
+for svc in schemalabs-go schemalabsai-flask schemalabs-frontend; do
   STATUS=$(sudo systemctl is-active $svc 2>/dev/null || echo "unknown")
   echo "  $svc: $STATUS"
 done
@@ -306,7 +371,7 @@ echo "Go health: $GO_H"
 SITE=$(curl -sf -o /dev/null -w "%{http_code}" https://console.schemalabs.ai 2>/dev/null || echo "000")
 echo "Site: $SITE"
 
-if [ "$FLASK_OK" -eq 1 ] && [ "$NEXT_OK" -eq 1 ] && [ "$GO_OK" -eq 1 ] && [ "$CLEAN" -eq 1 ]; then
+if [ "$FLASK_FINAL" -eq 1 ] && [ "$NEXT_OK" -eq 1 ] && [ "$GO_OK" -eq 1 ] && [ "$CLEAN" -eq 1 ]; then
   echo ""
   echo "✅ All services healthy, no malware - deploy successful!"
 else
