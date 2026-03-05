@@ -22,7 +22,7 @@ rsync -avz -e ssh \
   --include='.dockerignore' \
   --include='docker-compose.yml' \
   --include='docker/' --include='docker/***' \
-  --include='model/' --include='model/server.py' --include='model/model.py' --include='model/analytics_engine.py' --include='model/config.py' --include='model/async_training.py' --include='model/finetune.py' --include='model/finetune_async.py' --include='model/training_queue.py' --include='model/training_wrapper.py' --include='model/tasks.py' --include='model/smart_analyzer.py' --include='model/__init__.py' --include='model/adapters/***' --include='model/layers/***' --include='model/miras/***' --include='model/inference/***' \
+  --include='model/' --include='model/*.py' --include='model/adapters/***' --include='model/layers/***' --include='model/miras/***' --include='model/inference/***' --exclude='model/finetuned_models' --exclude='model/checkpoints' --exclude='model/data' --exclude='model/uploads' \
   --include='handlers/' --include='handlers/*.go' \
   --include='services/' --include='services/*.go' \
   --include='frontend/' \
