@@ -449,6 +449,12 @@ export function BuildWizard() {
           }
 
           
+          // Always update current metrics when training
+          setCurrentMetrics(prev => {
+            if (!prev) return { epoch: progress.epoch, totalEpochs: epochs, loss: progress.loss || 0, accuracy: (progress.accuracy > 1 ? progress.accuracy / 100 : progress.accuracy) || 0, learningRate: 0.001 }
+            if (progress.epoch >= prev.epoch) return { epoch: progress.epoch, totalEpochs: Math.max(epochs, prev.totalEpochs), loss: progress.loss || 0, accuracy: (progress.accuracy > 1 ? progress.accuracy / 100 : progress.accuracy) || 0, learningRate: 0.001 }
+            return prev
+          })
           const newMetrics: TrainingMetrics = {
             epoch: progress.epoch,
             totalEpochs: epochs,
