@@ -74,7 +74,8 @@ fi
 
 echo "====== STEP 3: Disable old systemd services ======"
 sudo systemctl stop schemalabsai schemalabs-frontend schemalabsai-flask 2>/dev/null || true
-sudo systemctl disable schemalabsai schemalabs-frontend schemalabsai-flask 2>/dev/null || true
+sudo rm -f /etc/systemd/system/schemalabsai.service /etc/systemd/system/schemalabsai-flask.service /etc/systemd/system/schemalabs-frontend.service 2>/dev/null || true
+sudo systemctl daemon-reload 2>/dev/null || truesudo systemctl disable schemalabsai schemalabs-frontend schemalabsai-flask 2>/dev/null || true
 
 echo "====== STEP 4: Ensure PostgreSQL healthy ======"
 PG_OK=0
