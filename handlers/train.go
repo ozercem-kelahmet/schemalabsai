@@ -2518,6 +2518,7 @@ StartTime int64   `json:"start_time"`
 }{}
 
 func TrainingProgressHandler(w http.ResponseWriter, r *http.Request) {
+log.Printf("[PROGRESS] called query_id=%s", r.URL.Query().Get("query_id"))
 	w.Header().Set("Content-Type", "application/json")
 
 	// If Go-side says "training" but Flask says "completed", Flask has stale data
