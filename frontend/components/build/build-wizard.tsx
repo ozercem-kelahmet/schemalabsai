@@ -59,7 +59,7 @@ export function BuildWizard() {
     if (trainingStatus !== "training") return
     const drain = setInterval(() => {
       if (epochQueueRef.current && epochQueueRef.current.length > 0) {
-        const next = epochQueueRef.current.shift()!
+        const next = epochQueueRef.current.shift()!; const ep = next.epoch; const te = next.totalEpochs; const lo = next.loss; const ac = next.accuracy * 100; addLog(`Epoch ${ep}/${ep + 1} - Loss: ${lo.toFixed(4)}, Accuracy: ${ac.toFixed(1)}%`)
         setCurrentMetrics(next)
       }
     }, 1000)
@@ -200,7 +200,7 @@ export function BuildWizard() {
     if (trainingStatus !== "training") return
     const drain = setInterval(() => {
       if (epochQueueRef.current && epochQueueRef.current.length > 0) {
-        const next = epochQueueRef.current.shift()!
+        const next = epochQueueRef.current.shift()!; const ep = next.epoch; const te = next.totalEpochs; const lo = next.loss; const ac = next.accuracy * 100; addLog(`Epoch ${ep}/${ep + 1} - Loss: ${lo.toFixed(4)}, Accuracy: ${ac.toFixed(1)}%`)
         setCurrentMetrics(next)
       }
     }, 1000)
@@ -461,7 +461,6 @@ export function BuildWizard() {
           setMetricsHistory((prev) => {
             const lastEpoch = prev.length > 0 ? prev[prev.length - 1].epoch : 0
             if (progress.epoch > lastEpoch) {
-              addLog(`Epoch ${progress.epoch}/${epochs} - Loss: ${progress.loss?.toFixed(4) || "N/A"}, Accuracy: ${(progress.accuracy || 0).toFixed(1)}%`)
               return [...prev, newMetrics]
             }
             return prev
