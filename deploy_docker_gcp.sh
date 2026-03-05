@@ -111,6 +111,7 @@ fi
 echo "====== STEP 6: Docker down ======"
 sudo systemctl start docker
 sudo docker compose down --remove-orphans 2>/dev/null || true
+sudo docker rm -f schemalabs-flask schemalabs-go schemalabs-frontend 2>/dev/null || true
 sleep 3
 
 for PORT in 3000 6000 8080; do
@@ -120,7 +121,7 @@ for PORT in 3000 6000 8080; do
     sudo kill -9 $PID 2>/dev/null || true
   fi
 done
-sleep 2
+sleep 5
 
 echo "====== STEP 7: Docker build ======"
 sudo docker compose build
