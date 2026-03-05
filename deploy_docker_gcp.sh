@@ -109,19 +109,14 @@ else
 fi
 
 echo "====== STEP 6: Docker down ======"
-sudo systemctl start docker
-sudo docker compose down --remove-orphans 2>/dev/null || true
 sudo docker rm -f schemalabs-flask schemalabs-go schemalabs-frontend 2>/dev/null || true
-sleep 3
-
-for PORT in 3000 6000 8080; do
-  PID=$(sudo fuser $PORT/tcp 2>/dev/null | tr -d " ")
-  if [ -n "$PID" ]; then
-    echo "Port $PORT held by PID $PID, killing..."
-    sudo kill -9 $PID 2>/dev/null || true
-  fi
-done
+sudo docker compose down --remove-orphans 2>/dev/null || true
+sudo pkill -9 -f "server.py" 2>/dev/null || true
+sudo pkill -9 -f "/opt/schemalabsai/schemalabsai" 2>/dev/null || true
+sudo pkill -9 -f "next" 2>/dev/null || true
+sudo fuser -k 6000/tcp 3000/tcp 8080/tcp 2>/dev/null || true
 sleep 5
+ss -tlnp | grep -E ":3000|:6000|:8080" && echo "PORTS STILL BUSY" || echo "All ports free"
 
 echo "====== STEP 7: Docker build ======"
 sudo docker compose build
