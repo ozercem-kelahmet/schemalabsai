@@ -21,3 +21,4 @@ model/finetuned_models/*
 model/checkpoints/*
 k8s/
 scripts/
+model/data/

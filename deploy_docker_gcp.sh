@@ -35,7 +35,7 @@ rsync -avz -e ssh \
   --include='frontend/postcss.config.mjs' --include='frontend/components.json' \
   --include='frontend/next-env.d.ts' --include='frontend/page.tsx' \
   --exclude='model/finetuned_models/*' --exclude='model/checkpoints/*' \
-  --exclude='*' \
+  --exclude='model/data/*'  --exclude='model/data/*'  --exclude='*' \
   --rsync-path="sudo rsync" \
   ~/Desktop/schemalabsai/ $SERVER:$REMOTE_DIR/
 
