@@ -22,7 +22,7 @@ rsync -avz -e ssh \
   --include='.dockerignore' \
   --include='docker-compose.yml' \
   --include='docker/' --include='docker/***' \
-  --include='model/' --include='model/***' \
+  --include='model/' --include='model/*.py' --include='model/adapters/***' --include='model/layers/***' --include='model/miras/***' --include='model/inference/***' \
   --include='handlers/' --include='handlers/***' \
   --include='services/' --include='services/***' \
   --include='frontend/' \
@@ -34,8 +34,8 @@ rsync -avz -e ssh \
   --include='frontend/next.config.mjs' --include='frontend/tailwind.config.ts' \
   --include='frontend/postcss.config.mjs' --include='frontend/components.json' \
   --include='frontend/next-env.d.ts' --include='frontend/page.tsx' \
-  --exclude='model/finetuned_models/*' --exclude='model/checkpoints/*' \
-  --exclude='model/data/*'  --exclude='model/data/*'  --exclude='*' \
+   \
+  --exclude='*' \
   --rsync-path="sudo rsync" \
   ~/Desktop/schemalabsai/ $SERVER:$REMOTE_DIR/
 
