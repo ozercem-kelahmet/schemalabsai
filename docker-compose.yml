@@ -1,0 +1,78 @@
+services:
+  flask:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.flask
+    container_name: schemalabs-flask
+    restart: unless-stopped
+    environment:
+      - FLASK_PORT=6000
+      - DATABASE_URL=postgresql://schemalabs:kJ4tN8wByF6cX3mR@34.9.180.204:5432/schemalabs
+      - REDIS_URL=34.9.180.204:6379
+      - REDIS_PASSWORD=sL9xRvK2mQpW7nZ8
+    volumes:
+      - ./model/finetuned_models:/app/finetuned_models
+      - ./model/checkpoints:/app/checkpoints
+      - ./uploads:/app/uploads
+    ports:
+      - "6000:6000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6000/health"]
+      interval: 30s
+      timeout: 15s
+      start_period: 30s
+      retries: 3
+
+  go:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.go
+    container_name: schemalabs-go
+    restart: unless-stopped
+    environment:
+      - API_PORT=8080
+      - DATABASE_URL=postgresql://schemalabs:kJ4tN8wByF6cX3mR@34.9.180.204:5432/schemalabs
+      - REDIS_URL=34.9.180.204:6379
+      - REDIS_PASSWORD=sL9xRvK2mQpW7nZ8
+      - FLASK_URL=http://flask:6000
+      - DOCKER_MODE=true
+      - FRONTEND_HOST=schemalabs-frontend
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/google_credentials.json
+    volumes:
+      - ./uploads:/app/uploads
+    ports:
+      - "8080:8080"
+    depends_on:
+      flask:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    container_name: schemalabs-frontend
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=http://go:8080
+    ports:
+      - "3000:3000"
+    depends_on:
+      go:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+
+networks:
+  default:
+    name: schemalabs-network

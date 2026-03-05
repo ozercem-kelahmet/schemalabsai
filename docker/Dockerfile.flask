@@ -1,0 +1,25 @@
+FROM python:3.11-slim
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir flask numpy pandas scikit-learn scipy
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+COPY model/server.py ./
+COPY model/model.py ./
+COPY model/analytics_engine.py ./
+COPY model/config.py ./
+COPY model/async_training.py ./
+COPY model/finetune.py ./
+COPY model/finetune_async.py ./
+COPY model/training_queue.py ./
+COPY model/training_wrapper.py ./
+COPY model/tasks.py ./
+COPY model/smart_analyzer.py ./
+COPY model/adapters/ ./adapters/
+COPY model/layers/ ./layers/
+COPY model/miras/ ./miras/
+COPY model/inference/ ./inference/
+RUN mkdir -p finetuned_models checkpoints uploads
+EXPOSE 6000
+HEALTHCHECK --interval=30s --timeout=15s --start-period=30s --retries=3 \
+  CMD curl -f http://localhost:6000/health || exit 1
+CMD ["python", "server.py"]

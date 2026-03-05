@@ -18,7 +18,7 @@ import (
 
 func enableCORS(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:8080")
+		origin := r.Header.Get("Origin"); if origin == "" { origin = getEnv("CORS_ORIGIN", "http://localhost:8080") }; w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
@@ -115,20 +115,21 @@ func main() {
 	log.Printf("Flask: %s, Frontend: %s, API: %s", flaskPort, frontendPort, apiPort)
 
 	// Only start services if not already running
-	if !isPortInUse(flaskPort) {
+	dockerMode := os.Getenv("DOCKER_MODE") == "true"
+	if !dockerMode && !isPortInUse(flaskPort) {
 		log.Println("Starting Flask server...")
 		go startFlaskServer(pythonPath)
 	} else {
 		log.Println("Flask already running on port", flaskPort)
 	}
 
-	if !isPortInUse(frontendPort) {
+	if !dockerMode && !isPortInUse(frontendPort) {
 		go startNextJsServer()
 	} else {
 		log.Println("Next.js already running on port", frontendPort)
 	}
 
-	nextUrl, _ := url.Parse("http://localhost:" + frontendPort)
+	frontendHost := "localhost"; if dockerMode { frontendHost = getEnv("FRONTEND_HOST", "schemalabs-frontend") }; nextUrl, _ := url.Parse("http://" + frontendHost + ":" + frontendPort)
 	nextProxy := httputil.NewSingleHostReverseProxy(nextUrl)
 
 	// Auth routes (no auth required)
