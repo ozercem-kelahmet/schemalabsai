@@ -35,7 +35,7 @@ rsync -avz -e ssh \
   --include='frontend/postcss.config.mjs' --include='frontend/components.json' \
   --include='frontend/next-env.d.ts' --include='frontend/page.tsx' \
    \
-  --exclude='*' \
+  --exclude='__pycache__' --exclude='*' \
   --rsync-path="sudo rsync" \
   ~/Desktop/schemalabsai/ $SERVER:$REMOTE_DIR/
 
@@ -109,6 +109,10 @@ else
   echo "✅ Swap OK (${SWAP}MB)"
 fi
 
+echo "====== STEP 5b: Ensure Docker running ======"
+sudo systemctl start docker 2>/dev/null || true
+sudo systemctl enable docker 2>/dev/null || true
+echo "✅ Docker running"
 echo "====== STEP 6: Docker down ======"
 sudo docker rm -f schemalabs-flask schemalabs-go schemalabs-frontend 2>/dev/null || true
 sudo docker compose down --remove-orphans 2>/dev/null || true
@@ -129,7 +133,8 @@ sudo pkill -9 -f "schemalabsai" 2>/dev/null || true
 sudo pkill -9 -f "next" 2>/dev/null || true
 sudo fuser -k 6000/tcp 3000/tcp 8080/tcp 2>/dev/null || true
 sleep 3
-ss -tlnp | grep -E ":3000|:6000|:8080" && echo "PORTS STILL BUSY" || echo "All ports free"echo "====== STEP 8: Docker up ======"
+ss -tlnp | grep -E ":3000|:6000|:8080" && echo "PORTS STILL BUSY" || echo "All ports free"
+echo "====== STEP 8: Docker up ======"
 sudo docker compose up -d
 sleep 5
 
