@@ -74,7 +74,7 @@ echo "✅ sysctl OK"
 
 echo "====== STEP 2: Graceful stop all services ======"
 sudo systemctl stop schemalabs-go schemalabs-frontend schemalabsai-flask 2>/dev/null || true
-sudo systemctl stop schemalabsai 2>/dev/null || true
+sudo systemctl stop schemalabsai schemalabs-flask 2>/dev/null || true; sudo systemctl disable schemalabsai schemalabs-flask 2>/dev/null || true; sudo rm -f /etc/systemd/system/schemalabsai.service /etc/systemd/system/schemalabs-flask.service
 sleep 3
 
 echo "====== STEP 3: Ensure all processes dead ======"
@@ -179,8 +179,7 @@ CHUNK_COUNT=$(ls .next/static/chunks/ 2>/dev/null | wc -l)
 echo "✅ Frontend build OK (BUILD_ID=$BUILD_ID, chunks=$CHUNK_COUNT)"
 
 echo "====== STEP 9: Create/Update systemd services from .env ======"
-sudo systemctl stop schemalabsai 2>/dev/null || true
-sudo systemctl disable schemalabsai 2>/dev/null || true
+sudo systemctl stop schemalabsai schemalabs-flask 2>/dev/null || true; sudo systemctl disable schemalabsai schemalabs-flask 2>/dev/null || true; sudo rm -f /etc/systemd/system/schemalabsai.service /etc/systemd/system/schemalabs-flask.service
 
 DB_URL=$(grep '^DATABASE_URL=' /opt/schemalabsai/.env | cut -d= -f2-)
 REDIS_URL=$(grep '^REDIS_URL=' /opt/schemalabsai/.env | cut -d= -f2-)

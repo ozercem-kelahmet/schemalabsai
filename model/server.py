@@ -2855,6 +2855,7 @@ def finetune(bypass_queue=False):
             
             if current_epoch % 10 == 0 and torch.cuda.is_available(): torch.cuda.empty_cache()
             print(f"Epoch {current_epoch}: Acc={acc:.1f}% (best={best_acc:.1f}%)")
+            import time as _t; _t.sleep(1.5)
             
             if best_acc >= 99.0:
                 print(f"🎉 %99+ accuracy - MÜKEMMEL!")
