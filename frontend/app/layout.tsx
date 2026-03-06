@@ -6,6 +6,7 @@ import { QueryStoreProvider } from "@/lib/query-store"
 import { Providers } from "@/components/providers"
 import { AuthProvider } from "@/lib/auth"
 import "./globals.css"
+import { VersionCheck } from "@/components/version-check"
 
 const geist = Geist({ subsets: ["latin"] })
 const geistMono = Geist_Mono({ subsets: ["latin"] })
@@ -34,7 +35,7 @@ export default function RootLayout({
       <body className={`font-sans antialiased bg-background text-foreground font-sans`} suppressHydrationWarning>
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
           <Providers>
-            <AuthProvider>
+            <AuthProvider><VersionCheck />
               <QueryStoreProvider>
                 {children}
               </QueryStoreProvider>

@@ -115,7 +115,7 @@ echo "====== STEP 6b: Sync requirements from venv ======"
 /opt/schemalabsai/venv/bin/pip freeze | grep -v -E "^torch|^torchvision|^nvidia|^cuda|^cudf|^cupy" > /opt/schemalabsai/model/requirements.txt
 echo "✅ Requirements synced ($(wc -l < /opt/schemalabsai/model/requirements.txt) packages)"
 echo "====== STEP 7: Docker build ======"
-sudo docker compose build
+sudo docker compose build --no-cache frontend && sudo docker compose build
 echo "✅ Docker build OK"
 
 echo "====== STEP 7b: Final port cleanup ======"
