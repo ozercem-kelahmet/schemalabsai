@@ -2743,7 +2743,10 @@ def finetune(bypass_queue=False):
         # Patience ekle (early stop margin) ve sinirla
         estimated_epochs = 0  # Unknown until training progresses
         session["epochs"] = estimated_epochs
-        training_progress.update(session)
+        if "query_id" in dir() and query_id:
+            save_session(query_id, session)
+        else:
+            training_progress.update(session)
         print(f"📊 Training loop starting: max_epochs={max_epochs}, best_acc={best_acc}")
         while current_epoch < max_epochs and time.time() < training_timeout:
             ft_model.train()
@@ -2868,7 +2871,10 @@ def finetune(bypass_queue=False):
                 session["epochs"] = current_epoch
                 session["epoch"] = current_epoch
                 session["accuracy"] = best_acc
-                training_progress.update(session)
+                if "query_id" in dir() and query_id:
+                    save_session(query_id, session)
+                else:
+                    training_progress.update(session)
                 break
             
             if best_acc >= 99.0 and no_improve >= patience:  # %99 hedef
