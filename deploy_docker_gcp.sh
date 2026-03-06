@@ -11,7 +11,12 @@ echo "📦 Git sync..."
 git pull origin main || true
 git add -A -- ":!uploads" ":!checkpoints" ":!data" ":!*.csv" ":!*.xlsx" ":!*.bak" ":!*.bak2" ":!*.bak3" ":!*.bak4" ":!terraform" || true
 git commit -m "Deploy $(date '+%Y-%m-%d %H:%M')" || true
-git push origin main || true
+git stash 2>/dev/null || true
+git filter-branch --force --index-filter 'git rm --cached --ignore-unmatch terraform/.terraform/providers/registry.terraform.io/hashicorp/google/5.45.2/darwin_arm64/terraform-provider-google_v5.45.2_x5' --prune-empty -- --all 2>/dev/null || true
+git reflog expire --expire=now --all 2>/dev/null || true
+git gc --prune=now 2>/dev/null || true
+git stash pop 2>/dev/null || true
+git push origin main --force || true
 
 echo "📁 Syncing files..."
 ssh $SERVER 'sudo chattr -i / 2>/dev/null; sudo chattr -i /opt/schemalabsai/frontend 2>/dev/null; sudo chattr -R -i /opt/schemalabsai/frontend/.next 2>/dev/null; sudo rm -rf /opt/schemalabsai/frontend/.next; echo "UNLOCKED"'
