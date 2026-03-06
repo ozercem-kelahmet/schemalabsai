@@ -38,3 +38,4 @@ data/
 *.csv
 *.xlsx
 docker-compose.yml
+terraform/.terraform/
