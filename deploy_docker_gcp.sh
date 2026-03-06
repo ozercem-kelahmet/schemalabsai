@@ -18,7 +18,7 @@ ssh $SERVER 'sudo chattr -i / 2>/dev/null; sudo chattr -i /opt/schemalabsai/fron
 
 rsync -avz -e ssh \
   --include='main.go' --include='go.mod' --include='go.sum' \
-  --include='.env' --include='google_credentials.json' \
+  --include='google_credentials.json' \
   --include='.dockerignore' \
   --include='docker-compose.yml' \
   --include='docker/' --include='docker/***' \

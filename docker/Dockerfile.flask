@@ -1,10 +1,10 @@
 FROM python:3.11-slim
-WORKDIR /app
+WORKDIR /app/model
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir flask numpy pandas scikit-learn scipy psycopg2-binary redis requests litellm tiktoken
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 COPY model/ ./
-RUN mkdir -p finetuned_models checkpoints uploads
+RUN mkdir -p /app/finetuned_models /app/checkpoints /app/uploads
 EXPOSE 6000
 HEALTHCHECK --interval=30s --timeout=15s --start-period=45s --retries=3 \
   CMD curl -f http://localhost:6000/health || exit 1

@@ -23,7 +23,7 @@ ssh $SERVER 'sudo chattr -i /opt/schemalabsai/frontend 2>/dev/null; sudo chattr 
 # Sync with rsync, use temp dir then sudo move if permission issues
 rsync -avz -e ssh \
   --include='main.go' --include='go.mod' --include='go.sum' \
-  --include='.env' --include='google_credentials.json' \
+  --include='google_credentials.json' \
   --include='model/' --include='model/server.py' \
   --include='handlers/' --include='handlers/**.go' \
   --include='services/' --include='services/**.go' \
