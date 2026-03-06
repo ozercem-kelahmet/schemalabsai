@@ -2680,7 +2680,10 @@ def finetune(bypass_queue=False):
         session["accuracy"] = 0.0
         session["loss"] = 0.0
         session["eta"] = "calculating..."
-        training_progress.update(session); save_session(query_id, session) if "query_id" in dir() and query_id else training_progress
+        if "query_id" in dir() and query_id:
+            save_session(query_id, session)
+        else:
+            training_progress.update(session)
         
         # Süre optimizasyonu - epoch başına max sample
         if len(X) > 10000:
@@ -2851,7 +2854,10 @@ def finetune(bypass_queue=False):
             session["accuracy"] = acc
             session["loss"] = avg_loss
             session["eta"] = eta
-            training_progress.update(session); save_session(query_id, session) if "query_id" in dir() and query_id else training_progress
+            if "query_id" in dir() and query_id:
+                save_session(query_id, session)
+            else:
+                training_progress.update(session)
             
             if current_epoch % 10 == 0 and torch.cuda.is_available(): torch.cuda.empty_cache()
             print(f"Epoch {current_epoch}: Acc={acc:.1f}% (best={best_acc:.1f}%)")
@@ -2905,7 +2911,10 @@ def finetune(bypass_queue=False):
             print(f"Email send failed: {e}")
         session["accuracy"] = best_acc
         session["epoch"] = current_epoch
-        training_progress.update(session); save_session(query_id, session) if "query_id" in dir() and query_id else training_progress
+        if "query_id" in dir() and query_id:
+            save_session(query_id, session)
+        else:
+            training_progress.update(session)
         
         from datetime import datetime; timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         ft_path = f'../checkpoints/model_finetuned_{timestamp}.pt'
@@ -2938,7 +2947,10 @@ def finetune(bypass_queue=False):
         
         model_id = f"model_finetuned_{timestamp}"
         session["model_id"] = model_id
-        training_progress.update(session); save_session(query_id, session) if "query_id" in dir() and query_id else training_progress
+        if "query_id" in dir() and query_id:
+            save_session(query_id, session)
+        else:
+            training_progress.update(session)
         
         # Sector tahmini yap
         ft_model.eval()
