@@ -99,7 +99,6 @@ sudo systemctl enable docker 2>/dev/null || true
 echo "✅ Docker running"
 echo "====== STEP 6: Docker down ======"
 sudo docker rm -f schemalabs-flask schemalabs-go schemalabs-frontend 2>/dev/null || true
-sudo docker compose down --remove-orphans 2>/dev/null || true
 sudo pkill -9 -f "server.py" 2>/dev/null || true
 sudo pkill -9 -f "/opt/schemalabsai/schemalabsai" 2>/dev/null || true
 sudo pkill -9 -f "next" 2>/dev/null || true
@@ -107,6 +106,9 @@ sudo fuser -k 6000/tcp 3000/tcp 8080/tcp 2>/dev/null || true
 sleep 5
 ss -tlnp | grep -E ":3000|:6000|:8080" && echo "PORTS STILL BUSY" || echo "All ports free"
 
+echo "====== STEP 6b: Sync requirements from venv ======"
+/opt/schemalabsai/venv/bin/pip freeze | grep -v -E "^torch|^torchvision|^nvidia|^cuda|^cudf|^cupy" > /opt/schemalabsai/model/requirements.txt
+echo "✅ Requirements synced ($(wc -l < /opt/schemalabsai/model/requirements.txt) packages)"
 echo "====== STEP 7: Docker build ======"
 sudo docker compose build
 echo "✅ Docker build OK"
@@ -137,6 +139,23 @@ done
 if [ "$PG_OK" -eq 0 ]; then
   echo "❌ PostgreSQL failed!"
   sudo docker logs schemalabs-postgres --tail 10
+  exit 1
+fi
+
+echo "====== STEP 8c: Ensure Redis healthy ======"
+REDIS_OK=0
+for i in 1 2 3 4 5; do
+  if sudo docker exec schemalabs-redis redis-cli -a $REDIS_PASSWORD ping 2>/dev/null | grep -q PONG; then
+    echo "✅ Redis OK (attempt $i)"
+    REDIS_OK=1
+    break
+  fi
+  echo "Waiting for Redis... ($i/5)"
+  sleep 3
+done
+if [ "$REDIS_OK" -eq 0 ]; then
+  echo "❌ Redis failed!"
+  sudo docker logs schemalabs-redis --tail 10
   exit 1
 fi
 

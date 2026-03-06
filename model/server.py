@@ -2827,7 +2827,7 @@ def finetune(bypass_queue=False):
             # Always update best_acc on first epoch or if improved
             if best_acc == 0 or acc > best_acc:
                 best_acc = acc
-                best_state = {k: v.clone() for k, v in ft_model.state_dict().items()}
+                best_state = {k: v.clone() if hasattr(v, "clone") else v for k, v in ft_model.state_dict().items()}
                 no_improve = 0
             else:
                 no_improve += 1

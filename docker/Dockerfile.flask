@@ -1,8 +1,9 @@
 FROM python:3.11-slim
 WORKDIR /app/model
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
-RUN pip install --no-cache-dir flask numpy pandas scikit-learn scipy psycopg2-binary redis requests litellm tiktoken
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+COPY model/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir torch==2.5.1+cu121 torchvision==0.20.1+cu121 --index-url https://download.pytorch.org/whl/cu121
 COPY model/ ./
 RUN mkdir -p /app/finetuned_models /app/checkpoints /app/uploads
 EXPOSE 6000
