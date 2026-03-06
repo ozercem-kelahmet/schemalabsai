@@ -45,7 +45,6 @@ export function BuildWizard() {
   
   const [totalEpochs, setTotalEpochs] = useState(0)
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
-  const epochQueueRef = useRef<TrainingMetrics[]>([])
   const trainingQueryIdRef = useRef<string>("")
   const timerRef = useRef<NodeJS.Timeout | null>(null)
   const trainingStartedRef = useRef(false)
@@ -53,18 +52,6 @@ export function BuildWizard() {
   const completedByPollingRef = useRef(false)
   const trainCancelledRef = useRef(false)
 
-  // Load metrics history and logs from localStorage on mount
-  // Drain epoch queue - show each epoch for 200ms
-  useEffect(() => {
-    if (trainingStatus !== "training") return
-    const drain = setInterval(() => {
-      if (epochQueueRef.current && epochQueueRef.current.length > 0) {
-        const next = epochQueueRef.current.shift()!; const ep = next.epoch; const te = next.totalEpochs; const lo = next.loss; const ac = next.accuracy * 100; addLog(`Epoch ${ep}/${ep + 1} - Loss: ${lo.toFixed(4)}, Accuracy: ${ac.toFixed(1)}%`)
-        setCurrentMetrics(next)
-      }
-    }, 1000)
-    return () => clearInterval(drain)
-  }, [trainingStatus])
 
   // Check for ongoing training on mount (e.g. after page refresh)
   useEffect(() => {
@@ -194,66 +181,6 @@ export function BuildWizard() {
     const timestamp = new Date().toLocaleTimeString()
     setLogs((prev) => [...prev, `[${timestamp}] ${message}`])
   }, [])
-
-  // Drain epoch queue - show each epoch for 200ms
-  useEffect(() => {
-    if (trainingStatus !== "training") return
-    const drain = setInterval(() => {
-      if (epochQueueRef.current && epochQueueRef.current.length > 0) {
-        const next = epochQueueRef.current.shift()!; const ep = next.epoch; const te = next.totalEpochs; const lo = next.loss; const ac = next.accuracy * 100; addLog(`Epoch ${ep}/${ep + 1} - Loss: ${lo.toFixed(4)}, Accuracy: ${ac.toFixed(1)}%`)
-        setCurrentMetrics(next)
-      }
-    }, 1000)
-    return () => clearInterval(drain)
-  }, [trainingStatus])
-
-  // Check for ongoing training on mount
-  useEffect(() => {
-    const checkOngoingTraining = async () => {
-      if (skipCheckRef.current) return
-      try {
-        const progress = await api.getTrainingProgress(trainingQueryIdRef.current)
-        // Skip if training already completed (epoch >= epochs means done)
-        if (progress.status === "training") {
-          // Use whichever is more recent: server or localStorage
-          const savedMetrics = localStorage.getItem("trainingCurrentMetrics")
-          let bestEpoch = progress.epoch
-          let bestAcc = progress.accuracy > 1 ? progress.accuracy / 100 : progress.accuracy
-          let bestLoss = progress.loss || 0
-          if (savedMetrics) {
-            try {
-              const parsed = JSON.parse(savedMetrics)
-              if (parsed.epoch > bestEpoch) {
-                bestEpoch = parsed.epoch
-                bestAcc = parsed.accuracy
-                bestLoss = parsed.loss
-              }
-            } catch (e) {}
-          }
-          setCurrentStep("training")
-          setTrainingStatus("training")
-          trainingStartedRef.current = true
-          setCurrentMetrics({
-            epoch: bestEpoch,
-            totalEpochs: progress.epochs || 0,
-            loss: bestLoss,
-            accuracy: bestAcc || 0,
-            learningRate: 0.001,
-          })
-          if (progress.start_time) {
-            const elapsed = Math.floor(Date.now() / 1000 - progress.start_time)
-            if (elapsed > 0) setElapsedTime(elapsed)
-          }
-          // if (bestAcc) setCurrentAccuracy(bestAcc)
-          // if (bestLoss) setCurrentLoss(bestLoss)
-          // if (bestEpoch) setCurrentEpoch(bestEpoch)
-          if (progress.epochs) setTotalEpochs(progress.epochs)
-        }
-      } catch (e) {
-      }
-    }
-    checkOngoingTraining()
-  }, [addLog])
   const startTraining = async () => {
     if (selectedDatasets.length === 0) {
       toast.error("No Data Selected", { description: "Please select at least one dataset or connection to train on.", duration: 5000 })
@@ -313,7 +240,6 @@ export function BuildWizard() {
         selectedTablesStr
       )
 
-      epochQueueRef.current = []
       trainingStartedRef.current = false  // Don't start polling yet - wait for Go to initialize
       setCurrentStep("training")
       setTrainingStatus("initializing")
@@ -322,10 +248,10 @@ export function BuildWizard() {
       setCurrentMetrics(null)
       
       // Wait 3 seconds for Go handler to reset progress and start Flask training
-      await new Promise(resolve => setTimeout(resolve, 3000))
+      await new Promise(resolve => setTimeout(resolve, 500))
       trainingStartedRef.current = true
       setTrainingStatus("training")
-      setElapsedTime(3) // Account for the 3s wait
+      setElapsedTime(0)
 
       addLog("Initializing build environment...")
       addLog(`Model: ${modelName}`)
@@ -386,7 +312,7 @@ export function BuildWizard() {
         setTrainingStatus("completing")
         addLog("Build complete!")
         // Ensure training screen is visible for at least 3 seconds
-        await new Promise(resolve => setTimeout(resolve, 3000))
+        await new Promise(resolve => setTimeout(resolve, 500))
         addLog(`Final Accuracy: ${result.accuracy?.toFixed(2)}%`)
         addLog(`Final Loss: ${result.loss?.toFixed(4) || "N/A"}`)
         addLog("Evaluating model performance...")
@@ -464,6 +390,7 @@ export function BuildWizard() {
           }
           
           // Metrics update handled in animation block above
+          if (progress.epoch > (currentMetrics?.epoch || 0)) { addLog(`Epoch ${progress.epoch}/${epochs} - Loss: ${(progress.loss || 0).toFixed(4)}, Accuracy: ${((newMetrics.accuracy) * 100).toFixed(1)}%`) }
           setMetricsHistory((prev) => {
             const lastEpoch = prev.length > 0 ? prev[prev.length - 1].epoch : 0
             if (progress.epoch > lastEpoch) {
@@ -471,41 +398,11 @@ export function BuildWizard() {
             }
             return prev
           })
-          // Queue epoch updates - displayed one by one via epochQueueRef
-          if (!epochQueueRef.current) epochQueueRef.current = []
-          const lastDisplayed = epochQueueRef.current.length > 0 
-            ? epochQueueRef.current[epochQueueRef.current.length - 1].epoch 
-            : (currentMetrics?.epoch || 0)
-          for (let e = lastDisplayed + 1; e <= progress.epoch; e++) {
-            const ratio = progress.epoch > lastDisplayed ? (e - lastDisplayed) / (progress.epoch - lastDisplayed) : 1
-            const prevAcc = currentMetrics?.accuracy || 0
-            const prevLoss = currentMetrics?.loss || 0
-            epochQueueRef.current.push({
-              epoch: e,
-              totalEpochs: Math.max(epochs, e + 1),
-              loss: prevLoss + ratio * ((progress.loss || 0) - prevLoss),
-              accuracy: prevAcc + ratio * (newMetrics.accuracy - prevAcc),
-              learningRate: 0.001,
-            })
-          }
         } else if (progress.status === "completed") {
-          // Add remaining epochs to queue before stopping
-          const lastQ = epochQueueRef.current.length > 0 ? epochQueueRef.current[epochQueueRef.current.length - 1].epoch : (currentMetrics?.epoch || 0)
-          const finalEp = progress.epoch || lastQ
           const fAcc = (progress.accuracy > 1 ? progress.accuracy / 100 : progress.accuracy) || 0
-          for (let e = lastQ + 1; e <= finalEp; e++) {
-            epochQueueRef.current.push({ epoch: e, totalEpochs: e + 1, loss: progress.loss || 0, accuracy: fAcc, learningRate: 0.001 })
-          }
           stopPolling()
           trainingStartedRef.current = false
           completedByPollingRef.current = true
-          // Wait for queue to drain at same speed before showing evaluate
-          const drainWait = setInterval(() => {
-            if (!epochQueueRef.current || epochQueueRef.current.length === 0) {
-              clearInterval(drainWait)
-              proceedToEvaluate()
-            }
-          }, 500)
           const proceedToEvaluate = () => {
           const finalAccuracy = fAcc
           setEvalMetrics({
@@ -543,6 +440,7 @@ export function BuildWizard() {
           setCurrentStep("evaluate")
           addLog("Training completed!")
           }
+          proceedToEvaluate()
         }
       } catch (e) {
       }

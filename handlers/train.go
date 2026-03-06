@@ -820,6 +820,10 @@ if mongoSelMap != nil && !mongoSelMap[collName] { continue }
 			}
 		}
 		if len(filePaths) == 0 {
+	trainingProgress.Status = "idle"
+	trainingProgress.Epoch = 0
+	trainingProgress.Accuracy = 0
+	trainingProgress.Loss = 0
 			return nil, fmt.Errorf("no CSV files found for Excel connection %s", connID)
 		}
 	default:
@@ -2067,6 +2071,10 @@ if selectedTableName != "" {
 	}
 
 	if len(filePaths) == 0 {
+	trainingProgress.Status = "idle"
+	trainingProgress.Epoch = 0
+	trainingProgress.Accuracy = 0
+	trainingProgress.Loss = 0
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{
@@ -2464,6 +2472,10 @@ func AnalyzeFilesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(filePaths) == 0 {
+	trainingProgress.Status = "idle"
+	trainingProgress.Epoch = 0
+	trainingProgress.Accuracy = 0
+	trainingProgress.Loss = 0
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{

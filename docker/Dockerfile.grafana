@@ -1,0 +1,10 @@
+FROM grafana/grafana:latest
+USER root
+RUN apk add --no-cache imagemagick
+COPY frontend/public/favicon.ico /tmp/favicon.ico
+COPY frontend/public/icon.svg /usr/share/grafana/public/img/grafana_icon.svg
+RUN convert /tmp/favicon.ico /usr/share/grafana/public/img/fav32.png 2>/dev/null || cp /tmp/favicon.ico /usr/share/grafana/public/img/fav32.png
+RUN sed -i 's/AppTitle:"Grafana"/AppTitle:"SchemaLabs Metrics"/g' /usr/share/grafana/public/build/app.*.js
+RUN sed -i 's/LoginTitle:"Welcome to Grafana"/LoginTitle:"Welcome to SchemaLabs"/g' /usr/share/grafana/public/build/app.*.js
+RUN sed -i 's/"Grafana"/"SchemaLabs Metrics"/g' /usr/share/grafana/public/views/index.html
+USER grafana
