@@ -230,6 +230,9 @@ json.NewEncoder(w).Encode(map[string]string{"error": "Failed to write file"})
 // Verify file written correctly
 if fi, statErr := os.Stat(destPath); statErr == nil {
 log.Printf("File written: %s, disk=%d bytes, copy=%d bytes", destPath, fi.Size(), size)
+		ext := strings.ToLower(filepath.Ext(destPath))
+		UploadsTotal.WithLabelValues(ext).Inc()
+		UploadBytesTotal.WithLabelValues(ext).Add(float64(size))
 } else {
 log.Printf("File stat error: %v", statErr)
 }

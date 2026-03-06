@@ -73,6 +73,8 @@ return
 
 	userID := r.Header.Get("X-User-ID")
 	log.Printf("=== TRAIN HANDLER START: user=%s ===", userID)
+	TrainingJobsTotal.WithLabelValues("started").Inc()
+	TrainingJobsActive.Inc()
 
 	var req TrainRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -2636,6 +2638,8 @@ updates := map[string]interface{}{
 }
 // When training completes, update main accuracy/loss/epochs and set status active
 if status == "completed" && acc > 0 {
+		TrainingJobsTotal.WithLabelValues("completed").Inc()
+		TrainingJobsActive.Dec()
 // Only update DB once - check if model is still in "training" status
 var checkModel FineTunedModel
 if DB.Where("id = ? AND status = ?", trainingProgress.ModelID, "training").First(&checkModel).Error == nil {
@@ -2656,6 +2660,8 @@ trainingProgress.Status = "completed_sent"
 }
 } else if status == "failed" {
 updates["status"] = "failed"
+		TrainingJobsTotal.WithLabelValues("failed").Inc()
+		TrainingJobsActive.Dec()
 }
 DB.Model(&FineTunedModel{}).Where("id = ?", trainingProgress.ModelID).Updates(updates)
 }
@@ -2876,6 +2882,8 @@ func StartTrainingChecker() {
 				status, _ := progress["status"].(string)
 				acc, _ := progress["accuracy"].(float64)
 				if status == "completed" && acc > 0 {
+		TrainingJobsTotal.WithLabelValues("completed").Inc()
+		TrainingJobsActive.Dec()
 					loss, _ := progress["loss"].(float64)
 					epochs, _ := progress["epochs"].(float64)
 					modelPath, _ := progress["model_path"].(string)

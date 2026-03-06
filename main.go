@@ -303,6 +303,7 @@ http.HandleFunc("/api/vertical/tools/update", enableCORS(handlers.AuthMiddleware
 	})))
 
 	// Serve uploaded files
+	http.HandleFunc("/metrics", handlers.MetricsHandler)
 	// Frontend routes with auth check
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// Static files - no debug log

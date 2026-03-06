@@ -216,6 +216,7 @@ func SignupHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Create session
 	sessionID, _ := CreateSession(user.ID, user.Email, user.Name)
+	AuthEventsTotal.WithLabelValues("login").Inc()
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session",
@@ -245,16 +246,19 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 
 	var user User
 	if DB.Where("email = ?", req.Email).First(&user).Error != nil {
-		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		AuthEventsTotal.WithLabelValues("login_failed").Inc()
+	http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
 	}
 
 	if bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)) != nil {
-		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		AuthEventsTotal.WithLabelValues("login_failed").Inc()
+	http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
 	}
 
 	sessionID, _ := CreateSession(user.ID, user.Email, user.Name)
+	AuthEventsTotal.WithLabelValues("login").Inc()
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session",
