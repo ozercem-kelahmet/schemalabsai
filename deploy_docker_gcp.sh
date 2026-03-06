@@ -73,10 +73,10 @@ else
 fi
 
 echo "====== STEP 3: Disable old systemd services ======"
-sudo systemctl stop schemalabsai schemalabs-frontend schemalabsai-flask 2>/dev/null || true
+sudo systemctl stop schemalabsai schemalabs-frontend schemalabsai-flask schemalabs-go 2>/dev/null || true
 sudo rm -f /etc/systemd/system/schemalabsai.service /etc/systemd/system/schemalabsai-flask.service /etc/systemd/system/schemalabs-frontend.service 2>/dev/null || true
 sudo systemctl daemon-reload 2>/dev/null || true
-sudo systemctl disable schemalabsai schemalabs-frontend schemalabsai-flask 2>/dev/null || true
+sudo systemctl disable schemalabsai schemalabs-frontend schemalabsai-flask schemalabs-go 2>/dev/null || true
 
 echo "====== STEP 5: Swap check ======"
 SWAP=$(free -m | awk '/Swap/{print $2}')
