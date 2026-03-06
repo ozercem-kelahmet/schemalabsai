@@ -1200,11 +1200,9 @@ log.Printf("=== MULTI TRAIN HANDLER CALLED: path=%s method=%s ===", r.URL.Path, 
 	trainingProgress.ModelID = ""
 	trainingProgress.ModelName = ""
 trainingProgress.Epochs = 0
-	// Reset Flask progress too
-	go func() {
-		client := &http.Client{Timeout: 3 * time.Second}
-		client.Post(GetFlaskURL()+"/training/reset", "application/json", nil)
-	}()
+	// Reset Flask progress too (sync)
+	client := &http.Client{Timeout: 3 * time.Second}
+	client.Post(GetFlaskURL()+"/training/reset", "application/json", nil)
 
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -2532,6 +2530,12 @@ StartTime int64   `json:"start_time"`
 func TrainingProgressHandler(w http.ResponseWriter, r *http.Request) {
 log.Printf("[PROGRESS] called query_id=%s", r.URL.Query().Get("query_id"))
 	w.Header().Set("Content-Type", "application/json")
+
+	// If no manual training active, don't show retrain progress to UI
+	if trainingProgress.ModelID == "" && trainingProgress.Status != "completed_sent" {
+		json.NewEncoder(w).Encode(map[string]interface{}{"status": "idle"})
+		return
+	}
 
 	// If Go-side says "training" but Flask says "completed", Flask has stale data
 	// Trust Go-side status when a new training just started
