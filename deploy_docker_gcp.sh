@@ -9,7 +9,7 @@ cd ~/Desktop/schemalabsai
 
 echo "📦 Git sync..."
 git pull origin main || true
-git add -A -- ":!uploads" ":!checkpoints" ":!data" ":!*.csv" ":!*.xlsx" ":!*.bak" ":!*.bak2" ":!*.bak3" ":!*.bak4" || true
+git add -A -- ":!uploads" ":!checkpoints" ":!data" ":!*.csv" ":!*.xlsx" ":!*.bak" ":!*.bak2" ":!*.bak3" ":!*.bak4" ":!terraform" || true
 git commit -m "Deploy $(date '+%Y-%m-%d %H:%M')" || true
 git push origin main || true
 
