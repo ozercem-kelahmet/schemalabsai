@@ -313,22 +313,6 @@ export function BuildWizard() {
         selectedTablesStr
       )
 
-      trainPromise.then((result: any) => {
-        if (result.error) {
-          toast.error("Cannot Build Model", { description: result.error, duration: 10000 })
-          setCurrentStep("config")
-          setTrainingStatus("idle")
-          return
-        }
-        if (completedByPollingRef.current) { return }
-        if (trainCancelledRef.current) { return }
-        handleTrainResult(result)
-      }).catch((err: any) => {
-        toast.error("Training Failed", { description: err.message, duration: 10000 })
-        setCurrentStep("config")
-        setTrainingStatus("idle")
-      })
-
       epochQueueRef.current = []
       trainingStartedRef.current = false  // Don't start polling yet - wait for Go to initialize
       setCurrentStep("training")
@@ -356,6 +340,22 @@ export function BuildWizard() {
       addLog("Data preprocessing complete")
       addLog("Building knowledge base...")
       addLog("Training neural architecture...")
+
+      trainPromise.then((result: any) => {
+        if (result.error) {
+          toast.error("Cannot Build Model", { description: result.error, duration: 10000 })
+          setCurrentStep("config")
+          setTrainingStatus("idle")
+          return
+        }
+        if (completedByPollingRef.current) { return }
+        if (trainCancelledRef.current) { return }
+        handleTrainResult(result)
+      }).catch((err: any) => {
+        toast.error("Training Failed", { description: err.message, duration: 10000 })
+        setCurrentStep("config")
+        setTrainingStatus("idle")
+      })
       return
     } catch (err: any) {
       toast.error("Training Failed", { description: err.message || "Unknown error", duration: 10000 })

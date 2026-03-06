@@ -229,7 +229,7 @@ IsMerged:  true,
 		}
 		DB.Create(&uploadedFile)
 	}
-	var dbModelID string; _ = dbModelID
+	var dbModelID string
 if DB != nil && userID != "" {
 		dbModelID = uuid.New().String()
 ftModel := FineTunedModel{
@@ -2218,7 +2218,7 @@ IsMerged:  true,
 		DB.Create(&uploadedFile)
 	}
 	// Save to database
-	var dbModelID string; _ = dbModelID
+	var dbModelID string
 if DB != nil && userID != "" {
 		dbModelID = preModelID
 ftModel := FineTunedModel{
@@ -2352,7 +2352,58 @@ log.Printf("MULTI EMAIL SENT to %s", user.Email)
 }
 }
 }()
+	w.Header().Set("Content-Type", "application/json")
+	rows := 0
+	if r, ok := flaskResp["rows"].(float64); ok {
+		rows = int(r)
+	}
+	epochs := 0
+	if e, ok := flaskResp["epochs"].(float64); ok {
+		epochs = int(e)
+	}
+	
 
+	if errMsg, ok := flaskResp["error"].(string); ok && errMsg != "" {
+		trainingProgress.Status = "failed"
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": "failed",
+			"error": errMsg,
+		})
+		return
+	}
+
+	trainingProgress.Status = "completed"
+	trainingProgress.Accuracy = accuracy
+	trainingProgress.Epoch = epochs
+	// trainingProgress.Epochs degismez
+	trainingProgress.Loss = loss
+	trainingProgress.ModelID = dbModelID
+	trainingProgress.ModelName = modelName
+
+	// Reset progress after delay so polling can catch "completed"
+	currentModelID := dbModelID
+	defer func() {
+		time.Sleep(8 * time.Second)
+		if trainingProgress.ModelID == currentModelID {
+			trainingProgress.Status = "idle"
+			trainingProgress.Epoch = 0
+			trainingProgress.Accuracy = 0
+		}
+	}()
+
+	json.NewEncoder(w).Encode(TrainResponse{
+		JobID:     uuid.New().String(),
+		Status:    "success",
+		Message:   fmt.Sprintf("Model trained with %d merged files", len(filePaths)),
+		ModelName: modelName,
+		ModelPath: modelPath,
+ModelID:   dbModelID,
+		Accuracy:  accuracy,
+		Rows:      rows,
+		Epochs:    epochs,
+		Loss:      loss,
+	})
 }
 
 func DeleteFineTunedModelHandler(w http.ResponseWriter, r *http.Request) {
