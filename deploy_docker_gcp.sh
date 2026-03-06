@@ -145,7 +145,7 @@ fi
 echo "====== STEP 8c: Ensure Redis healthy ======"
 REDIS_OK=0
 for i in 1 2 3 4 5; do
-  if sudo docker exec schemalabs-redis redis-cli -a $REDIS_PASSWORD ping 2>/dev/null | grep -q PONG; then
+  RPWD=$(grep REDIS_PASSWORD /opt/schemalabsai/.env | cut -d= -f2); if sudo docker exec schemalabs-redis redis-cli -a $RPWD ping 2>/dev/null | grep -q PONG; then
     echo "✅ Redis OK (attempt $i)"
     REDIS_OK=1
     break
