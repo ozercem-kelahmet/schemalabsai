@@ -185,9 +185,9 @@ func SendNewUserNotification(name, email, ip string) {
 	subject := "[SchemaLabs] New User - " + name
 	body := "<div style='font-family:sans-serif;max-width:600px;margin:0 auto;padding:32px;background:#fff'>"
 	body += "<div style='text-align:center;margin-bottom:24px'>"
-	body += "<img src='https://console.schemalabs.ai/icon.svg' width='48' height='48' alt='SchemaLabs'/>"
-	body += "<h2 style='color:#6366f1;margin:12px 0 4px'>New User Registered</h2>"
-	body += "<p style='color:#888;margin:0;font-size:14px'>SchemaLabs AI Platform</p>"
+	body += "<div style='font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:26px;font-weight:700;letter-spacing:-0.5px;margin-bottom:4px'><span style='color:#000000'>Schema</span><span style='color:#555555'>Labs</span></div>"
+	body += "<h2 style='color:#111111;margin:12px 0 4px'>New User Registered</h2>"
+	body += "<p style='color:#555555;margin:0;font-size:14px'>SchemaLabs AI Platform</p>"
 	body += "</div>"
 	body += "<table style='width:100%;border-collapse:collapse;border:1px solid #f0f0f0;border-radius:8px'>"
 	body += fmt.Sprintf("<tr style='border-bottom:1px solid #f0f0f0'><td style='padding:12px 16px;color:#666;width:120px;background:#fafafa'>Name</td><td style='padding:12px 16px;font-weight:600'>%s</td></tr>", name)
