@@ -28,7 +28,7 @@ func enableCORS(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		next(w, r)
+			handlers.RecoveryMiddleware(next)(w, r)
 	}
 }
 
@@ -102,6 +102,7 @@ func main() {
 
 	start = time.Now()
 	handlers.InitGoogleOAuth()
+	handlers.InitErrorLogs()
 	log.Printf("Google OAuth initialized in %v", time.Since(start))
 	flaskPort := getEnv("FLASK_PORT", "6000")
 	frontendPort := getEnv("FRONTEND_PORT", "3000")

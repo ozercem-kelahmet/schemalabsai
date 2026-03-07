@@ -202,3 +202,43 @@ func SendNewUserNotification(name, email, ip string) {
 		svc.SendEmail(strings.TrimSpace(r), subject, body)
 	}
 }
+
+func (e *EmailService) SendStorageWarning(to, name string, usedMB, limitMB float64) error {
+	pct := int(usedMB / limitMB * 100)
+	subject := fmt.Sprintf("[SchemaLabs] Storage %d%% full", pct)
+	body := "<div style='font-family:sans-serif;max-width:600px;margin:0 auto;padding:32px;background:#fff'>"
+	body += "<div style='text-align:center;margin-bottom:24px'>"
+	body += "<div style='font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:26px;font-weight:700;letter-spacing:-0.5px;margin-bottom:4px'><span style='color:#000000'>Schema</span><span style='color:#555555'>Labs</span></div>"
+	body += fmt.Sprintf("<h2 style='color:#111111;margin:12px 0 4px'>Storage %d%% Full</h2>", pct)
+	body += "<p style='color:#555555;margin:0;font-size:14px'>SchemaLabs AI Platform</p>"
+	body += "</div>"
+	body += "<table style='width:100%;border-collapse:collapse;border:1px solid #f0f0f0;border-radius:8px'>"
+	body += fmt.Sprintf("<tr style='border-bottom:1px solid #f0f0f0'><td style='padding:12px 16px;color:#666;width:140px;background:#fafafa'>Name</td><td style='padding:12px 16px;font-weight:600'>%s</td></tr>", name)
+	body += fmt.Sprintf("<tr style='border-bottom:1px solid #f0f0f0'><td style='padding:12px 16px;color:#666;background:#fafafa'>Used</td><td style='padding:12px 16px;font-weight:600'>%.0f MB / %.0f MB</td></tr>", usedMB, limitMB)
+	body += fmt.Sprintf("<tr><td style='padding:12px 16px;color:#666;background:#fafafa'>Usage</td><td style='padding:12px 16px;font-weight:600'>%d%%</td></tr>", pct)
+	body += "</table>"
+	body += "<p style='margin-top:20px;color:#555;font-size:14px;text-align:center'>Please delete unused files or contact support to increase your limit.</p>"
+	body += "<p style='margin-top:24px;color:#bbb;font-size:12px;text-align:center'>SchemaLabs AI Admin Notification</p>"
+	body += "</div>"
+	return e.SendEmail(to, subject, body)
+}
+
+func (e *EmailService) SendLowCreditWarning(to, name string, remaining, total float64) error {
+	pct := int(remaining / total * 100)
+	subject := "[SchemaLabs] Low Credit Warning"
+	body := "<div style='font-family:sans-serif;max-width:600px;margin:0 auto;padding:32px;background:#fff'>"
+	body += "<div style='text-align:center;margin-bottom:24px'>"
+	body += "<div style='font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:26px;font-weight:700;letter-spacing:-0.5px;margin-bottom:4px'><span style='color:#000000'>Schema</span><span style='color:#555555'>Labs</span></div>"
+	body += "<h2 style='color:#111111;margin:12px 0 4px'>Low Credit Warning</h2>"
+	body += "<p style='color:#555555;margin:0;font-size:14px'>SchemaLabs AI Platform</p>"
+	body += "</div>"
+	body += "<table style='width:100%;border-collapse:collapse;border:1px solid #f0f0f0;border-radius:8px'>"
+	body += fmt.Sprintf("<tr style='border-bottom:1px solid #f0f0f0'><td style='padding:12px 16px;color:#666;width:140px;background:#fafafa'>Name</td><td style='padding:12px 16px;font-weight:600'>%s</td></tr>", name)
+	body += fmt.Sprintf("<tr style='border-bottom:1px solid #f0f0f0'><td style='padding:12px 16px;color:#666;background:#fafafa'>Remaining</td><td style='padding:12px 16px;font-weight:600'>%.2f credits (%d%%)</td></tr>", remaining, pct)
+	body += fmt.Sprintf("<tr><td style='padding:12px 16px;color:#666;background:#fafafa'>Total</td><td style='padding:12px 16px;font-weight:600'>%.2f credits</td></tr>", total)
+	body += "</table>"
+	body += "<p style='margin-top:20px;color:#555;font-size:14px;text-align:center'>Your credits are running low. Please contact support to get more credits.</p>"
+	body += "<p style='margin-top:24px;color:#bbb;font-size:12px;text-align:center'>SchemaLabs AI Admin Notification</p>"
+	body += "</div>"
+	return e.SendEmail(to, subject, body)
+}

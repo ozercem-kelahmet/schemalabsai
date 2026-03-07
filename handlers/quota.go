@@ -137,7 +137,11 @@ func UseCredit(userID string, creditType string) error {
 
 	quota.CreditsUsed += cost
 	quota.UpdatedAt = time.Now()
-	return DB.Save(quota).Error
+	if err := DB.Save(quota).Error; err != nil {
+		return err
+	}
+	go notifyThresholds(userID, quota)
+	return nil
 }
 
 // CheckQuota returns true if user has remaining quota
@@ -313,4 +317,37 @@ DB.Model(&Connection{}).Where("user_id = ?", userID).Count(&connCount)
 		"days_until_reset": daysUntilReset,
 		"datasets_connected": datasetCount + connCount,
 	})
+}
+
+// notifyThresholds checks and sends warning emails if thresholds crossed
+func notifyThresholds(userID string, quota *UserQuota) {
+	var user User
+	if err := DB.Where("id = ?", userID).First(&user).Error; err != nil || user.Email == "" {
+		return
+	}
+
+	emailSvc := NewEmailService()
+	remaining := quota.CreditsTotal - quota.CreditsUsed
+	creditPct := remaining / quota.CreditsTotal * 100
+
+	// Low credit: notify at 20%
+	if creditPct <= 20 && creditPct > 0 {
+		var count int64
+		DB.Model(&UsageLog{}).Where("user_id = ? AND event_type = 'low_credit_warning' AND created_at > ?", userID, time.Now().AddDate(0, 0, -3)).Count(&count)
+		if count == 0 {
+			go emailSvc.SendLowCreditWarning(user.Email, user.Name, remaining, quota.CreditsTotal)
+			DB.Create(&UsageLog{ID: fmt.Sprintf("warn-%d", time.Now().UnixNano()), UserID: userID, EventType: "low_credit_warning", CreditsUsed: 0, CreatedAt: time.Now()})
+		}
+	}
+
+	// Storage warning: notify at 80%
+	storagePct := quota.StorageUsedMB / quota.StorageLimitMB * 100
+	if storagePct >= 80 {
+		var count int64
+		DB.Model(&UsageLog{}).Where("user_id = ? AND event_type = 'storage_warning' AND created_at > ?", userID, time.Now().AddDate(0, 0, -3)).Count(&count)
+		if count == 0 {
+			go emailSvc.SendStorageWarning(user.Email, user.Name, quota.StorageUsedMB, quota.StorageLimitMB)
+			DB.Create(&UsageLog{ID: fmt.Sprintf("warn-%d", time.Now().UnixNano()), UserID: userID, EventType: "storage_warning", CreditsUsed: 0, CreatedAt: time.Now()})
+		}
+	}
 }
