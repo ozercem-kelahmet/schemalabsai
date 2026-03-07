@@ -268,6 +268,8 @@ func triggerRetrain(job *ScheduledJob) error {
 	fmt.Fprintf(warmupField, "100")
 	mergeField, _ := writer.CreateFormField("merge_files")
 	mergeField.Write([]byte("true"))
+qidField, _ := writer.CreateFormField("query_id")
+qidField.Write([]byte("retrain-" + job.ModelID))
 	writer.Close()
 
 	client := &http.Client{Timeout: 18000 * time.Second}

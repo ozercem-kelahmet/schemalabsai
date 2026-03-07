@@ -43,9 +43,18 @@ class NaNSafeEncoder(json.JSONEncoder):
 app_json_encoder = NaNSafeEncoder
 import torch
 torch.backends.mkldnn.enabled = True
-torch.set_float32_matmul_precision("medium")
-torch.set_num_threads(8)
-torch.set_num_interop_threads(4)
+try:
+    torch.set_float32_matmul_precision("medium")
+except RuntimeError:
+    pass
+try:
+    torch.set_num_threads(8)
+except RuntimeError:
+    pass
+try:
+    torch.set_num_interop_threads(4)
+except RuntimeError:
+    pass
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.cuda.amp import autocast, GradScaler
@@ -1257,8 +1266,31 @@ def get_session(query_id):
         _save_sessions()
     return training_sessions[query_id]
 
+def _get_redis():
+    try:
+        import redis as _redis
+        url = os.getenv("REDIS_URL", "localhost:6379")
+        host, port = url.split(":")
+        return _redis.Redis(host=host, port=int(port), password=os.getenv("REDIS_PASSWORD", ""), decode_responses=True)
+    except:
+        return None
+
 def save_session(query_id, session):
     training_sessions[query_id] = session
+    try:
+        rc = _get_redis()
+        if rc:
+            if "history" not in session:
+                session["history"] = []
+            ep = session.get("epoch", 0)
+            ac = session.get("accuracy", 0)
+            lo = session.get("loss", 0)
+            if ep > 0 and (len(session["history"]) == 0 or session["history"][-1].get("epoch", 0) < ep):
+                session["history"].append({"epoch": ep, "accuracy": ac, "loss": lo})
+                print(f"[REDIS-HISTORY] qid={query_id} epoch={ep} history_len={len(session['history'])}")
+            rc.setex(f"training:{query_id}", 3600, json.dumps(session, default=str))
+    except:
+        pass
     _save_sessions()
 
 
@@ -2864,7 +2896,7 @@ def finetune(bypass_queue=False):
             
             if current_epoch % 10 == 0 and torch.cuda.is_available(): torch.cuda.empty_cache()
             print(f"Epoch {current_epoch}: Acc={acc:.1f}% (best={best_acc:.1f}%)")
-            import time as _t; _t.sleep(1.5)
+            import time as _t; _t.sleep(0.1)
             
             if best_acc >= 99.0:
                 print(f"🎉 %99+ accuracy - MÜKEMMEL!")
@@ -3042,8 +3074,17 @@ def reset_training_progress():
 
 @app.route('/training/progress', methods=['GET'])
 def get_training_progress():
-    _load_sessions()
     query_id = request.args.get("query_id")
+    if query_id:
+        try:
+            rc = _get_redis()
+            if rc:
+                data = rc.get(f"training:{query_id}")
+                if data:
+                    return jsonify(json.loads(data))
+        except:
+            pass
+    _load_sessions()
     if query_id and query_id in training_sessions:
         return jsonify(training_sessions[query_id])
     return jsonify(training_progress)

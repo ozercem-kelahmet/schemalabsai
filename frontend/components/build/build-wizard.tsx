@@ -57,10 +57,27 @@ export function BuildWizard() {
   useEffect(() => {
     const checkOngoingTraining = async () => {
       try {
-        const res = await fetch("/api/train/progress", { credentials: "include" })
+        const savedQueryId = localStorage.getItem("trainingQueryId")
+        if (savedQueryId) { trainingQueryIdRef.current = savedQueryId }
+        const url = savedQueryId ? "/api/train/progress?query_id=" + savedQueryId : "/api/train/progress"
+        const res = await fetch(url, { credentials: "include" })
         const progress = await res.json()
-        if (progress.status === "training" && progress.model_id) {
+        if (progress.status === "training" && (progress.model_id || progress.epoch > 0)) {
           trainingStartedRef.current = true
+          // Restore history from Redis data for charts after refresh
+          if (progress.history && progress.history.length > 0) {
+            const restored = progress.history.map((h: any) => ({
+              epoch: h.epoch,
+              totalEpochs: progress.epochs || h.epoch + 1,
+              loss: h.loss || 0,
+              accuracy: (h.accuracy > 1 ? h.accuracy / 100 : h.accuracy) || 0,
+              learningRate: 0.001,
+            }))
+            setMetricsHistory(restored)
+            restored.forEach((m: any) => {
+              addLog(`Epoch ${m.epoch}/${m.totalEpochs} - Loss: ${m.loss.toFixed(4)}, Accuracy: ${(m.accuracy * 100).toFixed(1)}%`)
+            })
+          }
           // Restore metrics from localStorage FIRST to avoid flash
           const savedM = localStorage.getItem("trainingCurrentMetrics")
           if (savedM) {
@@ -88,6 +105,13 @@ export function BuildWizard() {
             const elapsed = Math.floor(Date.now() / 1000 - progress.start_time)
             if (elapsed > 0) setElapsedTime(elapsed)
           }
+        } else {
+          // No active training - clear stale localStorage
+          localStorage.removeItem("trainingMetricsHistory")
+          localStorage.removeItem("trainingLogs")
+          localStorage.removeItem("trainingCurrentMetrics")
+          localStorage.removeItem("trainingTotalEpochs")
+          localStorage.removeItem("trainingStartTime")
         }
       } catch (e) {
       }
@@ -95,39 +119,7 @@ export function BuildWizard() {
     checkOngoingTraining()
   }, [])
 
-  useEffect(() => {
-    const saved = localStorage.getItem("trainingMetricsHistory")
-    if (saved) {
-      try {
-        setMetricsHistory(JSON.parse(saved))
-      } catch (e) {
-      }
-    }
-    const savedCurrentMetrics = localStorage.getItem("trainingCurrentMetrics")
-    if (savedCurrentMetrics) {
-      try {
-        const parsed = JSON.parse(savedCurrentMetrics)
-        setCurrentMetrics(parsed)
-      } catch (e) {}
-    }
-    const savedTotalEpochs = localStorage.getItem("trainingTotalEpochs")
-    if (savedTotalEpochs) {
-      const te = parseInt(savedTotalEpochs)
-      if (te > 0) { setTotalEpochs(te) }
-    }
-    const savedStartTime = localStorage.getItem("trainingStartTime")
-    if (savedStartTime) {
-      const elapsed = Math.floor((Date.now() - parseInt(savedStartTime)) / 1000)
-      if (elapsed > 0 && elapsed < 86400) setElapsedTime(elapsed)
-    }
-    const savedLogs = localStorage.getItem("trainingLogs")
-    if (savedLogs) {
-      try {
-        setLogs(JSON.parse(savedLogs))
-      } catch (e) {
-      }
-    }
-  }, [])
+  // localStorage restore removed - checkOngoingTraining handles it
 
   // Save metrics history to localStorage when it changes
   useEffect(() => {
@@ -164,6 +156,7 @@ export function BuildWizard() {
     localStorage.removeItem("trainingCurrentMetrics")
     localStorage.removeItem("trainingTotalEpochs")
     localStorage.removeItem("trainingStartTime")
+    localStorage.removeItem("trainingQueryId")
   }
 
   const handleDatasetToggle = (dataset: Dataset) => {
@@ -225,6 +218,7 @@ export function BuildWizard() {
       // Start training - show UI immediately, handle result async
       const trainingQueryId = `train-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       trainingQueryIdRef.current = trainingQueryId
+      localStorage.setItem("trainingQueryId", trainingQueryId)
       const trainPromise = api.multiTrain(
         fileIds,
         modelName,
@@ -353,6 +347,9 @@ export function BuildWizard() {
         setBuiltModel(newModel)
         clearTrainingStorage()
         setCurrentStep("evaluate")
+      } else if (result.status === "training") {
+        // Training started async - polling will track progress
+        return
       } else {
         addLog(`Error: ${result.error || result.message || "Training failed"}`)
         setTrainingStatus("initializing")
