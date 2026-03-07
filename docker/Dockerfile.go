@@ -5,7 +5,7 @@ RUN go mod download
 COPY main.go ./
 COPY handlers/ ./handlers/
 COPY services/ ./services/
-RUN CGO_ENABLED=0 GOOS=linux go build -o schemalabsai main.go
+RUN CGO_ENABLED=0 GOOS=linux GOGC=off go build -p 1 -o schemalabsai main.go
 
 FROM alpine:latest
 RUN apk --no-cache add ca-certificates curl tzdata
