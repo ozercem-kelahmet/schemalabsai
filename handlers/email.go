@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"encoding/json"
+	"net/http"
 	"net/smtp"
 	"strings"
 	"os"
@@ -149,25 +151,54 @@ func (e *EmailService) SendPasswordResetCode(to, code string) error {
 	return e.SendEmail(to, subject, body)
 }
 
-func SendNewUserNotification(name, email string) {
+
+func getIPLocation(ip string) string {
+	cleanIP := strings.TrimSpace(strings.Split(ip, ",")[0])
+	if strings.Contains(cleanIP, ":") && !strings.Contains(cleanIP, "[") {
+		cleanIP, _, _ = strings.Cut(cleanIP, ":")
+	}
+	resp, err := http.Get("http://ip-api.com/json/" + cleanIP + "?fields=country,regionName,city,isp")
+	if err != nil {
+		return cleanIP
+	}
+	defer resp.Body.Close()
+	var result struct {
+		Country    string `json:"country"`
+		RegionName string `json:"regionName"`
+		City       string `json:"city"`
+		ISP        string `json:"isp"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return cleanIP
+	}
+	return fmt.Sprintf("%s, %s, %s (%s)", result.City, result.RegionName, result.Country, result.ISP)
+}
+
+
+func SendNewUserNotification(name, email, ip string) {
 	notifyEmails := os.Getenv("NOTIFY_EMAILS")
 	if notifyEmails == "" {
 		return
 	}
-	recipients := strings.Split(notifyEmails, ",")
+	location := getIPLocation(ip)
 	svc := NewEmailService()
-	subject := "🎉 New User Registered - " + name
-	html := fmt.Sprintf(`
-<div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px">
-<h2 style="color:#6366f1">New User on SchemaLabs AI</h2>
-<table style="width:100%%;border-collapse:collapse;margin-top:16px">
-<tr><td style="padding:8px;color:#666">Name</td><td style="padding:8px;font-weight:600">%s</td></tr>
-<tr><td style="padding:8px;color:#666">Email</td><td style="padding:8px;font-weight:600">%s</td></tr>
-<tr><td style="padding:8px;color:#666">Time</td><td style="padding:8px;font-weight:600">%s UTC</td></tr>
-</table>
-<p style="margin-top:24px;color:#888;font-size:12px">SchemaLabs AI Admin Notification</p>
-</div>`, name, email, time.Now().UTC().Format("2006-01-02 15:04:05"))
-	for _, r := range recipients {
-		svc.SendEmail(strings.TrimSpace(r), subject, html)
+	subject := "[SchemaLabs] New User - " + name
+	body := "<div style='font-family:sans-serif;max-width:600px;margin:0 auto;padding:32px;background:#fff'>"
+	body += "<div style='text-align:center;margin-bottom:24px'>"
+	body += "<img src='https://console.schemalabs.ai/icon.svg' width='48' height='48' alt='SchemaLabs'/>"
+	body += "<h2 style='color:#6366f1;margin:12px 0 4px'>New User Registered</h2>"
+	body += "<p style='color:#888;margin:0;font-size:14px'>SchemaLabs AI Platform</p>"
+	body += "</div>"
+	body += "<table style='width:100%;border-collapse:collapse;border:1px solid #f0f0f0;border-radius:8px'>"
+	body += fmt.Sprintf("<tr style='border-bottom:1px solid #f0f0f0'><td style='padding:12px 16px;color:#666;width:120px;background:#fafafa'>Name</td><td style='padding:12px 16px;font-weight:600'>%s</td></tr>", name)
+	body += fmt.Sprintf("<tr style='border-bottom:1px solid #f0f0f0'><td style='padding:12px 16px;color:#666;background:#fafafa'>Email</td><td style='padding:12px 16px;font-weight:600'>%s</td></tr>", email)
+	body += fmt.Sprintf("<tr style='border-bottom:1px solid #f0f0f0'><td style='padding:12px 16px;color:#666;background:#fafafa'>Location</td><td style='padding:12px 16px;font-weight:600'>%s</td></tr>", location)
+	body += fmt.Sprintf("<tr style='border-bottom:1px solid #f0f0f0'><td style='padding:12px 16px;color:#666;background:#fafafa'>IP</td><td style='padding:12px 16px;font-weight:600'>%s</td></tr>", ip)
+	body += fmt.Sprintf("<tr><td style='padding:12px 16px;color:#666;background:#fafafa'>Time</td><td style='padding:12px 16px;font-weight:600'>%s UTC</td></tr>", time.Now().UTC().Format("2006-01-02 15:04:05"))
+	body += "</table>"
+	body += "<p style='margin-top:24px;color:#bbb;font-size:12px;text-align:center'>SchemaLabs AI Admin Notification</p>"
+	body += "</div>"
+	for _, r := range strings.Split(notifyEmails, ",") {
+		svc.SendEmail(strings.TrimSpace(r), subject, body)
 	}
 }
