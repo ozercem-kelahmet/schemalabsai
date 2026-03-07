@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/smtp"
+	"strings"
 	"os"
 	"time"
 )
@@ -146,4 +147,27 @@ func (e *EmailService) SendPasswordResetCode(to, code string) error {
 </body>
 </html>`, code)
 	return e.SendEmail(to, subject, body)
+}
+
+func SendNewUserNotification(name, email string) {
+	notifyEmails := os.Getenv("NOTIFY_EMAILS")
+	if notifyEmails == "" {
+		return
+	}
+	recipients := strings.Split(notifyEmails, ",")
+	svc := NewEmailService()
+	subject := "🎉 New User Registered - " + name
+	html := fmt.Sprintf(`
+<div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px">
+<h2 style="color:#6366f1">New User on SchemaLabs AI</h2>
+<table style="width:100%%;border-collapse:collapse;margin-top:16px">
+<tr><td style="padding:8px;color:#666">Name</td><td style="padding:8px;font-weight:600">%s</td></tr>
+<tr><td style="padding:8px;color:#666">Email</td><td style="padding:8px;font-weight:600">%s</td></tr>
+<tr><td style="padding:8px;color:#666">Time</td><td style="padding:8px;font-weight:600">%s UTC</td></tr>
+</table>
+<p style="margin-top:24px;color:#888;font-size:12px">SchemaLabs AI Admin Notification</p>
+</div>`, name, email, time.Now().UTC().Format("2006-01-02 15:04:05"))
+	for _, r := range recipients {
+		svc.SendEmail(strings.TrimSpace(r), subject, html)
+	}
 }

@@ -962,6 +962,8 @@ fmt.Println("DEBUG: fineTunedResult does NOT contain vsRaptors")
 		historyMutex.Unlock()
 		fmt.Printf("[SAVE] sessionID=%s user=%s msg=%s\n", sessionID, userID, req.Message[:min(30, len(req.Message))])
 saveMessagesToDB(userID, sessionID, req.Message, response, req.Model, tokens, req.CompareGroup, fmt.Sprintf("%.1fs", time.Since(startTime).Seconds()), req.FineTunedModel)
+	ChatRequestsTotal.WithLabelValues(req.Model, "success").Inc()
+	ChatDuration.WithLabelValues(req.Model).Observe(time.Since(startTime).Seconds())
 		if funcCallsJSON != "" {
 result := DB.Model(&Message{}).Where("query_id = ? AND role = ?", sessionID, "assistant").Order("created_at desc").Limit(1).Update("function_calls", funcCallsJSON); fmt.Printf("[FUNC_SAVE] rows=%d err=%v\n", result.RowsAffected, result.Error)
 		}
@@ -998,6 +1000,8 @@ result := DB.Model(&Message{}).Where("query_id = ? AND role = ?", sessionID, "as
 
 			// Save to DB
 			saveMessagesToDB(userID, sessionID, req.Message, response, req.Model, tokens, req.CompareGroup, fmt.Sprintf("%.1fs", time.Since(startTime).Seconds()), req.FineTunedModel)
+	ChatRequestsTotal.WithLabelValues(req.Model, "success").Inc()
+	ChatDuration.WithLabelValues(req.Model).Observe(time.Since(startTime).Seconds())
 
 			fmt.Fprintf(w, "data: [DONE]\n\n")
 			if f, ok := w.(http.Flusher); ok {
@@ -1022,6 +1026,8 @@ result := DB.Model(&Message{}).Where("query_id = ? AND role = ?", sessionID, "as
 
 		// Save to DB
 		saveMessagesToDB(userID, sessionID, req.Message, response, req.Model, tokens, req.CompareGroup, fmt.Sprintf("%.1fs", time.Since(startTime).Seconds()), req.FineTunedModel)
+	ChatRequestsTotal.WithLabelValues(req.Model, "success").Inc()
+	ChatDuration.WithLabelValues(req.Model).Observe(time.Since(startTime).Seconds())
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(ChatResponse{

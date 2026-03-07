@@ -216,7 +216,8 @@ func SignupHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Create session
 	sessionID, _ := CreateSession(user.ID, user.Email, user.Name)
-	AuthEventsTotal.WithLabelValues("login").Inc()
+	AuthEventsTotal.WithLabelValues("register").Inc()
+	go SendNewUserNotification(user.Name, user.Email)
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session",

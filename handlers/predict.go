@@ -26,6 +26,7 @@ type PredictResponse struct {
 }
 
 func PredictHandler(w http.ResponseWriter, r *http.Request) {
+	predictStart := time.Now()
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -87,6 +88,8 @@ return
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(body)
+	InferenceRequestsTotal.WithLabelValues("success").Inc()
+	InferenceDuration.Observe(time.Since(predictStart).Seconds())
 
 	// Deduct credits and log usage
 	userID = r.Header.Get("X-User-ID")
