@@ -37,11 +37,23 @@ func killPort(port string) {
 }
 
 func startFlaskServer(pythonPath string) {
-	cmd := exec.Command(pythonPath, "server.py")
-	cmd.Dir = "./model"
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Start()
+	for {
+		cmd := exec.Command(pythonPath, "server.py")
+		cmd.Dir = "./model"
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Start(); err != nil {
+			log.Printf("[FLASK] Failed to start: %v", err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		if err := cmd.Wait(); err != nil {
+			log.Printf("[FLASK] Crashed: %v — restarting in 3s", err)
+		} else {
+			log.Println("[FLASK] Exited cleanly — restarting in 3s")
+		}
+		time.Sleep(3 * time.Second)
+	}
 }
 
 func startNextJsServer() {
@@ -159,6 +171,7 @@ func main() {
 	http.HandleFunc("/api/train/async", enableCORS(handlers.AuthMiddleware(handlers.AsyncTrainHandler)))
 	http.HandleFunc("/api/train/status", enableCORS(handlers.TrainingStatusHandler))
 	http.HandleFunc("/api/train/analyze", enableCORS(handlers.AuthMiddleware(handlers.AnalyzeFilesHandler)))
+	http.HandleFunc("/api/train/cancel", enableCORS(handlers.AuthMiddleware(handlers.TrainingCancelHandler)))
 	http.HandleFunc("/api/train/progress", enableCORS(handlers.TrainingProgressHandler))
 	http.HandleFunc("/api/config/limits", enableCORS(handlers.GetUploadLimitsHandler))
 	http.HandleFunc("/api/files", enableCORS(handlers.AuthMiddleware(handlers.GetUploadedFilesHandler)))
@@ -337,6 +350,7 @@ http.HandleFunc("/api/vertical/tools/update", enableCORS(handlers.AuthMiddleware
 
 	// Start scheduler for scheduled/real-time sync
 	handlers.GlobalScheduler.Start()
+	handlers.RestoreTrainingFromRedis()
 	handlers.StartTrainingChecker()
 	log.Println("SCHEMALABS AI running on http://localhost:" + apiPort)
 	server := &http.Server{Addr: ":" + apiPort, Handler: nil, MaxHeaderBytes: 1 << 20}

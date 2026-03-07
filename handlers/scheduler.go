@@ -154,6 +154,13 @@ func (s *Scheduler) tick() {
 }
 
 func (s *Scheduler) ExecuteJob(job *ScheduledJob) {
+	s.mu.Lock()
+	if job.Status == "running" {
+		s.mu.Unlock()
+		log.Printf("[SCHEDULER] Job already running, skipping: %s", job.ModelName)
+		return
+	}
+	s.mu.Unlock()
 	if ok, reason := CheckCredits(job.UserID, CreditPerTrain); !ok {
 		log.Printf("Retrain blocked for %s: %s", job.ModelName, reason)
 		DB.Model(&FineTunedModel{}).Where("id = ?", job.ModelID).Update("sync_status", "error")

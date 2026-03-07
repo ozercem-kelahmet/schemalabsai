@@ -57,7 +57,8 @@ export function BuildWizard() {
   useEffect(() => {
     const checkOngoingTraining = async () => {
       try {
-        const savedQueryId = localStorage.getItem("trainingQueryId")
+        const urlQid = new URLSearchParams(window.location.search).get("qid")
+        const savedQueryId = urlQid || sessionStorage.getItem("trainingQueryId")
         if (savedQueryId) { trainingQueryIdRef.current = savedQueryId }
         const url = savedQueryId ? "/api/train/progress?query_id=" + savedQueryId : "/api/train/progress"
         const res = await fetch(url, { credentials: "include" })
@@ -156,7 +157,7 @@ export function BuildWizard() {
     localStorage.removeItem("trainingCurrentMetrics")
     localStorage.removeItem("trainingTotalEpochs")
     localStorage.removeItem("trainingStartTime")
-    localStorage.removeItem("trainingQueryId")
+    sessionStorage.removeItem("trainingQueryId")
   }
 
   const handleDatasetToggle = (dataset: Dataset) => {
@@ -218,7 +219,10 @@ export function BuildWizard() {
       // Start training - show UI immediately, handle result async
       const trainingQueryId = `train-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       trainingQueryIdRef.current = trainingQueryId
-      localStorage.setItem("trainingQueryId", trainingQueryId)
+      sessionStorage.setItem("trainingQueryId", trainingQueryId)
+      const url = new URL(window.location.href)
+      url.searchParams.set("qid", trainingQueryId)
+      window.history.replaceState({}, "", url.toString())
       const trainPromise = api.multiTrain(
         fileIds,
         modelName,
@@ -368,7 +372,7 @@ export function BuildWizard() {
           const serverEpochs = progress.epochs
           const epochs = serverEpochs || 0
           if (serverEpochs && serverEpochs > 0) {
-            setTotalEpochs(serverEpochs)
+            setTotalEpochs(prev => Math.max(prev, serverEpochs))
           }
 
           
@@ -389,11 +393,24 @@ export function BuildWizard() {
           // Metrics update handled in animation block above
           if (progress.epoch > (currentMetrics?.epoch || 0)) { addLog(`Epoch ${progress.epoch}/${epochs} - Loss: ${(progress.loss || 0).toFixed(4)}, Accuracy: ${((newMetrics.accuracy) * 100).toFixed(1)}%`) }
           setMetricsHistory((prev) => {
-            const lastEpoch = prev.length > 0 ? prev[prev.length - 1].epoch : 0
-            if (progress.epoch > lastEpoch) {
-              return [...prev, newMetrics]
+            // Merge Redis history + current epoch
+            let merged = [...prev]
+            if (progress.history && progress.history.length > 0) {
+              const existingEpochs = new Set(merged.map((m: any) => m.epoch))
+              for (const h of progress.history) {
+                if (!existingEpochs.has(h.epoch)) {
+                  merged.push({ epoch: h.epoch, totalEpochs: epochs, loss: h.loss || 0, accuracy: h.accuracy > 1 ? h.accuracy / 100 : h.accuracy || 0, learningRate: 0.001 })
+                  existingEpochs.add(h.epoch)
+                }
+              }
+              merged.sort((a: any, b: any) => a.epoch - b.epoch)
             }
-            return prev
+            const lastEpoch = merged.length > 0 ? merged[merged.length - 1].epoch : 0
+            if (progress.epoch > lastEpoch) {
+              merged.push(newMetrics)
+              existingEpochs.add(progress.epoch)
+            }
+            return merged
           })
         } else if (progress.status === "completed") {
           const fAcc = (progress.accuracy > 1 ? progress.accuracy / 100 : progress.accuracy) || 0
@@ -443,11 +460,21 @@ export function BuildWizard() {
       }
     }
 
-    pollingRef.current = setInterval(pollProgress, 3000)
+    const startPolling = () => {
+      if (pollingRef.current) clearInterval(pollingRef.current)
+      const ms = document.hidden ? 10000 : 3000
+      pollingRef.current = setInterval(pollProgress, ms)
+    }
+
+    startPolling()
     pollProgress()
+
+    const onVisibilityChange = () => startPolling()
+    document.addEventListener("visibilitychange", onVisibilityChange)
 
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current)
+      document.removeEventListener("visibilitychange", onVisibilityChange)
     }
   }, [trainingStatus, isPaused, totalEpochs, addLog])
 
@@ -474,8 +501,13 @@ export function BuildWizard() {
   
   const handleStop = () => {
     stopPolling()
+    // Notify server to cleanup training state
+    if (trainingQueryIdRef.current) {
+      fetch("/api/train/cancel?query_id=" + trainingQueryIdRef.current, { method: "POST", credentials: "include" }).catch(() => {})
+    }
+    clearTrainingStorage()
     setCurrentStep("config")
-    setTrainingStatus("initializing")
+    setTrainingStatus("idle")
     setCurrentMetrics(null)
     setMetricsHistory([])
     setLogs([])
@@ -486,8 +518,8 @@ export function BuildWizard() {
 
   const handleTrainAgain = () => {
     stopPolling()
-    trainCancelledRef.current = true
-    skipCheckRef.current = true
+    trainCancelledRef.current = false
+    skipCheckRef.current = false
     setTrainingStatus("idle")
     trainingStartedRef.current = false
     completedByPollingRef.current = false

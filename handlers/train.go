@@ -143,8 +143,10 @@ return
 	)
 		if err != nil {
 			log.Printf("Flask goroutine error: %v", err)
+			trainingProgressMu.Lock()
 			trainingProgress.Status = "error"
 			trainingProgress.Loss = 0
+			trainingProgressMu.Unlock()
 			return
 		}
 		defer resp.Body.Close()
@@ -200,8 +202,10 @@ req.Epochs = int(ep)
 		accuracy = acc
 		log.Printf("✅ Accuracy parsed from Flask: %.2f", accuracy)
 // Set completed IMMEDIATELY so polling stops returning stale training status
+trainingProgressMu.Lock()
 trainingProgress.Status = "completed"
 trainingProgress.Accuracy = accuracy
+trainingProgressMu.Unlock()
 	} else {
 		log.Printf("⚠️  No accuracy in Flask response or type mismatch")
 	}
@@ -556,7 +560,9 @@ func exportConnectionToCSV(conn Connection, connID string) ([]string, error) {
 var mongoSelMap map[string]bool
 if conn.SelectedTables != "" {
 var sel []string
-json.Unmarshal([]byte(conn.SelectedTables), &sel)
+if err := json.Unmarshal([]byte(conn.SelectedTables), &sel); err != nil {
+	log.Printf("[SELECTED_TABLES] parse error: %v raw=%s", err, conn.SelectedTables)
+}
 mongoSelMap = make(map[string]bool)
 for _, s := range sel { mongoSelMap[s] = true }
 }
@@ -765,7 +771,9 @@ if mongoSelMap != nil && !mongoSelMap[collName] { continue }
 					var s3SelMap map[string]bool
 					if conn.SelectedTables != "" {
 						var sel []string
-						json.Unmarshal([]byte(conn.SelectedTables), &sel)
+						if err := json.Unmarshal([]byte(conn.SelectedTables), &sel); err != nil {
+	log.Printf("[SELECTED_TABLES] parse error: %v raw=%s", err, conn.SelectedTables)
+}
 						s3SelMap = make(map[string]bool)
 						for _, s := range sel { s3SelMap[s] = true }
 					}
@@ -826,9 +834,11 @@ if mongoSelMap != nil && !mongoSelMap[collName] { continue }
 		}
 		if len(filePaths) == 0 {
 	trainingProgress.Status = "idle"
+	trainingProgressMu.Lock()
 	trainingProgress.Epoch = 0
 	trainingProgress.Accuracy = 0
 	trainingProgress.Loss = 0
+	trainingProgressMu.Unlock()
 			return nil, fmt.Errorf("no CSV files found for Excel connection %s", connID)
 		}
 	default:
@@ -867,7 +877,9 @@ func exportSQLToCSV(dsn, driver, connID, listTablesQuery string, quoteTable bool
 var selectedMap map[string]bool
 if selectedTables != "" {
 var sel []string
-json.Unmarshal([]byte(selectedTables), &sel)
+if err := json.Unmarshal([]byte(selectedTables), &sel); err != nil {
+	log.Printf("[SELECTED_TABLES] parse error: %v raw=%s", err, selectedTables)
+}
 selectedMap = make(map[string]bool)
 for _, s := range sel { selectedMap[s] = true }
 }
@@ -1071,7 +1083,9 @@ func exportGraphQLToCSV(conn Connection, connID string) ([]string, error) {
 	var selectedMap map[string]bool
 	if conn.SelectedTables != "" {
 		var selected []string
-		json.Unmarshal([]byte(conn.SelectedTables), &selected)
+		if err := json.Unmarshal([]byte(conn.SelectedTables), &selected); err != nil {
+	log.Printf("[SELECTED_TABLES] parse error: %v raw=%s", err, conn.SelectedTables)
+}
 		if len(selected) > 0 {
 			selectedMap = make(map[string]bool)
 			for _, s := range selected { selectedMap[s] = true }
@@ -1197,14 +1211,15 @@ func writeRowsToCSV(dataRows *sql.Rows, connID, tableName string) string {
 
 func MultiTrainHandler(w http.ResponseWriter, r *http.Request) {
 log.Printf("=== MULTI TRAIN HANDLER CALLED: path=%s method=%s ===", r.URL.Path, r.Method)	// Reset training progress for new training
+	trainingProgressMu.Lock()
 	trainingProgress.Status = "training"
 	trainingProgress.Epoch = 0
-	// Epochs Flask tarafindan set edilecek
 	trainingProgress.Accuracy = 0
 	trainingProgress.Loss = 0
 	trainingProgress.ModelID = ""
 	trainingProgress.ModelName = ""
-trainingProgress.Epochs = 0
+	trainingProgress.Epochs = 0
+	trainingProgressMu.Unlock()
 	// Reset Flask progress too (sync)
 	client := &http.Client{Timeout: 3 * time.Second}
 	client.Post(GetFlaskURL()+"/training/reset", "application/json", nil)
@@ -1226,7 +1241,9 @@ trainingProgress.Epochs = 0
 // Register query_id in progress map
 if req.QueryID != "" {
 setActiveTrainingProgress(req.QueryID, trainingProgress)
+trainingProgressMu.Lock()
 trainingProgress.StartTime = time.Now().Unix()
+trainingProgressMu.Unlock()
 }
 // Check quota before training
 log.Printf("🔍 QUOTA CHECK: userID=%s", userID)
@@ -1335,7 +1352,9 @@ if req.ConnectionIDs != "" {
 			var mongoSelectedMap map[string]bool
 			if conn.SelectedTables != "" {
 				var sel []string
-				json.Unmarshal([]byte(conn.SelectedTables), &sel)
+				if err := json.Unmarshal([]byte(conn.SelectedTables), &sel); err != nil {
+	log.Printf("[SELECTED_TABLES] parse error: %v raw=%s", err, conn.SelectedTables)
+}
 				mongoSelectedMap = make(map[string]bool)
 				for _, s := range sel { mongoSelectedMap[s] = true }
 			}
@@ -1401,7 +1420,9 @@ if req.ConnectionIDs != "" {
 			var sfSelectedMap map[string]bool
 			if conn.SelectedTables != "" {
 				var sel []string
-				json.Unmarshal([]byte(conn.SelectedTables), &sel)
+				if err := json.Unmarshal([]byte(conn.SelectedTables), &sel); err != nil {
+	log.Printf("[SELECTED_TABLES] parse error: %v raw=%s", err, conn.SelectedTables)
+}
 				sfSelectedMap = make(map[string]bool)
 				for _, s := range sel { sfSelectedMap[s] = true }
 			}
@@ -1480,7 +1501,12 @@ if req.ConnectionIDs != "" {
 
 		// Databricks connection
 		if conn.SubType == "databricks" && conn.Host != "" && conn.APIKey != "" {
-			httpClient := &http.Client{Timeout: 30 * time.Second}
+			httpClient := &http.Client{Timeout: 60 * time.Second}
+			log.Printf("[DATABRICKS] Connecting: host=%s catalog=%s warehouse=%s selectedTables=%s",
+				conn.Host,
+				func() string { if conn.Database != "" { return conn.Database }; return "main" }(),
+				conn.Endpoint,
+				conn.SelectedTables)
 			dbWorkspaceURL := "https://" + strings.TrimPrefix(strings.TrimPrefix(conn.Host, "https://"), "http://")
 			dbCatalog := conn.Database
 			if dbCatalog == "" { dbCatalog = "main" }
@@ -1494,7 +1520,9 @@ if req.ConnectionIDs != "" {
 			var selectedMap map[string]bool
 			if conn.SelectedTables != "" {
 				var selected []string
-				json.Unmarshal([]byte(conn.SelectedTables), &selected)
+				if err := json.Unmarshal([]byte(conn.SelectedTables), &selected); err != nil {
+	log.Printf("[SELECTED_TABLES] parse error: %v raw=%s", err, conn.SelectedTables)
+}
 				if len(selected) > 0 {
 					selectedMap = make(map[string]bool)
 					for _, s := range selected { selectedMap[s] = true }
@@ -1505,6 +1533,12 @@ if req.ConnectionIDs != "" {
 			schReq.Header.Set("Authorization", "Bearer "+conn.APIKey)
 			schResp, serr := httpClient.Do(schReq)
 			var schemaNames []string
+			if serr != nil {
+				log.Printf("[DATABRICKS] Schema request failed: %v", serr)
+			} else if schResp.StatusCode != 200 {
+				b, _ := io.ReadAll(schResp.Body); schResp.Body.Close()
+				log.Printf("[DATABRICKS] Schema request status=%d body=%s", schResp.StatusCode, string(b))
+			}
 			if serr == nil && schResp.StatusCode == 200 {
 				var schResult struct { Schemas []struct { Name string `json:"name"` } `json:"schemas"` }
 				json.NewDecoder(schResp.Body).Decode(&schResult)
@@ -1580,7 +1614,9 @@ if req.ConnectionIDs != "" {
 			var mysqlSelectedMap map[string]bool
 			if conn.SelectedTables != "" {
 				var sel []string
-				json.Unmarshal([]byte(conn.SelectedTables), &sel)
+				if err := json.Unmarshal([]byte(conn.SelectedTables), &sel); err != nil {
+	log.Printf("[SELECTED_TABLES] parse error: %v raw=%s", err, conn.SelectedTables)
+}
 				mysqlSelectedMap = make(map[string]bool)
 				for _, s := range sel { mysqlSelectedMap[s] = true }
 			}
@@ -1640,7 +1676,9 @@ if req.ConnectionIDs != "" {
 			var pineSelectedMap map[string]bool
 			if conn.SelectedTables != "" {
 				var sel []string
-				json.Unmarshal([]byte(conn.SelectedTables), &sel)
+				if err := json.Unmarshal([]byte(conn.SelectedTables), &sel); err != nil {
+	log.Printf("[SELECTED_TABLES] parse error: %v raw=%s", err, conn.SelectedTables)
+}
 				pineSelectedMap = make(map[string]bool)
 				for _, s := range sel { pineSelectedMap[s] = true }
 			}
@@ -1789,7 +1827,9 @@ csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, sanitizeFilename(pine
 				var gdriveSelMap map[string]bool
 				if conn.SelectedTables != "" {
 					var sel []string
-					json.Unmarshal([]byte(conn.SelectedTables), &sel)
+					if err := json.Unmarshal([]byte(conn.SelectedTables), &sel); err != nil {
+	log.Printf("[SELECTED_TABLES] parse error: %v raw=%s", err, conn.SelectedTables)
+}
 					gdriveSelMap = make(map[string]bool)
 					for _, s := range sel { gdriveSelMap[s] = true }
 				}
@@ -1839,7 +1879,9 @@ csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, sanitizeFilename(pine
 					var s3SelMap map[string]bool
 					if conn.SelectedTables != "" {
 						var sel []string
-						json.Unmarshal([]byte(conn.SelectedTables), &sel)
+						if err := json.Unmarshal([]byte(conn.SelectedTables), &sel); err != nil {
+	log.Printf("[SELECTED_TABLES] parse error: %v raw=%s", err, conn.SelectedTables)
+}
 						s3SelMap = make(map[string]bool)
 						for _, s := range sel { s3SelMap[s] = true }
 					}
@@ -1972,7 +2014,9 @@ if conn.SubType == "excel" {
 var pgSelMap map[string]bool
 if conn.SelectedTables != "" {
 var sel []string
-json.Unmarshal([]byte(conn.SelectedTables), &sel)
+if err := json.Unmarshal([]byte(conn.SelectedTables), &sel); err != nil {
+	log.Printf("[SELECTED_TABLES] parse error: %v raw=%s", err, conn.SelectedTables)
+}
 pgSelMap = make(map[string]bool)
 for _, s := range sel { pgSelMap[s] = true }
 log.Printf("PostgreSQL selected tables filter: %v", sel)
@@ -2160,8 +2204,10 @@ CreatedAt: time.Now(),
 SyncMode: func() string { if req.SyncMode != "" { return req.SyncMode }; return "manual" }(),
 }
 DB.Create(&preModel)
+trainingProgressMu.Lock()
 trainingProgress.ModelID = preModelID
 trainingProgress.ModelName = req.ModelName
+trainingProgressMu.Unlock()
 log.Printf("Pre-created training model: %s (status=training)", preModelID)
 
 // Return training started immediately, run Flask in background
@@ -2384,7 +2430,9 @@ log.Printf("MULTI EMAIL SENT to %s", user.Email)
 	
 
 	if errMsg, ok := flaskResp["error"].(string); ok && errMsg != "" {
+		trainingProgressMu.Lock()
 		trainingProgress.Status = "failed"
+		trainingProgressMu.Unlock()
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"status": "failed",
@@ -2393,6 +2441,7 @@ log.Printf("MULTI EMAIL SENT to %s", user.Email)
 		return
 	}
 
+	trainingProgressMu.Lock()
 	trainingProgress.Status = "completed"
 	trainingProgress.Accuracy = accuracy
 	trainingProgress.Epoch = epochs
@@ -2400,6 +2449,7 @@ log.Printf("MULTI EMAIL SENT to %s", user.Email)
 	trainingProgress.Loss = loss
 	trainingProgress.ModelID = dbModelID
 	trainingProgress.ModelName = modelName
+	trainingProgressMu.Unlock()
 
 	// Reset progress after delay so polling can catch "completed"
 	currentModelID := dbModelID
@@ -2532,7 +2582,7 @@ type TrainingProgressEntry struct {
 }
 
 var trainingProgressMap = make(map[string]*TrainingProgressEntry)
-var trainingProgressMu sync.Mutex
+var trainingProgressMu sync.RWMutex
 var trainingProgress = &TrainingProgressEntry{}
 
 func getTrainingProgress(queryID string) *TrainingProgressEntry {
@@ -2567,23 +2617,29 @@ func cleanupTrainingProgress(queryID string) {
 	trainingProgress = &TrainingProgressEntry{}
 }
 
+var redisClient *redisv9.Client
+var redisOnce sync.Once
+
 func getRedisClient() *redisv9.Client {
-	redisURL := os.Getenv("REDIS_URL")
-	if redisURL == "" { redisURL = "localhost:6379" }
-	parts := strings.SplitN(redisURL, ":", 2)
-	host := parts[0]
-	port := "6379"
-	if len(parts) > 1 { port = parts[1] }
-	return redisv9.NewClient(&redisv9.Options{
-		Addr: host + ":" + port,
-		Password: os.Getenv("REDIS_PASSWORD"),
+	redisOnce.Do(func() {
+		redisURL := os.Getenv("REDIS_URL")
+		if redisURL == "" { redisURL = "localhost:6379" }
+		parts := strings.SplitN(redisURL, ":", 2)
+		host := parts[0]
+		port := "6379"
+		if len(parts) > 1 { port = parts[1] }
+		redisClient = redisv9.NewClient(&redisv9.Options{
+			Addr: host + ":" + port,
+			Password: os.Getenv("REDIS_PASSWORD"),
+			PoolSize: 10,
+		})
 	})
+	return redisClient
 }
 
 func getProgressFromRedis(queryID string) map[string]interface{} {
 	ctx := context.Background()
 	rdb := getRedisClient()
-	defer rdb.Close()
 	key := "training:"+queryID
 	data, err := rdb.Get(ctx, key).Result()
 	if err != nil { log.Printf("[REDIS] miss key=%s err=%v", key, err); return nil }
@@ -2595,12 +2651,34 @@ func getProgressFromRedis(queryID string) map[string]interface{} {
 	return nil
 }
 
+func TrainingCancelHandler(w http.ResponseWriter, r *http.Request) {
+	queryID := r.URL.Query().Get("query_id")
+	if queryID != "" {
+		ctx := context.Background()
+		rdb := getRedisClient()
+		rdb.Del(ctx, "training:"+queryID)
+		trainingProgressMu.Lock()
+		delete(trainingProgressMap, queryID)
+		if trainingProgress.ModelID != "" {
+			trainingProgress = &TrainingProgressEntry{}
+		}
+		trainingProgressMu.Unlock()
+		log.Printf("Training cancelled: %s", queryID)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"status": "cancelled"})
+}
+
 func TrainingProgressHandler(w http.ResponseWriter, r *http.Request) {
 log.Printf("[PROGRESS] called query_id=%s", r.URL.Query().Get("query_id"))
 	w.Header().Set("Content-Type", "application/json")
 
 	// If no manual training active, don't show retrain progress to UI
-	if trainingProgress.ModelID == "" && trainingProgress.Status != "completed_sent" {
+	trainingProgressMu.Lock()
+	tpSnap := *trainingProgress
+	noActive := tpSnap.ModelID == "" && tpSnap.Status != "completed_sent"
+	trainingProgressMu.Unlock()
+	if noActive {
 		json.NewEncoder(w).Encode(map[string]interface{}{"status": "idle"})
 		return
 	}
@@ -2608,22 +2686,30 @@ log.Printf("[PROGRESS] called query_id=%s", r.URL.Query().Get("query_id"))
 
 	// Try Redis first (bypasses Flask GIL blocking)
 	queryID := r.URL.Query().Get("query_id")
+	if queryID == "" {
+		trainingProgressMu.Lock()
+		for k := range trainingProgressMap {
+			queryID = k
+			break
+		}
+		trainingProgressMu.Unlock()
+	}
 	if queryID != "" {
 		redisData := getProgressFromRedis(queryID)
 		if redisData != nil {
-			if trainingProgress.ModelID != "" {
-				redisData["model_id"] = trainingProgress.ModelID
-				redisData["model_name"] = trainingProgress.ModelName
+			if tpSnap.ModelID != "" {
+				redisData["model_id"] = tpSnap.ModelID
+				redisData["model_name"] = tpSnap.ModelName
 			}
 			status, _ := redisData["status"].(string)
 			if status == "completed" {
 				acc, _ := redisData["accuracy"].(float64)
-				if acc > 0 && trainingProgress.ModelID != "" {
+				if acc > 0 && tpSnap.ModelID != "" {
 					var checkModel FineTunedModel
-					if DB.Where("id = ? AND status = ?", trainingProgress.ModelID, "training").First(&checkModel).Error == nil {
+					if DB.Where("id = ? AND status = ?", tpSnap.ModelID, "training").First(&checkModel).Error == nil {
 						fEpochs, _ := redisData["epochs"].(float64)
 						fLoss, _ := redisData["loss"].(float64)
-						DB.Model(&FineTunedModel{}).Where("id = ?", trainingProgress.ModelID).Updates(map[string]interface{}{"accuracy": acc, "loss": fLoss, "epochs": int(fEpochs), "status": "active", "model_path": redisData["model_path"]})
+						DB.Model(&FineTunedModel{}).Where("id = ?", tpSnap.ModelID).Updates(map[string]interface{}{"accuracy": acc, "loss": fLoss, "epochs": int(fEpochs), "status": "active", "model_path": redisData["model_path"]})
 						log.Printf("Training completed via Redis for model %s: accuracy=%.1f%%", trainingProgress.ModelID, acc)
 					}
 					redisData["precision"] = acc * 0.98
@@ -2645,7 +2731,7 @@ flaskURL := GetFlaskURL() + "/training/progress"
 		flaskURL += "?query_id=" + queryID
 	}
 
-	client := &http.Client{Timeout: 3 * time.Second}
+	client := &http.Client{Timeout: 8 * time.Second}
 	resp, err := client.Get(flaskURL)
 	if err == nil {
 		defer resp.Body.Close()
@@ -2655,50 +2741,68 @@ flaskURL := GetFlaskURL() + "/training/progress"
 			status, _ := flaskProgress["status"].(string)
 
 // When Flask says completed, handle it immediately
-if status == "completed" && trainingProgress.ModelID != "" {
+if status == "completed" && tpSnap.ModelID != "" {
 fAcc, _ := flaskProgress["accuracy"].(float64)
 fEpochs, _ := flaskProgress["epochs"].(float64)
 fLoss, _ := flaskProgress["loss"].(float64)
 if fAcc > 0 {
+trainingProgressMu.Lock()
 trainingProgress.Status = "completed_sent"
 trainingProgress.Accuracy = fAcc
 trainingProgress.Epochs = int(fEpochs)
 trainingProgress.Loss = fLoss
+trainingProgressMu.Unlock()
 // Update DB
 var checkModel FineTunedModel
-if DB.Where("id = ? AND status = ?", trainingProgress.ModelID, "training").First(&checkModel).Error == nil {
-DB.Model(&FineTunedModel{}).Where("id = ?", trainingProgress.ModelID).Updates(map[string]interface{}{"accuracy": fAcc, "loss": fLoss, "epochs": int(fEpochs), "status": "active", "model_path": flaskProgress["model_path"]})
+if DB.Where("id = ? AND status = ?", tpSnap.ModelID, "training").First(&checkModel).Error == nil {
+DB.Model(&FineTunedModel{}).Where("id = ?", tpSnap.ModelID).Updates(map[string]interface{}{"accuracy": fAcc, "loss": fLoss, "epochs": int(fEpochs), "status": "active", "model_path": flaskProgress["model_path"]})
 log.Printf("Training completed via polling for model %s: accuracy=%.1f%%", trainingProgress.ModelID, fAcc)
 }
-json.NewEncoder(w).Encode(map[string]interface{}{"status": "completed", "model_id": trainingProgress.ModelID, "accuracy": fAcc, "epochs": int(fEpochs), "loss": fLoss, "precision": fAcc * 0.98, "recall": fAcc * 0.97, "f1_score": fAcc * 0.975})
+json.NewEncoder(w).Encode(map[string]interface{}{"status": "completed", "model_id": tpSnap.ModelID, "accuracy": fAcc, "epochs": int(fEpochs), "loss": fLoss, "precision": fAcc * 0.98, "recall": fAcc * 0.97, "f1_score": fAcc * 0.975})
 return
 }
 }
 // When Go is actively training but Flask says completed/idle, return Go status with Flask epoch data
-if trainingProgress.Status == "training" && (status == "completed" || status == "idle") {
+if tpSnap.Status == "training" && (status == "completed" || status == "idle") {
 // Update Go progress from Flask data if available
 fEpoch, _ := flaskProgress["epoch"].(float64)
 fEpochs, _ := flaskProgress["epochs"].(float64)
 fLoss, _ := flaskProgress["loss"].(float64)
 fAcc, _ := flaskProgress["accuracy"].(float64)
+trainingProgressMu.Lock()
 if fEpoch > 0 { trainingProgress.Epoch = int(fEpoch) }
 if fEpochs > 0 { trainingProgress.Epochs = int(fEpochs) }
 if fLoss > 0 { trainingProgress.Loss = fLoss }
 if fAcc > 0 { trainingProgress.Accuracy = fAcc }
-goResp := map[string]interface{}{"status": "training", "model_id": trainingProgress.ModelID, "model_name": trainingProgress.ModelName, "epoch": trainingProgress.Epoch, "epochs": trainingProgress.Epochs, "accuracy": trainingProgress.Accuracy, "loss": trainingProgress.Loss, "start_time": trainingProgress.StartTime}
+trainingProgressMu.Unlock()
+goResp := map[string]interface{}{"status": "training", "model_id": tpSnap.ModelID, "model_name": tpSnap.ModelName, "epoch": tpSnap.Epoch, "epochs": tpSnap.Epochs, "accuracy": tpSnap.Accuracy, "loss": tpSnap.Loss, "start_time": tpSnap.StartTime}
 out, _ := json.Marshal(goResp)
 w.Write(out)
 return
 }
 // Skip polling when completed_sent - return completed and set idle
 trainingProgressMu.Lock()
-if trainingProgress.Status == "completed_sent" {
-resp := map[string]interface{}{"status": "completed", "model_id": trainingProgress.ModelID, "accuracy": trainingProgress.Accuracy, "start_time": trainingProgress.StartTime, "epochs": trainingProgress.Epochs, "epoch": trainingProgress.Epochs, "precision": trainingProgress.Accuracy * 0.98, "recall": trainingProgress.Accuracy * 0.97, "f1_score": trainingProgress.Accuracy * 0.975}
+if tpSnap.Status == "completed_sent" {
+resp := map[string]interface{}{"status": "completed", "model_id": tpSnap.ModelID, "accuracy": tpSnap.Accuracy, "start_time": tpSnap.StartTime, "epochs": tpSnap.Epochs, "epoch": tpSnap.Epochs, "precision": tpSnap.Accuracy * 0.98, "recall": tpSnap.Accuracy * 0.97, "f1_score": tpSnap.Accuracy * 0.975}
 qid := r.URL.Query().Get("query_id")
 if qid != "" {
 delete(trainingProgressMap, qid)
+go func(q string) {
+time.Sleep(15 * time.Second)
+ctx := context.Background()
+rdb := getRedisClient()
+rdb.Del(ctx, "training:"+q)
+log.Printf("[REDIS] Deleted completed key: training:%s", q)
+}(qid)
 }
+go func() {
+time.Sleep(15 * time.Second)
+trainingProgressMu.Lock()
+if tpSnap.Status == "completed_sent" {
 trainingProgress = &TrainingProgressEntry{}
+}
+trainingProgressMu.Unlock()
+}()
 trainingProgressMu.Unlock()
 json.NewEncoder(w).Encode(resp)
 return
@@ -2706,8 +2810,8 @@ return
 trainingProgressMu.Unlock()
 if status != "idle" {
 // Override Flask model_id with Go DB UUID
-if trainingProgress.ModelID != "" {
-flaskProgress["model_id"] = trainingProgress.ModelID
+if tpSnap.ModelID != "" {
+flaskProgress["model_id"] = tpSnap.ModelID
 epoch, _ := flaskProgress["epoch"].(float64)
 epochs, _ := flaskProgress["epochs"].(float64)
 loss, _ := flaskProgress["loss"].(float64)
@@ -2723,20 +2827,22 @@ if status == "completed" && acc > 0 {
 		TrainingJobsActive.Dec()
 // Only update DB once - check if model is still in "training" status
 var checkModel FineTunedModel
-if DB.Where("id = ? AND status = ?", trainingProgress.ModelID, "training").First(&checkModel).Error == nil {
+if DB.Where("id = ? AND status = ?", tpSnap.ModelID, "training").First(&checkModel).Error == nil {
 updates["accuracy"] = acc
 updates["loss"] = loss
 updates["epochs"] = int(epochs)
 updates["status"] = "active"
 updates["model_path"] = flaskProgress["model_path"]
-if trainingProgress.StartTime > 0 {
-updates["training_duration"] = int(time.Now().Unix() - trainingProgress.StartTime)
-		TrainingDuration.Observe(float64(time.Now().Unix() - trainingProgress.StartTime))
+if tpSnap.StartTime > 0 {
+updates["training_duration"] = int(time.Now().Unix() - tpSnap.StartTime)
+		TrainingDuration.Observe(float64(time.Now().Unix() - tpSnap.StartTime))
 }
 log.Printf("Training completed for model %s: accuracy=%.1f%%, updating to active (once)", trainingProgress.ModelID, acc)
 // Email sent from main handler, not polling
 // Set idle immediately so next poll doesn't trigger again
+trainingProgressMu.Lock()
 trainingProgress.Status = "completed_sent"
+trainingProgressMu.Unlock()
 } else {
 // skip silently
 }
@@ -2745,7 +2851,7 @@ updates["status"] = "failed"
 		TrainingJobsTotal.WithLabelValues("failed").Inc()
 		TrainingJobsActive.Dec()
 }
-DB.Model(&FineTunedModel{}).Where("id = ?", trainingProgress.ModelID).Updates(updates)
+DB.Model(&FineTunedModel{}).Where("id = ?", tpSnap.ModelID).Updates(updates)
 }
 overridden, _ := json.Marshal(flaskProgress)
 w.Write(overridden)
@@ -2755,7 +2861,7 @@ return
 	}
 
 	// Check DB for active training if no in-memory progress
-if trainingProgress.Status == "" || trainingProgress.Status == "idle" {
+if tpSnap.Status == "" || tpSnap.Status == "idle" {
 userID := r.Header.Get("X-User-ID")
 if userID != "" {
 var trainingModel FineTunedModel
@@ -2938,6 +3044,48 @@ func DownloadModelHandler(w http.ResponseWriter, r *http.Request) {
 // StartTrainingChecker periodically checks for stale "training" models
 // If user closes browser, polling stops but model stays "training" forever
 // This goroutine checks Flask and updates accordingly
+func RestoreTrainingFromRedis() {
+	ctx := context.Background()
+	rdb := getRedisClient()
+	keys, err := rdb.Keys(ctx, "training:*").Result()
+	if err != nil || len(keys) == 0 {
+		return
+	}
+	trainingProgressMu.Lock()
+	defer trainingProgressMu.Unlock()
+	for _, key := range keys {
+		data, err := rdb.Get(ctx, key).Result()
+		if err != nil {
+			continue
+		}
+		var progress map[string]interface{}
+		if json.Unmarshal([]byte(data), &progress) != nil {
+			continue
+		}
+		status, _ := progress["status"].(string)
+		if status != "training" {
+			continue
+		}
+		queryID := strings.TrimPrefix(key, "training:")
+		if _, exists := trainingProgressMap[queryID]; !exists {
+			p := &TrainingProgressEntry{
+				Status: "training",
+			}
+			if modelID, ok := progress["model_id"].(string); ok {
+				p.ModelID = modelID
+			}
+			if epoch, ok := progress["epoch"].(float64); ok {
+				p.Epoch = int(epoch)
+			}
+			if epochs, ok := progress["epochs"].(float64); ok {
+				p.Epochs = int(epochs)
+			}
+			trainingProgressMap[queryID] = p
+			log.Printf("[STARTUP] Restored training from Redis: %s model=%s", queryID, p.ModelID)
+		}
+	}
+}
+
 func StartTrainingChecker() {
 	go func() {
 		for {

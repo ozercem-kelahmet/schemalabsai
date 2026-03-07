@@ -1256,8 +1256,8 @@ def _save_sessions():
     try:
         with open(SESSIONS_FILE, 'w') as f:
             json.dump(training_sessions, f)
-    except:
-        pass
+    except Exception as e:
+        print(f"[SESSION] Failed to save sessions: {e}")
 
 def get_session(query_id):
     _load_sessions()
@@ -1275,22 +1275,25 @@ def _get_redis():
     except:
         return None
 
+_session_lock = __import__('threading').Lock()
+
 def save_session(query_id, session):
-    training_sessions[query_id] = session
+    with _session_lock:
+        training_sessions[query_id] = session
+        if "history" not in session:
+            session["history"] = []
+        ep = session.get("epoch", 0)
+        ac = session.get("accuracy", 0)
+        lo = session.get("loss", 0)
+        if ep > 0 and (len(session["history"]) == 0 or session["history"][-1].get("epoch", 0) < ep):
+            session["history"].append({"epoch": ep, "accuracy": ac, "loss": lo})
+            print(f"[REDIS-HISTORY] qid={query_id} epoch={ep} history_len={len(session['history'])}")
     try:
         rc = _get_redis()
         if rc:
-            if "history" not in session:
-                session["history"] = []
-            ep = session.get("epoch", 0)
-            ac = session.get("accuracy", 0)
-            lo = session.get("loss", 0)
-            if ep > 0 and (len(session["history"]) == 0 or session["history"][-1].get("epoch", 0) < ep):
-                session["history"].append({"epoch": ep, "accuracy": ac, "loss": lo})
-                print(f"[REDIS-HISTORY] qid={query_id} epoch={ep} history_len={len(session['history'])}")
-            rc.setex(f"training:{query_id}", 3600, json.dumps(session, default=str))
-    except:
-        pass
+            rc.setex(f"training:{query_id}", 86400, json.dumps(session, default=str))
+    except Exception as e:
+        print(f"[SESSION] Redis write failed: {e}")
     _save_sessions()
 
 
@@ -2704,8 +2707,9 @@ def finetune(bypass_queue=False):
         try:
             from async_training import redis_client
             import json
-            redis_client.setex(f"training:{query_id}", 3600, json.dumps(session))
-        except: pass
+            redis_client.setex(f"training:{query_id}", 86400, json.dumps(session))
+        except Exception as e:
+            print(f"[REDIS] async write failed: {e}")
         session["start_time"] = time.time()
         session["epochs"] = 0  # Will be updated during training
         session["epoch"] = 0
