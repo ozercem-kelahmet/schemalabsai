@@ -106,7 +106,7 @@ echo "====== STEP 6: Docker down ======"
 sudo docker rm -f schemalabs-flask schemalabs-go schemalabs-frontend 2>/dev/null || true
 sudo pkill -9 -f "server.py" 2>/dev/null || true
 sudo pkill -9 -f "/opt/schemalabsai/schemalabsai" 2>/dev/null || true
-sudo pkill -9 -f "next" 2>/dev/null || true
+sudo pkill -9 -f "schemalabs-frontend" 2>/dev/null || true
 sudo fuser -k 6000/tcp 3000/tcp 8080/tcp 2>/dev/null || true
 sleep 5
 ss -tlnp | grep -E ":3000|:6000|:8080" && echo "PORTS STILL BUSY" || echo "All ports free"
@@ -121,7 +121,7 @@ echo "✅ Docker build OK"
 echo "====== STEP 7b: Final port cleanup ======"
 sudo pkill -9 -f "server.py" 2>/dev/null || true
 sudo pkill -9 -f "schemalabsai" 2>/dev/null || true
-sudo pkill -9 -f "next" 2>/dev/null || true
+sudo pkill -9 -f "schemalabs-frontend" 2>/dev/null || true
 sudo fuser -k 6000/tcp 3000/tcp 8080/tcp 2>/dev/null || true
 sleep 3
 ss -tlnp | grep -E ":3000|:6000|:8080" && echo "PORTS STILL BUSY" || echo "All ports free"
@@ -224,6 +224,8 @@ echo "====== STEP 12: Lock directories ======"
 sudo chattr +i / 2>/dev/null || true
 sudo chattr +i /opt/schemalabsai/frontend 2>/dev/null || true
 echo "✅ Directories locked"
+sudo systemctl restart schemalabs-website.service 2>/dev/null || true
+echo "✅ Website service restarted"
 
 echo "====== STEP 13: Post-deploy malware scan ======"
 CLEAN=1

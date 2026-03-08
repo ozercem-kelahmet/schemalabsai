@@ -39,6 +39,53 @@ DATASETS = [
     {"id": "shashwatwork/dataco-smart-supply-chain-for-big-data-analysis", "sector": "supplychain"},
     {"id": "uciml/iris", "sector": "agriculture"},
     {"id": "datasnaek/youtube-new", "sector": "marketing"},
+    {"id": "jacobbaruch/basketball-players-stats-per-season-49-leagues", "sector": "sports"},
+    {"id": "devsb13/international-cricket-players-data", "sector": "sports"},
+    {"id": "crawford/us-major-league-soccer-salaries", "sector": "sports"},
+    {"id": "piterfm/paris-2024-olympic-summer-games", "sector": "sports"},
+    {"id": "harryarthur/ireland-rugby-match-data-internationals", "sector": "sports"},
+    {"id": "ziya07/smart-manufacturing-maintenance-dataset", "sector": "manufacturing"},
+    {"id": "meruvakodandasuraj/semiconductor-wafer-defect-classification-dataset", "sector": "manufacturing"},
+    {"id": "ricardofebra/cnc-vibration-monitoring", "sector": "manufacturing"},
+    {"id": "ayushparwal2026/steel-industry-datasets", "sector": "manufacturing"},
+    {"id": "ziya07/robotic-operations-performance-dataset", "sector": "manufacturing"},
+    {"id": "memoonaqaiser/mobile-phone-usage", "sector": "telecom"},
+    {"id": "dhruvildave/ookla-internet-speed-dataset", "sector": "telecom"},
+    {"id": "ellimaaac/worldwide-mobile-network-operators-and-technologies", "sector": "telecom"},
+    {"id": "mmattson/us-broadband-availability", "sector": "telecom"},
+    {"id": "kalilurrahman/top-box-office-revenue-data-english-movies", "sector": "entertainment"},
+    {"id": "nelgiriyewithana/top-spotify-songs-2023", "sector": "entertainment"},
+    {"id": "anandshaw2001/video-game-sales", "sector": "entertainment"},
+    {"id": "aliibrahim10/anime-ratings", "sector": "entertainment"},
+    {"id": "mohamedbakhet/amazon-books-reviews", "sector": "entertainment"},
+    {"id": "willianoliveiragibin/grocery-inventory", "sector": "supplychain"},
+    {"id": "muhammadahmaddaar/delivery-logistics-dataset-india-multi-partner", "sector": "supplychain"},
+    {"id": "bertnardomariouskono/global-supply-chain-disruption-and-resilience", "sector": "supplychain"},
+    {"id": "shahriarkabir/procurement-kpi-analysis-dataset", "sector": "supplychain"},
+    {"id": "anoopjohny/gourmet-food-procurement-data", "sector": "supplychain"},
+    {"id": "anassarfraz13/student-success-factors-and-insights", "sector": "education"},
+    {"id": "shariful07/student-flexibility-in-online-learning", "sector": "education"},
+    {"id": "andrewmvd/udemy-courses", "sector": "education"},
+    {"id": "samyakjhaveri/mooc-final", "sector": "education"},
+    {"id": "davinwijaya/employee-turnover", "sector": "hr"},
+    {"id": "iamsouravbanerjee/software-professional-salaries-2022", "sector": "hr"},
+    {"id": "tawfikelmetwally/employee-dataset", "sector": "hr"},
+    {"id": "mrsimple07/employee-attrition-data-prediction", "sector": "hr"},
+    {"id": "ulrikthygepedersen/co2-emissions-by-country", "sector": "climate"},
+    {"id": "jarredpriester/global-sea-level-rise", "sector": "climate"},
+    {"id": "utkarshx27/noaa-atlantic-hurricane-database", "sector": "climate"},
+    {"id": "naiyakhalid/flood-prediction-dataset", "sector": "climate"},
+    {"id": "us-drought-monitor/united-states-droughts-by-county", "sector": "climate"},
+    {"id": "erogluegemen/airline-passengers", "sector": "transportation"},
+    {"id": "yingwurenjian/chicago-divvy-bicycle-sharing-data", "sector": "transportation"},
+    {"id": "nayanack/shipping", "sector": "transportation"},
+    {"id": "sanjeetsinghnaik/ship-ports", "sector": "transportation"},
+    {"id": "ohagwucollinspatrick/ghana-crop-disease", "sector": "agriculture"},
+    {"id": "miadul/irrigation-water-requirement-prediction-dataset", "sector": "agriculture"},
+    {"id": "selfvivek/environment-impact-of-food-production", "sector": "agriculture"},
+    {"id": "rafsunahmad/world-food-production", "sector": "agriculture"},
+    {"id": "blueloki/synthetic-agricultural-yield-prediction-dataset", "sector": "agriculture"},
+
     {"id": "stefanoleone992/ea-sports-fc-24-complete-player-dataset", "sector": "sports"},
     {"id": "secareanualin/football-events", "sector": "sports"},
     {"id": "saife245/english-premier-league", "sector": "sports"},
@@ -202,7 +249,14 @@ def run():
         try:
             dl_path = RAW_DIR / ds_id.replace("/", "_")
             dl_path.mkdir(parents=True, exist_ok=True)
-            kaggle.api.dataset_download_files(ds_id, path=str(dl_path), unzip=True, quiet=True)
+            import signal
+            def _timeout(s, f): raise Exception("timeout")
+            signal.signal(signal.SIGALRM, _timeout)
+            signal.alarm(30)
+            try:
+                kaggle.api.dataset_download_files(ds_id, path=str(dl_path), unzip=True, quiet=True)
+            finally:
+                signal.alarm(0)
 
             csv_files = list(dl_path.rglob("*.csv")) + list(dl_path.rglob("*.txt"))
             if not csv_files:

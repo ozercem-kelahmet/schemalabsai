@@ -1,3 +1,4 @@
+import re
 """
 SchemaLabs - SectorHead Training
 column names + value stats → sector tahmin
@@ -14,7 +15,7 @@ from sklearn.preprocessing import LabelEncoder
 
 DATA_FILE  = Path("data/sector_labels.json")
 SAVE_PATH  = Path("data/sector_head.pt")
-D_MODEL    = 128
+D_MODEL    = 256
 MAX_COLS   = 50
 MAX_TOKENS = 5
 EPOCHS     = 300
@@ -78,7 +79,8 @@ class SectorHead(nn.Module):
         self.token_embed  = nn.Embedding(vocab_size, d_model, padding_idx=0)
         self.col_encoder  = nn.Sequential(nn.Linear(d_model, d_model), nn.ReLU(), nn.Dropout(0.1))
         self.stats_encoder= nn.Sequential(nn.Linear(6, d_model), nn.ReLU(), nn.Dropout(0.1))
-        self.col_attn     = nn.MultiheadAttention(d_model, num_heads=4, batch_first=True, dropout=0.1)
+        self.col_attn  = nn.MultiheadAttention(d_model, num_heads=8, batch_first=True, dropout=0.1)
+        self.col_attn2 = nn.MultiheadAttention(d_model, num_heads=8, batch_first=True, dropout=0.1)
         self.classifier   = nn.Sequential(
             nn.Linear(d_model * 2, d_model), nn.ReLU(), nn.Dropout(0.2),
             nn.Linear(d_model, n_sectors)
