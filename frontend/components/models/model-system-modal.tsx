@@ -180,13 +180,16 @@ export function ModelSystemModal({ open, onClose, modelId, modelName }: ModelSys
   }
 
   const handleSave = async () => {
-    if (!uploadName || !uploadCode || !validated) return
+    console.log("[SAVE-DEBUG] uploadType=", uploadType, "uploadName=", uploadName, "uploadCode length=", uploadCode?.length, "validated=", validated, "editingId=", editingId)
+    if (!uploadName || !uploadCode) { toast.error("Name and content are required"); return }
+    if (uploadType !== "config" && !validated) { toast.error("Please validate before saving"); return }
     setUploading(true)
     try {
       if (uploadType === "config") {
         const ep = editingId ? "/api/vertical/configs/update" : "/api/vertical/configs/create"
         const body = editingId ? { id: editingId, name: uploadName, description: uploadDescription, config_yaml: uploadCode } : { model_id: modelId, name: uploadName, description: uploadDescription, config_yaml: uploadCode }
-        await fetch(ep, { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(body) })
+        const res = await fetch(ep, { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(body) })
+        if (!res.ok) throw new Error("Failed to save configuration")
       } else if (editingId) {
         const ep = uploadType === "tool" ? "/api/vertical/tools/update" : "/api/vertical/agents/update"
         const body: any = { id: editingId, code: uploadCode }; if (uploadType === "tool") body.hook = uploadHook
@@ -420,7 +423,7 @@ export function ModelSystemModal({ open, onClose, modelId, modelName }: ModelSys
             <Button variant="outline" size="sm" onClick={handleValidate} disabled={validating || !uploadCode}>
               {validating ? "Validating..." : validated ? <><Check className="h-3 w-3 mr-1 text-emerald-500" />Validated</> : "Validate"}
             </Button>
-            <Button size="sm" onClick={handleSave} disabled={uploading || !uploadName || !uploadCode || !validated} className="bg-[#0052CC] text-white hover:bg-[#003D99]">{uploading ? "Saving..." : "Save"}</Button>
+            <Button size="sm" onClick={handleSave} disabled={uploading || !uploadName || !uploadCode || (uploadType !== "config" && !validated)} className="bg-[#0052CC] text-white hover:bg-[#003D99]">{uploading ? "Saving..." : "Save"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

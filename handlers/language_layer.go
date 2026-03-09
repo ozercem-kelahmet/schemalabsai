@@ -1388,18 +1388,9 @@ func ListAvailableModelsHandler(w http.ResponseWriter, r *http.Request) {
 		models = append(models, geminiModels...)
 	}
 
-	// Mistral - fetch from API, fallback to defaults
-	mistralKey := os.Getenv("MISTRAL_API_KEY")
-	if mistralKey != "" {
-		mistralModels := fetchMistralModels(mistralKey)
-		if len(mistralModels) > 0 {
-			models = append(models, mistralModels...)
-		} else {
-			models = append(models, defaultMistralModels()...)
-		}
-	} else {
-		models = append(models, defaultMistralModels()...)
-	}
+	// Schema branded models only (powered by Mistral)
+	models = append(models, defaultMistralModels()...)
+
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(models)

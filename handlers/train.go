@@ -1561,8 +1561,10 @@ if req.ConnectionIDs != "" {
 				} else if terr == nil { tResp.Body.Close() }
 			}
 			log.Printf("📡 Databricks: found %d tables in catalog %s", len(dbTables), dbCatalog)
+			if selectedMap != nil { log.Printf("[DB-DEBUG] selectedMap=%v", selectedMap) }
+			if len(dbTables) > 0 { log.Printf("[DB-DEBUG] dbTables sample: %v", dbTables[:1]) }
 			for _, tableFull := range dbTables {
-				if selectedMap != nil && !selectedMap[tableFull] { continue }
+				if selectedMap != nil && !selectedMap[tableFull] { log.Printf("[DB-DEBUG] SKIP table=%s", tableFull); continue }
 				query := fmt.Sprintf("SELECT * FROM %s.%s LIMIT 10000", dbCatalog, tableFull)
 				reqBody, _ := json.Marshal(map[string]interface{}{"statement": query, "warehouse_id": warehouseID})
 				sqlReq, _ := http.NewRequest("POST", dbWorkspaceURL+"/api/2.0/sql/statements", bytes.NewReader(reqBody))
@@ -1582,6 +1584,20 @@ if req.ConnectionIDs != "" {
 				}
 				json.NewDecoder(sqlResp.Body).Decode(&sqlResult)
 				sqlResp.Body.Close()
+				// Databricks PENDING/RUNNING durumunu handle et - retry
+				if len(sqlResult.Result.DataArray) == 0 {
+					log.Printf("[DATABRICKS] Empty result for %s, retrying in 3s...", tableFull)
+					time.Sleep(3 * time.Second)
+					sqlReq2, _ := http.NewRequest("POST", dbWorkspaceURL+"/api/2.0/sql/statements", bytes.NewReader(reqBody))
+					sqlReq2.Header.Set("Authorization", "Bearer "+conn.APIKey)
+					sqlReq2.Header.Set("Content-Type", "application/json")
+					sqlResp2, serr2 := httpClient.Do(sqlReq2)
+					if serr2 == nil {
+						json.NewDecoder(sqlResp2.Body).Decode(&sqlResult)
+						sqlResp2.Body.Close()
+						log.Printf("[DATABRICKS] Retry result for %s: %d rows", tableFull, len(sqlResult.Result.DataArray))
+					}
+				}
 				if len(sqlResult.Result.DataArray) > 0 {
 					csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, strings.ReplaceAll(tableFull, ".", "_"))
 					csvFile, _ := os.Create(csvPath)
@@ -2123,10 +2139,12 @@ if selectedTableName != "" {
 	}
 
 	if len(filePaths) == 0 {
-	trainingProgress.Status = "idle"
-	trainingProgress.Epoch = 0
-	trainingProgress.Accuracy = 0
-	trainingProgress.Loss = 0
+trainingProgressMu.Lock()
+trainingProgress = &TrainingProgressEntry{}
+trainingProgressMu.Unlock()
+// Mark any "training" models for this user as failed
+DB.Model(&FineTunedModel{}).Where("user_id = ? AND status = ?", userID, "training").Updates(map[string]interface{}{"status": "failed"})
+log.Printf("No files found - marked training models as failed for user %s", userID)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{
@@ -2217,11 +2235,21 @@ w.Header().Set("Content-Type", "application/json")
 json.NewEncoder(w).Encode(map[string]interface{}{"status": "training", "model_id": preModelID, "model_name": req.ModelName, "query_id": req.QueryID})
 
 go func() {
+// SAFETY: Her panic/error'da model failed yapılsın
+defer func() {
+	if r := recover(); r != nil {
+		log.Printf("GOROUTINE PANIC for model %s: %v", preModelID, r)
+		DB.Model(&FineTunedModel{}).Where("id = ?", preModelID).Updates(map[string]interface{}{"status": "failed"})
+		trainingProgressMu.Lock()
+		if trainingProgress.ModelID == preModelID { trainingProgress = &TrainingProgressEntry{} }
+		trainingProgressMu.Unlock()
+	}
+}()
 httpClient := &http.Client{Timeout: 18000 * time.Second}
 resp, err := httpClient.Do(httpReq)
 if err != nil {
 log.Printf("Flask call failed for model %s: %v", preModelID, err)
-DB.Model(&FineTunedModel{}).Where("id = ?", preModelID).Update("status", "failed")
+DB.Model(&FineTunedModel{}).Where("id = ?", preModelID).Updates(map[string]interface{}{"status": "failed"})
 trainingProgressMu.Lock()
 if trainingProgress.ModelID == preModelID { trainingProgress = &TrainingProgressEntry{} }
 trainingProgressMu.Unlock()
@@ -2367,17 +2395,15 @@ if status, ok := flaskResp["status"].(string); ok && (status == "queued" || stat
 	})
 	dbModelID = preModelID
 	log.Printf("Training queued/in-progress for model %s - keeping status=training", preModelID)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": "training",
-		"model_id": preModelID,
-		"message": "Training in progress",
-	})
+	log.Printf("Training queued/in-progress for model %s - goroutine continuing", preModelID)
 	return
 }
 if accuracy == 0 {
 	ftModel.Status = "failed"
 	log.Printf("Training returned accuracy 0 - marking as failed")
+	trainingProgressMu.Lock()
+	if trainingProgress.ModelID == preModelID { trainingProgress = &TrainingProgressEntry{} }
+	trainingProgressMu.Unlock()
 } else {
 	ftModel.Status = "active"
 }
@@ -2422,7 +2448,7 @@ log.Printf("MULTI EMAIL SENT to %s", user.Email)
 }
 }
 }()
-	w.Header().Set("Content-Type", "application/json")
+	// w kullanma - response zaten gonderildi (goroutine icindeyiz)
 	epochs := 0
 	if e, ok := flaskResp["epochs"].(float64); ok {
 		epochs = int(e)
@@ -2430,14 +2456,11 @@ log.Printf("MULTI EMAIL SENT to %s", user.Email)
 	
 
 	if errMsg, ok := flaskResp["error"].(string); ok && errMsg != "" {
+		log.Printf("Flask returned error for model %s: %s", preModelID, errMsg)
 		trainingProgressMu.Lock()
 		trainingProgress.Status = "failed"
 		trainingProgressMu.Unlock()
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status": "failed",
-			"error": errMsg,
-		})
+		DB.Model(&FineTunedModel{}).Where("id = ?", preModelID).Updates(map[string]interface{}{"status": "failed"})
 		return
 	}
 
@@ -2866,6 +2889,13 @@ userID := r.Header.Get("X-User-ID")
 if userID != "" {
 var trainingModel FineTunedModel
 if DB.Where("user_id = ? AND status = ?", userID, "training").Order("created_at desc").First(&trainingModel).Error == nil {
+// Stale check: 5dk'dan eski "training" model varsa failed yap
+if time.Since(trainingModel.CreatedAt) > 5*time.Minute {
+log.Printf("Stale training model found: %s (created %v ago), marking as failed", trainingModel.ID, time.Since(trainingModel.CreatedAt))
+DB.Model(&trainingModel).Updates(map[string]interface{}{"status": "failed"})
+json.NewEncoder(w).Encode(map[string]interface{}{"status": "idle"})
+return
+}
 json.NewEncoder(w).Encode(map[string]interface{}{
 "status": "training",
 "model_id": trainingModel.ID,
@@ -3099,7 +3129,7 @@ func StartTrainingChecker() {
 				resp, err := client.Get(GetFlaskURL() + "/training/progress?query_id=" + m.ID)
 				if err != nil {
 					// Flask unreachable - if model older than 30 min, mark failed
-					if time.Since(m.CreatedAt) > 30*time.Minute {
+					if time.Since(m.CreatedAt) > 10*time.Minute {
 						DB.Model(&m).Updates(map[string]interface{}{"status": "failed"})
 						log.Printf("Stale training checker: marked %s as failed (Flask unreachable, 30min+)", m.ID)
 					}
@@ -3129,7 +3159,7 @@ func StartTrainingChecker() {
 						emailService.SendTrainingComplete(user.Email, m.Name, acc)
 					}
 				} else if status == "failed" || status == "idle" {
-					if time.Since(m.CreatedAt) > 30*time.Minute {
+					if time.Since(m.CreatedAt) > 10*time.Minute {
 						DB.Model(&m).Updates(map[string]interface{}{"status": "failed"})
 						log.Printf("Stale training checker: marked %s as failed (status=%s)", m.ID, status)
 					}

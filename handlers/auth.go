@@ -599,6 +599,7 @@ func ListConnectionsHandler(w http.ResponseWriter, r *http.Request) {
 			"endpoint":   c.Endpoint,
 			"bucket":     c.Bucket,
 			"status":     c.Status,
+"selected_tables": c.SelectedTables,
 "rate_limit": c.RateLimit,
 			"rate_limit_daily": c.RateLimitDaily,
 			"rate_limit_remaining": c.RateLimitRemaining,
@@ -1497,6 +1498,8 @@ log.Printf("🔍 Snowflake SHOW TABLES: err=%v", err)
 			schReq, _ := http.NewRequest("GET", workspaceURL+"/api/2.1/unity-catalog/schemas?catalog_name="+catalog, nil)
 			schReq.Header.Set("Authorization", "Bearer "+conn.APIKey)
 			schResp, serr := httpClient.Do(schReq)
+			if serr != nil { log.Printf("[DATABRICKS-LIST] Schema request error: %v", serr) }
+			if serr == nil { log.Printf("[DATABRICKS-LIST] Schema response status=%d catalog=%s host=%s", schResp.StatusCode, catalog, workspaceURL) }
 			var schemaNames []string
 			if serr == nil && schResp.StatusCode == 200 {
 				var schResult struct {
@@ -1515,7 +1518,29 @@ log.Printf("🔍 Snowflake SHOW TABLES: err=%v", err)
 				schResp.Body.Close()
 			}
 			if len(schemaNames) == 0 {
-				schemaNames = []string{"default"}
+				// Unity Catalog 404 - fallback: SQL API ile SHOW SCHEMAS
+				wID := conn.Endpoint
+				if strings.Contains(wID, "/") { pp := strings.Split(wID, "/"); wID = pp[len(pp)-1] }
+				if wID != "" {
+					showBody, _ := json.Marshal(map[string]interface{}{"statement": "SHOW SCHEMAS IN " + catalog, "warehouse_id": wID, "wait_timeout": "30s"})
+					showReq, _ := http.NewRequest("POST", workspaceURL+"/api/2.0/sql/statements", bytes.NewReader(showBody))
+					showReq.Header.Set("Authorization", "Bearer "+conn.APIKey)
+					showReq.Header.Set("Content-Type", "application/json")
+					showResp, showErr := httpClient.Do(showReq)
+					if showErr == nil && showResp.StatusCode == 200 {
+						var showResult struct { Result struct { DataArray [][]string `json:"data_array"` } `json:"result"` }
+						json.NewDecoder(showResp.Body).Decode(&showResult)
+						showResp.Body.Close()
+						for _, row := range showResult.Result.DataArray {
+							if len(row) > 0 && row[0] != "information_schema" {
+								schemaNames = append(schemaNames, row[0])
+							}
+						}
+						log.Printf("[DATABRICKS-LIST] SQL fallback found %d schemas", len(schemaNames))
+					} else if showErr == nil { showResp.Body.Close() }
+				}
+				if len(schemaNames) == 0 { schemaNames = []string{"default"} }
+				log.Printf("[DATABRICKS-LIST] No schemas found, using default")
 			}
 			for _, schema := range schemaNames {
 				tReq, _ := http.NewRequest("GET", workspaceURL+"/api/2.1/unity-catalog/tables?catalog_name="+catalog+"&schema_name="+schema, nil)

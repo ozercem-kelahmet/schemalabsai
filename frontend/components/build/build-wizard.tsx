@@ -64,6 +64,30 @@ export function BuildWizard() {
         const res = await fetch(url, { credentials: "include" })
         const progress = await res.json()
         if (progress.status === "training" && (progress.model_id || progress.epoch > 0)) {
+          // Stale check: 5dk + epoch=0 = dead training
+          const _st = progress.start_time || 0
+          const _el = _st > 0 ? Math.floor(Date.now() / 1000 - _st) : 0
+          if (_el > 300 && progress.epoch === 0) {
+            console.log("Stale training detected (>5min, epoch=0)")
+            localStorage.removeItem("trainingMetricsHistory")
+            localStorage.removeItem("trainingLogs")
+            localStorage.removeItem("trainingCurrentMetrics")
+            localStorage.removeItem("trainingTotalEpochs")
+            localStorage.removeItem("trainingStartTime")
+            return
+          }
+          // Stale check: start_time 5dk'dan eski ve epoch hala 0 ise stale
+          const startTime = progress.start_time || 0
+          const elapsed = startTime > 0 ? Math.floor(Date.now() / 1000 - startTime) : 0
+          if (elapsed > 300 && progress.epoch === 0) {
+            console.log("Stale training detected (>5min, epoch=0), ignoring")
+            localStorage.removeItem("trainingMetricsHistory")
+            localStorage.removeItem("trainingLogs")
+            localStorage.removeItem("trainingCurrentMetrics")
+            localStorage.removeItem("trainingTotalEpochs")
+            localStorage.removeItem("trainingStartTime")
+            return
+          }
           trainingStartedRef.current = true
           // Restore history from Redis data for charts after refresh
           if (progress.history && progress.history.length > 0) {

@@ -55,7 +55,20 @@ export default function DashboardPage() {
             // @ts-ignore
             const connectionsData = await connectionsRes.json()
             const connections = connectionsData.connections || []
-            allDatasets = [...allDatasets, ...connections]
+            // Count selected tables per connection, not just 1 per connection
+            for (const conn of connections) {
+              let selectedTables: string[] = []
+              try {
+                if (conn.selected_tables) selectedTables = JSON.parse(conn.selected_tables)
+              } catch {}
+              if (selectedTables.length > 0) {
+                for (const t of selectedTables) {
+                  allDatasets.push({ ...conn, id: conn.id + "::" + t, name: conn.name + " - " + t })
+                }
+              } else {
+                allDatasets.push(conn)
+              }
+            }
           }
           
           setDatasets(allDatasets)

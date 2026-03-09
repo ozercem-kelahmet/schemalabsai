@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -24,7 +25,7 @@ type VerticalConfig struct {
 	Version         int       `json:"version" gorm:"default:1"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
-	LanguageConfig  string    `json:"language_config" gorm:"type:jsonb"`
+	LanguageConfig  string    `json:"language_config" gorm:"type:jsonb;default:'{}'"`
 }
 
 // ─── Language Layer Models ───
@@ -102,10 +103,12 @@ func ListVerticalConfigsHandler(w http.ResponseWriter, r *http.Request) {
 	if userID == "" { http.Error(w, "Unauthorized", 401); return }
 
 	modelID := r.URL.Query().Get("model_id")
+	log.Printf("[VERTICAL-LIST] userID=%s modelID=%s", userID, modelID)
 	var configs []VerticalConfig
 	q := DB.Where("user_id = ?", userID)
 	if modelID != "" { q = q.Where("model_id = ?", modelID) }
 	q.Order("created_at desc").Find(&configs)
+	log.Printf("[VERTICAL-LIST] found %d configs for modelID=%s", len(configs), modelID)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(configs)
@@ -129,6 +132,7 @@ func CreateVerticalConfigHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "model_id and name required", 400); return
 	}
 
+	if req.ConfigYAML == "" { req.ConfigYAML = "{}" }
 	config := VerticalConfig{
 		ID:         uuid.New().String(),
 		UserID:     userID,
@@ -136,12 +140,18 @@ func CreateVerticalConfigHandler(w http.ResponseWriter, r *http.Request) {
 		Name:       req.Name,
 		Description: req.Description,
 		ConfigYAML: req.ConfigYAML,
+		LanguageConfig: "{}",
 		Enabled:    true,
 		Version:    1,
 		CreatedAt:  time.Now(),
 		UpdatedAt:  time.Now(),
 	}
-	DB.Create(&config)
+	if err := DB.Create(&config).Error; err != nil {
+		log.Printf("[VERTICAL-CREATE] DB ERROR: %v", err)
+		http.Error(w, "DB error: "+err.Error(), 500)
+		return
+	}
+	log.Printf("[VERTICAL-CREATE] id=%s modelID=%s name=%s userID=%s", config.ID, config.ModelID, config.Name, config.UserID)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(config)
