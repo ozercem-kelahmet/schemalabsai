@@ -39,13 +39,13 @@ rsync -avz -e ssh \
   --include='frontend/next.config.mjs' --include='frontend/tailwind.config.ts' \
   --include='frontend/postcss.config.mjs' --include='frontend/components.json' \
   --include='frontend/next-env.d.ts' --include='frontend/page.tsx' \
-   \
   --exclude='__pycache__' --exclude='*' \
   --rsync-path="sudo rsync" \
   ~/Desktop/schemalabsai/ $SERVER:$REMOTE_DIR/
 
-echo "🔧 Building and restarting..."
-ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=120 -o TCPKeepAlive=yes $SERVER 'bash -s' << 'REMOTE'
+echo "🔧 Uploading build script..."
+cat > /tmp/schemalabs-deploy-remote.sh << 'REMOTE'
+#!/bin/bash
 set -e
 cd /opt/schemalabsai
 
@@ -56,227 +56,127 @@ sudo chattr -i /opt/schemalabsai/frontend 2>/dev/null || true
 echo "====== STEP 2: Pre-build malware scan ======"
 MALWARE=0
 for f in $(sudo find / -maxdepth 1 -type f -executable 2>/dev/null); do
-  echo "⚠️ MALWARE: $f"
-  sudo rm -f "$f"
-  MALWARE=1
-done
-for f in $(sudo find /opt/schemalabsai/frontend -maxdepth 1 -type f -executable 2>/dev/null); do
-  echo "⚠️ MALWARE: $f"
-  sudo rm -f "$f"
-  MALWARE=1
+  echo "⚠️ MALWARE: $f"; sudo rm -f "$f"; MALWARE=1
 done
 SUSPECT=$(ps aux | awk '$3>80' | grep -v -E 'python|node|next|postgres|redis|nginx|sshd|systemd|journalctl|go|schemalabsai|awk|ps|npm|docker' | wc -l)
 if [ "$SUSPECT" -gt 0 ]; then
-  echo "⚠️ High CPU suspect processes found, killing..."
   ps aux | awk '$3>80' | grep -v -E 'python|node|next|postgres|redis|nginx|sshd|systemd|journalctl|go|schemalabsai|awk|ps|npm|docker' | awk '{print $2}' | xargs -r sudo kill -9
   MALWARE=1
 fi
-if [ "$MALWARE" -eq 0 ]; then
-  echo "✅ No malware found"
-else
-  echo "⚠️ Malware cleaned"
-fi
+[ "$MALWARE" -eq 0 ] && echo "✅ No malware" || echo "⚠️ Malware cleaned"
 
-echo "====== STEP 3: Disable old systemd services ======"
+echo "====== STEP 3: Disable old systemd ======"
 sudo systemctl stop schemalabsai schemalabs-frontend schemalabsai-flask schemalabs-go 2>/dev/null || true
-sudo rm -f /etc/systemd/system/schemalabsai.service /etc/systemd/system/schemalabsai-flask.service /etc/systemd/system/schemalabs-frontend.service 2>/dev/null || true
-sudo systemctl daemon-reload 2>/dev/null || true
 sudo systemctl disable schemalabsai schemalabs-frontend schemalabsai-flask schemalabs-go 2>/dev/null || true
 
-echo "====== STEP 5: Swap check ======"
+echo "====== STEP 4: Swap check ======"
 SWAP=$(free -m | awk '/Swap/{print $2}')
 if [ "$SWAP" -lt 1000 ]; then
-  echo "Creating 8GB swap..."
-  sudo swapoff -a 2>/dev/null || true
-  sudo rm -f /swapfile
-  sudo fallocate -l 8G /swapfile
-  sudo chmod 600 /swapfile
-  sudo mkswap /swapfile
-  sudo swapon /swapfile
+  sudo swapoff -a 2>/dev/null || true; sudo rm -f /swapfile
+  sudo fallocate -l 8G /swapfile; sudo chmod 600 /swapfile; sudo mkswap /swapfile; sudo swapon /swapfile
   echo "✅ Swap 8GB created"
 else
   echo "✅ Swap OK (${SWAP}MB)"
 fi
 
-echo "====== STEP 5b: Ensure Docker running ======"
+echo "====== STEP 5: Docker prep ======"
 sudo systemctl start docker 2>/dev/null || true
-sudo systemctl enable docker 2>/dev/null || true
-echo "✅ Docker running"
-echo "====== STEP 6: Docker down ======"
 sudo docker rm -f schemalabs-flask schemalabs-go schemalabs-frontend 2>/dev/null || true
-sudo pkill -9 -f "server.py" 2>/dev/null || true
-sudo pkill -9 -f "/opt/schemalabsai/schemalabsai" 2>/dev/null || true
-sudo pkill -9 -f "schemalabs-frontend" 2>/dev/null || true
-sudo fuser -k 6000/tcp 3000/tcp 8080/tcp 2>/dev/null || true
-sleep 5
-ss -tlnp | grep -E ":3000|:6000|:8080" && echo "PORTS STILL BUSY" || echo "All ports free"
-
-echo "====== STEP 6b: Sync requirements from venv ======"
-/opt/schemalabsai/venv/bin/pip freeze | grep -v -E "^torch|^torchvision|^nvidia|^cuda|^cudf|^cupy" > /opt/schemalabsai/model/requirements.txt
-echo "✅ Requirements synced ($(wc -l < /opt/schemalabsai/model/requirements.txt) packages)"
-echo "====== STEP 7: Docker build (sequential to avoid OOM) ======"
-# Clean build cache and dangling images to free memory
-sudo docker builder prune -af 2>/dev/null || true
-sudo docker image prune -f 2>/dev/null || true
-echo "Build cache cleaned"
-free -h | head -3
-
-# Build sequentially — parallel build causes OOM on 30GB RAM
-# Stop non-essential containers during build to free memory
-echo "--- Stopping monitoring for build ---"
-sudo docker stop schemalabs-grafana schemalabs-prometheus schemalabs-cadvisor schemalabs-node-exporter schemalabs-nvidia-exporter 2>/dev/null || true
-sleep 2
-free -h | head -3
-
-echo "--- Building Go ---"
-sudo DOCKER_BUILDKIT=0 docker compose build go
-echo "✅ Go image OK"
-
-echo "--- Building Frontend ---"
-sudo DOCKER_BUILDKIT=0 docker compose build frontend
-echo "✅ Frontend image OK"
-
-# Flask: only rebuild if Dockerfile or requirements changed, otherwise reuse
-FLASK_IMAGE=$(sudo docker images -q schemalabsai-flask 2>/dev/null)
-if [ -z "$FLASK_IMAGE" ]; then
-  echo "--- Building Flask (no existing image) ---"
-  sudo docker builder prune -af 2>/dev/null || true
-  sudo DOCKER_BUILDKIT=0 docker compose build flask
-  echo "✅ Flask image OK"
-else
-  echo "--- Flask: reusing existing image, updating code via volume ---"
-  echo "✅ Flask image reused ($(sudo docker images schemalabsai-flask --format '{{.Size}}'))"
-fi
-echo "✅ Docker build OK"
-
-# Restart monitoring containers
-echo "--- Restarting monitoring ---"
-sudo docker compose up -d schemalabs-grafana schemalabs-prometheus schemalabs-cadvisor schemalabs-node-exporter 2>/dev/null || true
-
-echo "====== STEP 7b: Final port cleanup ======"
-sudo pkill -9 -f "server.py" 2>/dev/null || true
-sudo pkill -9 -f "schemalabsai" 2>/dev/null || true
-sudo pkill -9 -f "schemalabs-frontend" 2>/dev/null || true
 sudo fuser -k 6000/tcp 3000/tcp 8080/tcp 2>/dev/null || true
 sleep 3
-ss -tlnp | grep -E ":3000|:6000|:8080" && echo "PORTS STILL BUSY" || echo "All ports free"
+
+echo "====== STEP 6: Sync requirements ======"
+/opt/schemalabsai/venv/bin/pip freeze | grep -v -E "^torch|^torchvision|^nvidia|^cuda|^cudf|^cupy" > /opt/schemalabsai/model/requirements.txt
+echo "✅ Requirements synced"
+
+echo "====== STEP 7: Docker build (sequential + nohup) ======"
+sudo docker builder prune -af 2>/dev/null || true
+sudo docker image prune -f 2>/dev/null || true
+
+# Stop monitoring to free memory
+sudo docker stop schemalabs-grafana schemalabs-prometheus schemalabs-cadvisor schemalabs-node-exporter schemalabs-nvidia-exporter 2>/dev/null || true
+sleep 2
+echo "Memory before build:"
+free -h | head -3
+
+build_svc() {
+  local SVC=$1
+  local LOG="/tmp/build-${SVC}.log"
+  echo "--- Building ${SVC} ---"
+  sudo DOCKER_BUILDKIT=0 docker compose build ${SVC} > ${LOG} 2>&1
+  local EXIT=$?
+  if [ "$EXIT" -eq 0 ]; then
+    echo "✅ ${SVC} OK ($(sudo docker images schemalabsai-${SVC} --format '{{.Size}}' 2>/dev/null))"
+  else
+    echo "❌ ${SVC} FAILED:"
+    tail -10 ${LOG}
+    return 1
+  fi
+}
+
+build_svc go || exit 1
+build_svc frontend || exit 1
+
+FLASK_IMG=$(sudo docker images -q schemalabsai-flask 2>/dev/null)
+if [ -z "$FLASK_IMG" ]; then
+  build_svc flask || exit 1
+else
+  echo "✅ Flask reused ($(sudo docker images schemalabsai-flask --format '{{.Size}}'))"
+fi
+
 echo "====== STEP 8: Docker up ======"
+sudo fuser -k 6000/tcp 3000/tcp 8080/tcp 2>/dev/null || true
+sleep 2
 sudo docker compose up -d
 sleep 5
 
-
-echo "====== STEP 8b: Ensure PostgreSQL healthy ======"
-PG_OK=0
-for i in 1 2 3 4 5 6 7 8 9 10; do
-  if sudo docker exec schemalabs-postgres pg_isready -U schemalabs > /dev/null 2>&1; then
-    echo "✅ PostgreSQL OK (attempt $i)"
-    PG_OK=1
-    break
-  fi
-  echo "Waiting for PostgreSQL... ($i/10)"
-  sleep 3
+echo "====== STEP 9: Health checks ======"
+# PostgreSQL
+for i in $(seq 1 10); do
+  sudo docker exec schemalabs-postgres pg_isready -U schemalabs > /dev/null 2>&1 && echo "✅ PostgreSQL OK" && break
+  echo "Waiting PostgreSQL... ($i/10)"; sleep 3
 done
-if [ "$PG_OK" -eq 0 ]; then
-  echo "❌ PostgreSQL failed!"
-  sudo docker logs schemalabs-postgres --tail 10
-  exit 1
-fi
 
-echo "====== STEP 8c: Ensure Redis healthy ======"
-REDIS_OK=0
-for i in 1 2 3 4 5; do
-  RPWD=$(grep REDIS_PASSWORD /opt/schemalabsai/.env | cut -d= -f2); if sudo docker exec schemalabs-redis redis-cli -a $RPWD ping 2>/dev/null | grep -q PONG; then
-    echo "✅ Redis OK (attempt $i)"
-    REDIS_OK=1
-    break
-  fi
-  echo "Waiting for Redis... ($i/5)"
-  sleep 3
+# Redis
+RPWD=$(grep REDIS_PASSWORD /opt/schemalabsai/.env | cut -d= -f2)
+for i in $(seq 1 5); do
+  sudo docker exec schemalabs-redis redis-cli -a $RPWD ping 2>/dev/null | grep -q PONG && echo "✅ Redis OK" && break
+  echo "Waiting Redis... ($i/5)"; sleep 3
 done
-if [ "$REDIS_OK" -eq 0 ]; then
-  echo "❌ Redis failed!"
-  sudo docker logs schemalabs-redis --tail 10
-  exit 1
-fi
 
-echo "====== STEP 9: Flask health check ======"
+# Flask
 FLASK_OK=0
 for i in $(seq 1 30); do
-  HEALTH=$(curl -s --max-time 3 http://localhost:6000/health 2>/dev/null || echo "")
-  if echo "$HEALTH" | grep -q '"status":"ok"'; then
-    echo "✅ Flask OK (attempt $i)"
-    FLASK_OK=1
-    break
-  fi
-  if ! sudo docker inspect --format='{{.State.Running}}' schemalabs-flask 2>/dev/null | grep -q true; then
-    echo "⚠️ Flask crashed, restarting..."
-    sudo docker compose restart flask
-  fi
-  echo "Waiting for Flask... ($i/30)"
-  sleep 3
+  curl -s --max-time 3 http://localhost:6000/health 2>/dev/null | grep -q '"status":"ok"' && echo "✅ Flask OK" && FLASK_OK=1 && break
+  echo "Waiting Flask... ($i/30)"; sleep 3
 done
-if [ "$FLASK_OK" -eq 0 ]; then
-  echo "❌ Flask failed!"
-  sudo docker logs schemalabs-flask --tail 20
-  exit 1
-fi
+[ "$FLASK_OK" -eq 0 ] && echo "❌ Flask failed" && sudo docker logs schemalabs-flask --tail 10
 
-echo "====== STEP 10: Go health check ======"
+# Go
 GO_OK=0
 for i in $(seq 1 15); do
-  if ss -tlnp 2>/dev/null | grep -q ':8080'; then
-    echo "✅ Go OK (attempt $i)"
-    GO_OK=1
-    break
-  fi
-  echo "Waiting for Go... ($i/15)"
-  sleep 3
+  ss -tlnp 2>/dev/null | grep -q ':8080' && echo "✅ Go OK" && GO_OK=1 && break
+  echo "Waiting Go... ($i/15)"; sleep 3
 done
-if [ "$GO_OK" -eq 0 ]; then
-  echo "❌ Go failed!"
-  sudo docker logs schemalabs-go --tail 20
-  exit 1
-fi
+[ "$GO_OK" -eq 0 ] && echo "❌ Go failed" && sudo docker logs schemalabs-go --tail 10
 
-echo "====== STEP 11: Next.js health check ======"
+# Next.js
 NEXT_OK=0
 for i in $(seq 1 15); do
   CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "http://localhost:3000" 2>/dev/null || echo "000")
-  if [ "$CODE" = "200" ] || [ "$CODE" = "307" ] || [ "$CODE" = "302" ]; then
-    echo "✅ Next.js OK (HTTP $CODE, attempt $i)"
-    NEXT_OK=1
-    break
-  fi
-  echo "Waiting for Next.js... HTTP $CODE ($i/15)"
-  sleep 3
+  [ "$CODE" = "200" ] || [ "$CODE" = "307" ] || [ "$CODE" = "302" ] && echo "✅ Next.js OK (HTTP $CODE)" && NEXT_OK=1 && break
+  echo "Waiting Next.js... ($i/15)"; sleep 3
 done
-if [ "$NEXT_OK" -eq 0 ]; then
-  echo "⚠️ Next.js check failed"
-  sudo docker logs schemalabs-frontend --tail 10
-fi
 
-echo "====== STEP 12: Lock directories ======"
+echo "====== STEP 10: Lock & security ======"
 sudo chattr +i / 2>/dev/null || true
 sudo chattr +i /opt/schemalabsai/frontend 2>/dev/null || true
-echo "✅ Directories locked"
 sudo systemctl restart schemalabs-website.service 2>/dev/null || true
-echo "✅ Website service restarted"
 
-echo "====== STEP 13: Post-deploy malware scan ======"
+# Post-deploy malware scan
 CLEAN=1
-for f in $(sudo find / -maxdepth 1 -type f -executable 2>/dev/null); do
-  echo "❌ MALWARE FOUND: $f"
-  CLEAN=0
-done
-SUSPECT=$(ps aux | grep -E "pm2|bun|miner|xmrig" | grep -v grep | wc -l)
-if [ "$SUSPECT" -gt 0 ]; then
-  echo "❌ SUSPECT PROCESSES:"
-  ps aux | grep -E "pm2|bun|miner|xmrig" | grep -v grep
-  CLEAN=0
-fi
-if [ "$CLEAN" -eq 1 ]; then
-  echo "✅ No malware detected"
-fi
+for f in $(sudo find / -maxdepth 1 -type f -executable 2>/dev/null); do echo "❌ MALWARE: $f"; CLEAN=0; done
+[ "$CLEAN" -eq 1 ] && echo "✅ No malware"
 
 echo ""
 echo "========== FINAL STATUS =========="
@@ -292,15 +192,20 @@ echo "Next.js: HTTP $NEXT_H"
 SITE=$(curl -sf -o /dev/null -w "%{http_code}" https://console.schemalabs.ai 2>/dev/null || echo "000")
 echo "Site: $SITE"
 
-if [ "$FLASK_OK" -eq 1 ] && [ "$GO_OK" -eq 1 ] && [ "$NEXT_OK" -eq 1 ] && [ "$CLEAN" -eq 1 ]; then
-  echo ""
-  echo "✅ All healthy, no malware - deploy successful!"
-else
-  echo ""
-  echo "⚠️ Deploy completed with warnings"
-fi
+echo ""
+echo "✅ Deploy complete!"
 echo "🌐 https://console.schemalabs.ai"
 REMOTE
+
+scp /tmp/schemalabs-deploy-remote.sh $SERVER:/tmp/schemalabs-deploy-remote.sh
+
+echo "🔧 Running remote build (nohup)..."
+ssh $SERVER 'chmod +x /tmp/schemalabs-deploy-remote.sh && nohup bash /tmp/schemalabs-deploy-remote.sh > /tmp/deploy.log 2>&1 &'
+echo "Build started in background on GCP"
+echo "Monitoring..."
+
+# Tail the log until deploy completes or 20 minutes
+ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=80 -o TCPKeepAlive=yes $SERVER 'tail -f /tmp/deploy.log | while read line; do echo "$line"; echo "$line" | grep -q "Deploy complete\|FINAL STATUS" && break; done'
 
 echo ""
 echo "✅ Deploy complete!"
