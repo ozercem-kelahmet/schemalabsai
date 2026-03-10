@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Upload, Globe, Database, FileUp, Check, Cloud, ArrowLeft, X } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -453,10 +454,14 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
                     <span>Fetching catalogs...</span>
                   </div>
                 ) : databricksCatalogs.length > 0 ? (
-                  <select value={dbName} onChange={(e) => setDbName(e.target.value)} className="w-full h-9 rounded-md border border-border bg-card px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-[#0052CC] focus:border-[#0052CC]">
-                    <option value="">Select catalog...</option>
-                    {databricksCatalogs.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
+                  <Select value={dbName} onValueChange={(v) => setDbName(v)}>
+                    <SelectTrigger className="w-full bg-card border-border text-foreground">
+                      <SelectValue placeholder="Select catalog..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {databricksCatalogs.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
                 ) : (
                   <Input value={dbName} onChange={(e) => setDbName(e.target.value)} placeholder="main" className="bg-card border-border text-foreground" />
                 )}
