@@ -131,7 +131,7 @@ build_svc() {
   local SVC=$1
   local LOG="/tmp/build-${SVC}.log"
   echo "--- Building ${SVC} ---"
-  sudo DOCKER_BUILDKIT=1 docker compose build --progress=plain ${SVC} 2>&1 | tee ${LOG} | tail -1
+  sudo DOCKER_BUILDKIT=1 docker compose build --progress=plain ${SVC} 2>&1 | tee ${LOG}
   local EXIT=${PIPESTATUS[0]}
   if [ "$EXIT" -eq 0 ]; then
     echo "${SVC} OK ($(sudo docker images schemalabsai-${SVC} --format '{{.Size}}' 2>/dev/null))"
