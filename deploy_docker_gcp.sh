@@ -92,8 +92,8 @@ DF
 scp /tmp/Dockerfile.frontend $SERVER:/tmp/Dockerfile.frontend
 ssh $SERVER 'sudo cp /tmp/Dockerfile.frontend /opt/schemalabsai/docker/Dockerfile.frontend'
 
-# Compose: wget -> curl, healthcheck fix
-ssh $SERVER 'sudo sed -i "s|wget -qO- http://localhost:3000|curl -sf http://localhost:3000|g" /opt/schemalabsai/docker-compose.yml'
+# Compose fixes (idempotent)
+ssh $SERVER 'sudo sed -i "s|wget -qO- http://localhost:3000|curl -sf http://localhost:3000|g" /opt/schemalabsai/docker-compose.yml && grep -q "HOSTNAME=0.0.0.0" /opt/schemalabsai/docker-compose.yml || sudo sed -i "/container_name: schemalabs-frontend/{n;n;n;s/- NODE_ENV=production/- NODE_ENV=production\n      - HOSTNAME=0.0.0.0/}" /opt/schemalabsai/docker-compose.yml'
 
 echo "[OK] Dockerfile & Compose updated"
 
