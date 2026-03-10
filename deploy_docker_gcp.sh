@@ -60,8 +60,9 @@ rsync -avz -e ssh \
   ~/Desktop/schemalabsai/ $SERVER:$REMOTE_DIR/ 2>&1 | tail -1
 echo "[OK] Files synced"
 
-step 4 "Update Dockerfile.frontend"
-ssh $SERVER 'cat > /opt/schemalabsai/docker/Dockerfile.frontend << '\''DF'\''
+step 4 "Update Dockerfile & Compose"
+# Dockerfile.frontend: scp ile gonder (zsh heredoc sorun cikarmasin)
+cat > /tmp/Dockerfile.frontend << 'DF'
 FROM node:20-alpine AS deps
 WORKDIR /app
 COPY frontend/package.json frontend/package-lock.json ./
@@ -83,13 +84,18 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 USER nextjs
 EXPOSE 3000
-HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-  CMD wget -qO- http://localhost:3000 || exit 1
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
 CMD ["node", "server.js"]
-DF'
-echo "[OK] Dockerfile updated"
+DF
+scp /tmp/Dockerfile.frontend $SERVER:/tmp/Dockerfile.frontend
+ssh $SERVER 'sudo cp /tmp/Dockerfile.frontend /opt/schemalabsai/docker/Dockerfile.frontend'
+
+# Compose: wget -> curl, healthcheck fix
+ssh $SERVER 'sudo sed -i "s|wget -qO- http://localhost:3000|curl -sf http://localhost:3000|g" /opt/schemalabsai/docker-compose.yml'
+
+echo "[OK] Dockerfile & Compose updated"
 
 step 5 "Remote Build & Deploy"
 ssh -o ServerAliveInterval=10 -o ServerAliveCountMax=360 -o TCPKeepAlive=yes $SERVER << 'DEPLOY_EOF'
@@ -212,13 +218,21 @@ check_service "Flask" "curl -s --max-time 3 http://localhost:6000/health | grep 
 
 check_service "Go" "ss -tlnp | grep -q ':8080'" 15 3 || sudo docker logs schemalabs-go --tail 20
 
-check_service "Next.js" "curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost:3000 | grep -qE '200|302|307'" 15 3
+check_service "Next.js (HTTP)" "curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost:3000 | grep -qE '200|302|307'" 20 3
 
-echo "  Waiting frontend healthcheck..."
-for i in $(seq 1 12); do
+# Docker healthcheck: curl inside container
+echo "  Waiting frontend Docker healthcheck..."
+for i in $(seq 1 20); do
   STATUS=$(sudo docker inspect --format='{{.State.Health.Status}}' schemalabs-frontend 2>/dev/null || echo "unknown")
-  [ "$STATUS" = "healthy" ] && echo "[OK] Frontend healthy" && break
-  echo "  Frontend: $STATUS ($i/12)"
+  if [ "$STATUS" = "healthy" ]; then
+    echo "[OK] Frontend container healthy"
+    break
+  fi
+  if [ "$i" -eq 20 ]; then
+    echo "[WARN] Frontend healthcheck timeout - checking manually..."
+    sudo docker exec schemalabs-frontend curl -sf http://localhost:3000 > /dev/null 2>&1 && echo "[OK] Frontend responding (healthcheck may be misconfigured)" || echo "[FAIL] Frontend not responding"
+  fi
+  echo "  Frontend: $STATUS ($i/20)"
   sleep 5
 done
 
