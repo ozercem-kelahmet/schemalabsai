@@ -122,6 +122,12 @@ echo "Build cache cleaned"
 free -h | head -3
 
 # Build sequentially — parallel build causes OOM on 30GB RAM
+# Stop non-essential containers during build to free memory
+echo "--- Stopping monitoring for build ---"
+sudo docker stop schemalabs-grafana schemalabs-prometheus schemalabs-cadvisor schemalabs-node-exporter schemalabs-nvidia-exporter 2>/dev/null || true
+sleep 2
+free -h | head -3
+
 echo "--- Building Go ---"
 sudo DOCKER_BUILDKIT=0 docker compose build go
 echo "✅ Go image OK"
@@ -142,6 +148,10 @@ else
   echo "✅ Flask image reused ($(sudo docker images schemalabsai-flask --format '{{.Size}}'))"
 fi
 echo "✅ Docker build OK"
+
+# Restart monitoring containers
+echo "--- Restarting monitoring ---"
+sudo docker compose up -d schemalabs-grafana schemalabs-prometheus schemalabs-cadvisor schemalabs-node-exporter 2>/dev/null || true
 
 echo "====== STEP 7b: Final port cleanup ======"
 sudo pkill -9 -f "server.py" 2>/dev/null || true
