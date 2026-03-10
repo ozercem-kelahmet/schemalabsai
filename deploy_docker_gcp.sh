@@ -18,16 +18,11 @@ git gc --prune=now 2>/dev/null || true
 git stash pop 2>/dev/null || true
 git push origin main --force || true
 
-echo "🔨 Building Go binary locally..."
-cd ~/Desktop/schemalabsai
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o schemalabsai-linux . || { echo "❌ Local Go build failed"; exit 1; }
-echo "✅ Go binary built ($(du -h schemalabsai-linux | cut -f1))"
-
 echo "📁 Syncing files..."
 ssh $SERVER 'sudo chattr -i / 2>/dev/null; sudo chattr -i /opt/schemalabsai/frontend 2>/dev/null; sudo chattr -R -i /opt/schemalabsai/frontend/.next 2>/dev/null; sudo rm -rf /opt/schemalabsai/frontend/.next; echo "UNLOCKED"'
 
 rsync -avz -e ssh \
-  --include='main.go' --include='go.mod' --include='go.sum' --include='schemalabsai-linux' \
+  --include='main.go' --include='go.mod' --include='go.sum' \
   --include='google_credentials.json' \
   --include='.dockerignore' \
   --include='docker-compose.yml' \
@@ -128,11 +123,11 @@ free -h | head -3
 
 # Build sequentially — parallel build causes OOM on 30GB RAM
 echo "--- Building Go ---"
-sudo docker compose build go
+sudo DOCKER_BUILDKIT=0 docker compose build go
 echo "✅ Go image OK"
 
 echo "--- Building Frontend ---"
-sudo docker compose build frontend
+sudo DOCKER_BUILDKIT=0 docker compose build frontend
 echo "✅ Frontend image OK"
 
 # Flask: only rebuild if Dockerfile or requirements changed, otherwise reuse
@@ -140,7 +135,7 @@ FLASK_IMAGE=$(sudo docker images -q schemalabsai-flask 2>/dev/null)
 if [ -z "$FLASK_IMAGE" ]; then
   echo "--- Building Flask (no existing image) ---"
   sudo docker builder prune -af 2>/dev/null || true
-  sudo docker compose build flask
+  sudo DOCKER_BUILDKIT=0 docker compose build flask
   echo "✅ Flask image OK"
 else
   echo "--- Flask: reusing existing image, updating code via volume ---"
