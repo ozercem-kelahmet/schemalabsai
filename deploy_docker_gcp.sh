@@ -114,8 +114,33 @@ ss -tlnp | grep -E ":3000|:6000|:8080" && echo "PORTS STILL BUSY" || echo "All p
 echo "====== STEP 6b: Sync requirements from venv ======"
 /opt/schemalabsai/venv/bin/pip freeze | grep -v -E "^torch|^torchvision|^nvidia|^cuda|^cudf|^cupy" > /opt/schemalabsai/model/requirements.txt
 echo "✅ Requirements synced ($(wc -l < /opt/schemalabsai/model/requirements.txt) packages)"
-echo "====== STEP 7: Docker build ======"
-sudo docker compose build --no-cache frontend && sudo docker compose build
+echo "====== STEP 7: Docker build (sequential to avoid OOM) ======"
+# Clean build cache and dangling images to free memory
+sudo docker builder prune -af 2>/dev/null || true
+sudo docker image prune -f 2>/dev/null || true
+echo "Build cache cleaned"
+free -h | head -3
+
+# Build sequentially — parallel build causes OOM on 30GB RAM
+echo "--- Building Go ---"
+sudo docker compose build go
+echo "✅ Go image OK"
+
+echo "--- Building Frontend ---"
+sudo docker compose build frontend
+echo "✅ Frontend image OK"
+
+# Flask: only rebuild if Dockerfile or requirements changed, otherwise reuse
+FLASK_IMAGE=$(sudo docker images -q schemalabsai-flask 2>/dev/null)
+if [ -z "$FLASK_IMAGE" ]; then
+  echo "--- Building Flask (no existing image) ---"
+  sudo docker builder prune -af 2>/dev/null || true
+  sudo docker compose build flask
+  echo "✅ Flask image OK"
+else
+  echo "--- Flask: reusing existing image, updating code via volume ---"
+  echo "✅ Flask image reused ($(sudo docker images schemalabsai-flask --format '{{.Size}}'))"
+fi
 echo "✅ Docker build OK"
 
 echo "====== STEP 7b: Final port cleanup ======"
