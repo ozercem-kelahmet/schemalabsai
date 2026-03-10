@@ -18,11 +18,16 @@ git gc --prune=now 2>/dev/null || true
 git stash pop 2>/dev/null || true
 git push origin main --force || true
 
+echo "🔨 Building Go binary locally..."
+cd ~/Desktop/schemalabsai
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o schemalabsai-linux . || { echo "❌ Local Go build failed"; exit 1; }
+echo "✅ Go binary built ($(du -h schemalabsai-linux | cut -f1))"
+
 echo "📁 Syncing files..."
 ssh $SERVER 'sudo chattr -i / 2>/dev/null; sudo chattr -i /opt/schemalabsai/frontend 2>/dev/null; sudo chattr -R -i /opt/schemalabsai/frontend/.next 2>/dev/null; sudo rm -rf /opt/schemalabsai/frontend/.next; echo "UNLOCKED"'
 
 rsync -avz -e ssh \
-  --include='main.go' --include='go.mod' --include='go.sum' \
+  --include='main.go' --include='go.mod' --include='go.sum' --include='schemalabsai-linux' \
   --include='google_credentials.json' \
   --include='.dockerignore' \
   --include='docker-compose.yml' \
