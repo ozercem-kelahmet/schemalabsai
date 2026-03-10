@@ -706,7 +706,8 @@ if CHECKPOINT_PATH.exists():
                 optimizer.load_state_dict(ckpt["optimizer_state_dict"])
             except:
                 pass
-    print(f"  Resumed from epoch {start_epoch}, step={step:,}, best_acc={best_acc:.1f}%, frozen={backbone_frozen}")
+    mid_epoch_di = ckpt.get("mid_epoch_di", 0)
+    print(f"  Resumed from epoch {start_epoch}, step={step:,}, mid_di={mid_epoch_di:,}, best_acc={best_acc:.1f}%, frozen={backbone_frozen}")
 else:
     best_acc = 0
     step = 0
@@ -738,7 +739,16 @@ for epoch in range(start_epoch, cfg.total_epochs):
     
     t_epoch = time.time()
     
+    skip_to = 0
+    if epoch == start_epoch and 'mid_epoch_di' in dir() and mid_epoch_di > 0:
+        skip_to = mid_epoch_di
+        mid_epoch_di = 0  # sadece ilk epoch'ta skip
+        print(f"  Skipping to sample {skip_to:,}")
+    
     for di, d in enumerate(train_data):
+        if di < skip_to:
+            step += 1
+            continue
         # Backbone freeze strategy
         dataset_idx = epoch * len(train_data) + di
         if not backbone_frozen and dataset_idx >= cfg.backbone_freeze_after:
@@ -805,6 +815,24 @@ for epoch in range(start_epoch, cfg.total_epochs):
         # Memory cleanup
         if (di + 1) % 10000 == 0:
             gc.collect()
+        
+        # Mid-epoch checkpoint her 100K'da
+        if (di + 1) % 100000 == 0:
+            mid_save = {
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "config": {k: v for k, v in vars(cfg).items() if not k.startswith("_")},
+                "accuracy": best_acc,
+                "best_accuracy": best_acc,
+                "epoch": epoch,
+                "step": step,
+                "mid_epoch_di": di + 1,
+                "backbone_frozen": backbone_frozen,
+                "dataset_sectors": DS_SECTORS,
+                "architecture": "SchemaV1 Production ~122M",
+            }
+            torch.save(mid_save, CHECKPOINT_PATH)
+            print(f"  Mid-epoch checkpoint saved (epoch {epoch+1}, sample {di+1:,})")
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
     

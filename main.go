@@ -236,6 +236,7 @@ func main() {
 	http.HandleFunc("/api/endpoints/delete", enableCORS(handlers.AuthMiddleware(handlers.DeleteEndpointHandler)))
 
 	// Vertical AI Runtime
+	http.HandleFunc("/api/databricks/catalogs", enableCORS(handlers.DatabricksCatalogsHandler))
 	http.HandleFunc("/api/vertical/configs", enableCORS(handlers.AuthMiddleware(handlers.ListVerticalConfigsHandler)))
 	http.HandleFunc("/api/vertical/configs/create", enableCORS(handlers.AuthMiddleware(handlers.CreateVerticalConfigHandler)))
 	http.HandleFunc("/api/vertical/configs/update", enableCORS(handlers.AuthMiddleware(handlers.UpdateVerticalConfigHandler)))

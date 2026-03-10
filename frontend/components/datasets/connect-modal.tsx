@@ -54,6 +54,8 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
   
   // Form states
   const [connectionName, setConnectionName] = useState("")
+  const [databricksCatalogs, setDatabricksCatalogs] = useState<string[]>([])
+  const [catalogLoading, setCatalogLoading] = useState(false)
   const [endpoint, setEndpoint] = useState("")
   const [authToken, setAuthToken] = useState("")
   const [apiKey, setApiKey] = useState("")
@@ -428,13 +430,33 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
               </div>
               <div className="space-y-1">
                 <Label className="text-foreground text-xs">SQL Warehouse HTTP Path <span className="text-red-500">*</span></Label>
-                <Input value={endpoint} onChange={(e) => setEndpoint(e.target.value)}
+                <Input value={endpoint} onChange={(e) => {
+                    setEndpoint(e.target.value)
+                    // Auto-fetch catalogs when all 3 fields filled
+                    const ep = e.target.value
+                    if (dbHost && authToken && ep && ep.length > 10) {
+                      setCatalogLoading(true); setDatabricksCatalogs([]); setDbName("")
+                      fetch("/api/databricks/catalogs", { method: "POST", headers: {"Content-Type": "application/json"}, credentials: "include", body: JSON.stringify({ host: dbHost, api_key: authToken, endpoint: ep }) })
+                        .then(r => r.ok ? r.json() : null)
+                        .then(data => { if (data?.catalogs?.length > 0) { setDatabricksCatalogs(data.catalogs); setDbName(data.catalogs[0]) } })
+                        .catch(() => {})
+                        .finally(() => setCatalogLoading(false))
+                    }
+                  }}
                   placeholder="/sql/1.0/warehouses/xxxxx" className="bg-card border-border text-foreground" />
               </div>
               <div className="space-y-1">
                 <Label className="text-foreground text-xs">Catalog <span className="text-red-500">*</span></Label>
-                <Input value={dbName} onChange={(e) => setDbName(e.target.value)}
-                  placeholder="main" className="bg-card border-border text-foreground" />
+                {catalogLoading ? (
+                  <div className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm text-muted-foreground"><svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Loading catalogs...</div>
+                ) : databricksCatalogs.length > 0 ? (
+                  <select value={dbName} onChange={(e) => setDbName(e.target.value)} className="w-full rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground">
+                    <option value="">Select catalog...</option>
+                    {databricksCatalogs.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                ) : (
+                  <Input value={dbName} onChange={(e) => setDbName(e.target.value)} placeholder="main" className="bg-card border-border text-foreground" />
+                )}
               </div>
               <Button onClick={() => handleConnect("database")}
                 disabled={!connectionName || !dbHost || !authToken || !endpoint || !dbName}

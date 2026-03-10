@@ -1252,6 +1252,60 @@ mysqlDB.Close()
 }
 
 // List tables from a connection
+
+func DatabricksCatalogsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" { http.Error(w, "Method not allowed", 405); return }
+	var req struct {
+		Host      string `json:"host"`
+		APIKey    string `json:"api_key"`
+		Endpoint  string `json:"endpoint"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", 400); return
+	}
+	workspaceURL := "https://" + strings.TrimPrefix(strings.TrimPrefix(req.Host, "https://"), "http://")
+	httpClient := &http.Client{Timeout: 15 * time.Second}
+	catReq, _ := http.NewRequest("GET", workspaceURL+"/api/2.1/unity-catalog/catalogs", nil)
+	catReq.Header.Set("Authorization", "Bearer "+req.APIKey)
+	catResp, err := httpClient.Do(catReq)
+	if err != nil {
+		log.Printf("[DATABRICKS] Catalog fetch error: %v", err)
+		http.Error(w, "Connection failed", 500); return
+	}
+	defer catResp.Body.Close()
+	if catResp.StatusCode != 200 {
+		body, _ := io.ReadAll(catResp.Body)
+		log.Printf("[DATABRICKS] Catalog API status=%d body=%s", catResp.StatusCode, string(body))
+		// Fallback: SQL API ile SHOW CATALOGS
+		wID := req.Endpoint
+		if strings.Contains(wID, "/") { pp := strings.Split(wID, "/"); wID = pp[len(pp)-1] }
+		showBody, _ := json.Marshal(map[string]interface{}{"statement": "SHOW CATALOGS", "warehouse_id": wID, "wait_timeout": "30s"})
+		showReq, _ := http.NewRequest("POST", workspaceURL+"/api/2.0/sql/statements", bytes.NewReader(showBody))
+		showReq.Header.Set("Authorization", "Bearer "+req.APIKey)
+		showReq.Header.Set("Content-Type", "application/json")
+		showResp, showErr := httpClient.Do(showReq)
+		if showErr != nil || showResp.StatusCode != 200 {
+			http.Error(w, "Cannot fetch catalogs", 500); return
+		}
+		defer showResp.Body.Close()
+		var showResult struct { Result struct { DataArray [][]string `json:"data_array"` } `json:"result"` }
+		json.NewDecoder(showResp.Body).Decode(&showResult)
+		var catalogs []string
+		for _, row := range showResult.Result.DataArray {
+			if len(row) > 0 { catalogs = append(catalogs, row[0]) }
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"catalogs": catalogs})
+		return
+	}
+	var catResult struct { Catalogs []struct { Name string `json:"name"` } `json:"catalogs"` }
+	json.NewDecoder(catResp.Body).Decode(&catResult)
+	var catalogs []string
+	for _, c := range catResult.Catalogs { catalogs = append(catalogs, c.Name) }
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"catalogs": catalogs})
+}
+
 func ListTablesHandler(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie("session")
 	if err != nil {
