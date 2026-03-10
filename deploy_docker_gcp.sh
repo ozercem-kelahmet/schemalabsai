@@ -199,14 +199,8 @@ REMOTE
 
 scp /tmp/schemalabs-deploy-remote.sh $SERVER:/tmp/schemalabs-deploy-remote.sh
 
-echo "🔧 Running remote build (nohup)..."
-ssh $SERVER 'chmod +x /tmp/schemalabs-deploy-remote.sh && nohup bash /tmp/schemalabs-deploy-remote.sh > /tmp/deploy.log 2>&1 &'
-echo "Build started in background on GCP"
-echo "Monitoring..."
-
-# Tail the log until deploy completes or 20 minutes
-sleep 3
-ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=80 -o TCPKeepAlive=yes $SERVER 'tail -f /tmp/deploy.log --pid=\$(pgrep -f schemalabs-deploy-remote || echo 99999) 2>/dev/null || tail -f /tmp/deploy.log'
+echo "🔧 Running remote build..."
+ssh -o ServerAliveInterval=10 -o ServerAliveCountMax=180 -o TCPKeepAlive=yes $SERVER 'bash /tmp/schemalabs-deploy-remote.sh 2>&1 | tee /tmp/deploy.log'
 
 echo ""
 echo "✅ Deploy complete!"
