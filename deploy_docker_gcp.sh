@@ -205,7 +205,8 @@ echo "Build started in background on GCP"
 echo "Monitoring..."
 
 # Tail the log until deploy completes or 20 minutes
-ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=80 -o TCPKeepAlive=yes $SERVER 'tail -f /tmp/deploy.log | while read line; do echo "$line"; echo "$line" | grep -q "Deploy complete\|FINAL STATUS" && break; done'
+sleep 3
+ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=80 -o TCPKeepAlive=yes $SERVER 'tail -f /tmp/deploy.log --pid=\$(pgrep -f schemalabs-deploy-remote || echo 99999) 2>/dev/null || tail -f /tmp/deploy.log'
 
 echo ""
 echo "✅ Deploy complete!"
