@@ -45,7 +45,7 @@ rsync -avz -e ssh \
   ~/Desktop/schemalabsai/ $SERVER:$REMOTE_DIR/
 
 echo "🔧 Building and restarting..."
-ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=20 $SERVER 'bash -s' << 'REMOTE'
+ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=120 -o TCPKeepAlive=yes $SERVER 'bash -s' << 'REMOTE'
 set -e
 cd /opt/schemalabsai
 
