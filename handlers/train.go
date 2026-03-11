@@ -526,7 +526,7 @@ func exportConnectionToCSV(conn Connection, connID string) ([]string, error) {
 			sslmode = "require"
 		}
 		if conn.SSL { sslmode = "require" }
-		dsn := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=%s",
+		dsn := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=%s&connect_timeout=15",
 			conn.Username, conn.Password, connHost, conn.Port, conn.Database, sslmode)
 		paths, err := exportSQLToCSV(dsn, "postgres", connID, "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'", true, conn.SelectedTables)
 		if err != nil { return nil, err }
@@ -862,6 +862,7 @@ func exportSQLToCSV(dsn, driver, connID, listTablesQuery string, quoteTable bool
 	}
 	if err != nil { return nil, fmt.Errorf("connect failed: %v", err) }
 	sqlDB, _ := tempGorm.DB()
+	sqlDB.SetConnMaxLifetime(30 * time.Second)
 	defer sqlDB.Close()
 
 	tableRows, err := sqlDB.Query(listTablesQuery)
@@ -1427,11 +1428,13 @@ if req.ConnectionIDs != "" {
 				for _, s := range sel { sfSelectedMap[s] = true }
 			}
 			sfCfg := &sf.Config{
-				Account:   conn.Host,
-				User:      conn.Username,
-				Password:  conn.Password,
-				Database:  conn.Database,
-				Warehouse: conn.Bucket,
+				Account:        conn.Host,
+				User:           conn.Username,
+				Password:       conn.Password,
+				Database:       conn.Database,
+				Warehouse:      conn.Bucket,
+				LoginTimeout:   15 * time.Second,
+				RequestTimeout: 30 * time.Second,
 			}
 			sfDsn, err := sf.DSN(sfCfg)
 			if err != nil {
@@ -1566,7 +1569,7 @@ if req.ConnectionIDs != "" {
 			for _, tableFull := range dbTables {
 				if selectedMap != nil && !selectedMap[tableFull] { log.Printf("[DB-DEBUG] SKIP table=%s", tableFull); continue }
 				query := fmt.Sprintf("SELECT * FROM %s.%s LIMIT 10000", dbCatalog, tableFull)
-				reqBody, _ := json.Marshal(map[string]interface{}{"statement": query, "warehouse_id": warehouseID})
+				reqBody, _ := json.Marshal(map[string]interface{}{"statement": query, "warehouse_id": warehouseID, "wait_timeout": "50s"})
 				sqlReq, _ := http.NewRequest("POST", dbWorkspaceURL+"/api/2.0/sql/statements", bytes.NewReader(reqBody))
 				sqlReq.Header.Set("Authorization", "Bearer "+conn.APIKey)
 				sqlReq.Header.Set("Content-Type", "application/json")
@@ -1636,7 +1639,7 @@ if req.ConnectionIDs != "" {
 				mysqlSelectedMap = make(map[string]bool)
 				for _, s := range sel { mysqlSelectedMap[s] = true }
 			}
-			mysqlDSN := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", conn.Username, conn.Password, conn.Host, conn.Port, conn.Database)
+			mysqlDSN := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?timeout=15s", conn.Username, conn.Password, conn.Host, conn.Port, conn.Database)
 			mysqlDB, err := sql.Open("mysql", mysqlDSN)
 			if err != nil {
 				log.Printf("MySQL connect failed for %s: %v", connID, err)
@@ -2005,7 +2008,7 @@ if conn.SubType == "excel" {
 			sslmode = "require"
 		}
 		if conn.SSL { sslmode = "require" }
-		dsn := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=%s",
+		dsn := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=%s&connect_timeout=15",
 			conn.Username, conn.Password, connHost, conn.Port, conn.Database, sslmode)
 		tempGorm, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 		if err != nil {
@@ -2138,13 +2141,34 @@ if selectedTableName != "" {
 		}
 	}
 
+	if len(filePaths) == 0 && req.ConnectionIDs != "" {
+		for retryAttempt := 1; retryAttempt <= 3; retryAttempt++ {
+			log.Printf("WARNING No files found, retry attempt %d/3 in 10s for connections=%s", retryAttempt, req.ConnectionIDs)
+			time.Sleep(10 * time.Second)
+			retryConnIDs := strings.Split(req.ConnectionIDs, ",")
+			for _, retryConnID := range retryConnIDs {
+				retryConnID = strings.TrimSpace(retryConnID)
+				if retryConnID == "" { continue }
+				var retryConn Connection
+				if err := DB.First(&retryConn, "id = ?", retryConnID).Error; err != nil { continue }
+				if req.SelectedTables != "" { retryConn.SelectedTables = req.SelectedTables }
+				paths, err := exportConnectionToCSV(retryConn, retryConnID)
+				if err != nil { log.Printf("WARNING Retry %d export failed for %s: %v", retryAttempt, retryConnID, err) }
+				filePaths = append(filePaths, paths...)
+			}
+			if len(filePaths) > 0 {
+				log.Printf("WARNING Retry %d succeeded: %d files found", retryAttempt, len(filePaths))
+				break
+			}
+		}
+	}
 	if len(filePaths) == 0 {
-trainingProgressMu.Lock()
-trainingProgress = &TrainingProgressEntry{}
-trainingProgressMu.Unlock()
-// Mark any "training" models for this user as failed
-DB.Model(&FineTunedModel{}).Where("user_id = ? AND status = ?", userID, "training").Updates(map[string]interface{}{"status": "failed"})
-log.Printf("No files found - marked training models as failed for user %s", userID)
+		trainingProgressMu.Lock()
+		trainingProgress.Status = "failed"
+		trainingProgressMu.Unlock()
+		setActiveTrainingProgress(req.QueryID, trainingProgress)
+		DB.Model(&FineTunedModel{}).Where("user_id = ? AND status = ?", userID, "training").Updates(map[string]interface{}{"status": "failed"})
+		log.Printf("No files found - marked training models as failed for user %s", userID)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{
@@ -2459,8 +2483,15 @@ log.Printf("MULTI EMAIL SENT to %s", user.Email)
 		log.Printf("Flask returned error for model %s: %s", preModelID, errMsg)
 		trainingProgressMu.Lock()
 		trainingProgress.Status = "failed"
+		trainingProgress.Error = errMsg
 		trainingProgressMu.Unlock()
+		setActiveTrainingProgress(req.QueryID, trainingProgress)
 		DB.Model(&FineTunedModel{}).Where("id = ?", preModelID).Updates(map[string]interface{}{"status": "failed"})
+		if req.QueryID != "" {
+			failedJSON, _ := json.Marshal(map[string]interface{}{"status": "failed", "error": errMsg, "query_id": req.QueryID})
+			rc := getRedisClient()
+			rc.Set(context.Background(), "training:"+req.QueryID, string(failedJSON), 5*time.Minute)
+		}
 		return
 	}
 
@@ -2599,6 +2630,7 @@ type TrainingProgressEntry struct {
 	Accuracy  float64 `json:"accuracy"`
 	Loss      float64 `json:"loss"`
 	Status    string  `json:"status"`
+	Error     string  `json:"error,omitempty"`
 	ModelID   string  `json:"model_id"`
 	ModelName string  `json:"model_name"`
 	StartTime int64   `json:"start_time"`
@@ -2699,8 +2731,12 @@ log.Printf("[PROGRESS] called query_id=%s", r.URL.Query().Get("query_id"))
 	// If no manual training active, don't show retrain progress to UI
 	trainingProgressMu.Lock()
 	tpSnap := *trainingProgress
-	noActive := tpSnap.ModelID == "" && tpSnap.Status != "completed_sent"
+	noActive := tpSnap.ModelID == "" && tpSnap.Status != "completed_sent" && tpSnap.Status != "failed"
 	trainingProgressMu.Unlock()
+	if tpSnap.Status == "failed" {
+		json.NewEncoder(w).Encode(map[string]interface{}{"status": "failed", "error": tpSnap.Error})
+		return
+	}
 	if noActive {
 		json.NewEncoder(w).Encode(map[string]interface{}{"status": "idle"})
 		return
@@ -2725,6 +2761,10 @@ log.Printf("[PROGRESS] called query_id=%s", r.URL.Query().Get("query_id"))
 				redisData["model_name"] = tpSnap.ModelName
 			}
 			status, _ := redisData["status"].(string)
+			if status == "failed" {
+				json.NewEncoder(w).Encode(map[string]interface{}{"status": "failed", "error": redisData["error"]})
+				return
+			}
 			if status == "completed" {
 				acc, _ := redisData["accuracy"].(float64)
 				if acc > 0 && tpSnap.ModelID != "" {

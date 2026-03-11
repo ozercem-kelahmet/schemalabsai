@@ -116,15 +116,27 @@ step() {
 
 step 5 "Malware Scan"
 MALWARE=0
-for f in $(sudo find / -maxdepth 1 -type f -executable 2>/dev/null); do
-  echo "[WARN] MALWARE: $f"; sudo rm -f "$f"; MALWARE=1
-done
-SUSPECT=$(ps aux | awk '$3>80' | grep -v -E 'python|node|next|postgres|redis|nginx|sshd|systemd|journalctl|go|schemalabsai|awk|ps|npm|docker' | wc -l)
-if [ "$SUSPECT" -gt 0 ]; then
-  ps aux | awk '$3>80' | grep -v -E 'python|node|next|postgres|redis|nginx|sshd|systemd|journalctl|go|schemalabsai|awk|ps|npm|docker' | awk '{print $2}' | xargs -r sudo kill -9
+
+# Check for suspicious executables in root dir (report only, don't auto-delete)
+SUSPICIOUS_ROOT=$(sudo find / -maxdepth 1 -type f -executable -not -name "*.sh" 2>/dev/null)
+if [ -n "$SUSPICIOUS_ROOT" ]; then
+  echo "[WARN] Suspicious files in /:"
+  echo "$SUSPICIOUS_ROOT"
+  echo "[WARN] Review manually — not auto-deleting to protect system binaries"
   MALWARE=1
 fi
-[ "$MALWARE" -eq 0 ] && echo "[OK] System clean" || echo "[WARN] Malware cleaned"
+
+# Kill crypto miners and suspicious high-CPU processes (but never system processes)
+SAFE_PROCS="python|node|next|postgres|redis|nginx|sshd|systemd|journalctl|go|schemalabsai|awk|ps|npm|docker|dockerd|containerd|grafana|prometheus|flask|gunicorn|pip|apt|dpkg|rsync|ssh|bash|sh|cron|udevadm|systemd-udevd|networkd|resolved|snapd|polkit|dbus"
+SUSPECT=$(ps aux | awk '$3>80' | grep -v -E "$SAFE_PROCS" | grep -v "grep" | wc -l)
+if [ "$SUSPECT" -gt 0 ]; then
+  echo "[WARN] High-CPU suspicious processes:"
+  ps aux | awk '$3>80' | grep -v -E "$SAFE_PROCS" | grep -v "grep"
+  ps aux | awk '$3>80' | grep -v -E "$SAFE_PROCS" | grep -v "grep" | awk '{print $2}' | xargs -r sudo kill -9
+  MALWARE=1
+fi
+
+[ "$MALWARE" -eq 0 ] && echo "[OK] System clean" || echo "[WARN] Suspicious activity detected — review above"
 
 step 6 "System Prep"
 sudo chattr -i / 2>/dev/null || true
@@ -242,7 +254,12 @@ sudo chattr +i /opt/schemalabsai/frontend 2>/dev/null || true
 sudo systemctl restart schemalabs-website.service 2>/dev/null || true
 
 CLEAN=1
-for f in $(sudo find / -maxdepth 1 -type f -executable 2>/dev/null); do echo "[WARN] MALWARE: $f"; CLEAN=0; done
+SUSPICIOUS_POST=$(sudo find / -maxdepth 1 -type f -executable -not -name "*.sh" 2>/dev/null)
+if [ -n "$SUSPICIOUS_POST" ]; then
+  echo "[WARN] Post-deploy: suspicious files in /:"
+  echo "$SUSPICIOUS_POST"
+  CLEAN=0
+fi
 [ "$CLEAN" -eq 1 ] && echo "[OK] Post-deploy scan clean"
 
 echo ""

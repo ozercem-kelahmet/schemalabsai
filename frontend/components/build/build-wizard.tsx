@@ -63,6 +63,14 @@ export function BuildWizard() {
         const url = savedQueryId ? "/api/train/progress?query_id=" + savedQueryId : "/api/train/progress"
         const res = await fetch(url, { credentials: "include" })
         const progress = await res.json()
+        if (progress.status === "failed") {
+          stopPolling()
+          trainingStartedRef.current = false
+          addLog("Training failed: " + (progress.error || "Unknown error"))
+          toast.error("Training Failed", { description: progress.error || "An error occurred during training.", duration: 10000 })
+          setCurrentStep("config")
+          return
+        }
         if (progress.status === "training" && (progress.model_id || progress.epoch > 0)) {
           // Stale check: 5dk + epoch=0 = dead training
           const _st = progress.start_time || 0
@@ -391,6 +399,14 @@ export function BuildWizard() {
       try {
         if (completedByPollingRef.current || !trainingStartedRef.current) { return }
         const progress = await api.getTrainingProgress(trainingQueryIdRef.current)
+        if (progress.status === "failed") {
+          stopPolling()
+          trainingStartedRef.current = false
+          addLog("Training failed: " + (progress.error || "Unknown error"))
+          toast.error("Training Failed", { description: progress.error || "An error occurred during training.", duration: 10000 })
+          setCurrentStep("config")
+          return
+        }
         if (progress.status === "training") {
           // Terminaldeki epochs gelince kilitle, geri donmesin
           const serverEpochs = progress.epochs
