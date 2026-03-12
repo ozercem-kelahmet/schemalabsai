@@ -38,3 +38,14 @@ model/model_base*.py
 model/model_mlp.py
 model/model_simple.py
 monitoring
+data
+schemalabsai-linux
+schemalabsai
+schemalabs
+backups
+frontend kopyası
+schemalabs_backup.sql
+schema_v1_production.py
+schema_v1_poc.py
+test_data_large.csv
+*.sql
