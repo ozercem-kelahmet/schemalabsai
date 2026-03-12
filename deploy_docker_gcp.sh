@@ -162,18 +162,10 @@ build_svc() {
   local PROGRESS=""
   [ "$BK" -eq 1 ] && PROGRESS="--progress=plain"
 
-  # Use script to keep output flowing and prevent SSH idle kill
   script -qfc "sudo DOCKER_BUILDKIT=$BK docker compose build $PROGRESS ${SVC}" ${LOG} || true
-  # Check if image was actually built
-  local IMG_CHECK=$(sudo docker images schemalabsai-${SVC} --format '{{.ID}}' 2>/dev/null)
-  local EXIT=0
-  [ -z "$IMG_CHECK" ] && EXIT=1
-  # Also check log for failure
-  grep -q "FAIL\|error\|failed" ${LOG} 2>/dev/null && grep -q "Successfully built\|Built" ${LOG} 2>/dev/null || EXIT=1
-  # Final check: if Successfully built is in log, its OK
-  grep -qE "Successfully built|Successfully tagged|Image.*Built" ${LOG} 2>/dev/null && EXIT=0
+
   local DUR=$(( $(date +%s) - START ))
-  if [ "$EXIT" -eq 0 ]; then
+  if grep -qE "Successfully built|Successfully tagged|Image.*Built" ${LOG} 2>/dev/null; then
     echo "[OK] ${SVC} ($(sudo docker images schemalabsai-${SVC} --format '{{.Size}}' 2>/dev/null), ${DUR}s)"
   else
     echo "[FAIL] ${SVC} after ${DUR}s"
