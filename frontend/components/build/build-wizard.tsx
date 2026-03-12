@@ -11,7 +11,7 @@ import type { Dataset, SyncMode, TrainingMetrics, EvaluationMetrics, Model } fro
 import { Check } from "lucide-react"
 
 type Step = "config" | "training" | "evaluate"
-type TrainingStatus = "idle" | "initializing" | "training" | "paused" | "completing"
+type TrainingStatus = "idle" | "initializing" | "training" | "paused" | "completing" | "failed"
 
 const steps = [
   { id: "config", label: "Configure" },
@@ -34,6 +34,7 @@ export function BuildWizard() {
   const [baseModel, setBaseModel] = useState<string>("schema-v0")
 
   const [trainingStatus, setTrainingStatus] = useState<TrainingStatus>("initializing")
+  const [trainingError, setTrainingError] = useState<string>("")
   const [currentMetrics, setCurrentMetrics] = useState<TrainingMetrics | null>(null)
   const [metricsHistory, setMetricsHistory] = useState<TrainingMetrics[]>([])
   const [logs, setLogs] = useState<string[]>([])
@@ -66,9 +67,10 @@ export function BuildWizard() {
         if (progress.status === "failed") {
           stopPolling()
           trainingStartedRef.current = false
+          setTrainingError(progress.error || "An error occurred during training.")
+          setTrainingStatus("failed")
           addLog("Training failed: " + (progress.error || "Unknown error"))
           toast.error("Training Failed", { description: progress.error || "An error occurred during training.", duration: 10000 })
-          setCurrentStep("config")
           return
         }
         if (progress.status === "training" && (progress.model_id || progress.epoch > 0)) {
@@ -348,6 +350,15 @@ export function BuildWizard() {
         addLog("Evaluating model performance...")
 
         const finalAccuracy = (result.accuracy > 1 ? result.accuracy / 100 : result.accuracy) || 0
+        if (finalAccuracy === 0) {
+          stopPolling()
+          trainingStartedRef.current = false
+          setTrainingError("Training completed but model could not learn from this data (0% accuracy). Please check data quality.")
+          setTrainingStatus("failed")
+          addLog("Training failed: 0% accuracy - model could not learn from this data")
+          toast.error("Training Failed", { description: "Model could not learn from this data (0% accuracy). Please check data quality.", duration: 10000 })
+          return
+        }
         setEvalMetrics({
           accuracy: finalAccuracy,
           precision: result.precision || finalAccuracy * 0.98,
@@ -402,9 +413,10 @@ export function BuildWizard() {
         if (progress.status === "failed") {
           stopPolling()
           trainingStartedRef.current = false
+          setTrainingError(progress.error || "An error occurred during training.")
+          setTrainingStatus("failed")
           addLog("Training failed: " + (progress.error || "Unknown error"))
           toast.error("Training Failed", { description: progress.error || "An error occurred during training.", duration: 10000 })
-          setCurrentStep("config")
           return
         }
         if (progress.status === "training") {
@@ -459,6 +471,13 @@ export function BuildWizard() {
           completedByPollingRef.current = true
           const proceedToEvaluate = () => {
           const finalAccuracy = fAcc
+          if (finalAccuracy === 0) {
+            setTrainingError("Training completed but model could not learn from this data (0% accuracy). Please check data quality.")
+            setTrainingStatus("failed")
+            addLog("Training failed: 0% accuracy - model could not learn from this data")
+            toast.error("Training Failed", { description: "Model could not learn from this data (0% accuracy). Please check data quality.", duration: 10000 })
+            return
+          }
           setEvalMetrics({
             accuracy: finalAccuracy,
             precision: progress.precision || finalAccuracy * 0.98,
@@ -640,6 +659,8 @@ export function BuildWizard() {
           logs={logs}
           status={trainingStatus}
           elapsedTime={elapsedTime}
+          error={trainingError}
+          onRetry={() => { setTrainingError(""); setTrainingStatus("idle"); setCurrentStep("config"); }}
         />
       )}
 

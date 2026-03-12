@@ -391,7 +391,7 @@ export default function ModelsPage() {
                   </div>
                   <div className="mt-3 flex items-center gap-2">
                     <span className="inline-flex items-center rounded-md bg-[#0052CC]/10 px-2 py-1 text-xs font-medium text-[#0052CC] dark:text-[#2684FF]">schema-v0</span>
-                    <span className="flex items-center gap-1.5 rounded-md bg-emerald-500/10 px-2 py-1 text-xs text-emerald-500"><CheckCircle2 className="h-3 w-3" />Active</span>
+                    {m.status === "failed" ? <span className="flex items-center gap-1.5 rounded-md bg-red-500/10 px-2 py-1 text-xs text-red-500"><XCircle className="h-3 w-3" />Failed</span> : <span className="flex items-center gap-1.5 rounded-md bg-emerald-500/10 px-2 py-1 text-xs text-emerald-500"><CheckCircle2 className="h-3 w-3" />Active</span>}
                     {m.sync_mode && m.sync_mode !== "manual" && (
                       <span className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium ${
                         m.sync_mode === "real-time" ? "bg-purple-500/10 text-purple-500" : "bg-amber-500/10 text-amber-500"
@@ -412,7 +412,7 @@ export default function ModelsPage() {
                         <TrendingUp className="h-3 w-3" />
                         <span className="text-[10px] uppercase tracking-wider">Accuracy</span>
                       </div>
-                      <p className="mt-1 font-mono text-sm font-medium text-emerald-500">{m.accuracy?.toFixed(1) || 0}%</p>
+                      <p className={`mt-1 font-mono text-sm font-medium ${m.status === "failed" ? "text-red-500" : "text-emerald-500"}`}>{m.accuracy?.toFixed(1) || 0}%</p>
                     </div>
                     <div className="text-center border-x border-border">
                       <div className="flex items-center justify-center gap-1 text-muted-foreground">

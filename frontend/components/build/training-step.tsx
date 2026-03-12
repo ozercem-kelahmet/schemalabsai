@@ -13,8 +13,10 @@ interface TrainingStepProps {
   currentMetrics: TrainingMetrics | null
   history: TrainingMetrics[]
   logs: string[]
-  status: "idle" | "initializing" | "training" | "paused" | "completing"
+  status: "idle" | "initializing" | "training" | "paused" | "completing" | "failed"
   elapsedTime: number
+  error?: string
+  onRetry?: () => void
 }
 
 export function TrainingStep({
@@ -23,9 +25,8 @@ export function TrainingStep({
   logs,
   status,
   elapsedTime,
-  
-  
-  
+  error,
+  onRetry,
 }: TrainingStepProps) {
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60)
@@ -40,6 +41,33 @@ export function TrainingStep({
   const rawProgress = total > 0 ? Math.min(99, (epoch / total) * 100) : 0
   if (rawProgress > maxProgressRef.current) maxProgressRef.current = rawProgress
   const progress = maxProgressRef.current
+
+  if (status === "failed") {
+    return (
+      <div className="space-y-6">
+        <Card className="border-red-500/50 bg-red-500/5">
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="h-10 w-10 rounded-full bg-red-500/10 flex items-center justify-center">
+                <Square className="h-5 w-5 text-red-500" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-red-500">Training Failed</h3>
+                <p className="text-sm text-muted-foreground">The training process encountered an error</p>
+              </div>
+            </div>
+            <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-4 mb-4">
+              <p className="text-sm text-red-400 font-mono">{error || "Unknown error"}</p>
+            </div>
+            <Button variant="outline" onClick={onRetry} className="border-red-500/30 text-red-400 hover:bg-red-500/10">
+              Back to Configuration
+            </Button>
+          </CardContent>
+        </Card>
+        <TrainingLogs logs={logs} />
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">

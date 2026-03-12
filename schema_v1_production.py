@@ -81,8 +81,8 @@ class Config:
     # EWC
     ewc_lambda = 1000
 
-    # Backbone freeze
-    backbone_freeze_after = 250000
+    # Backbone freeze — disabled, train full model with class weights
+    backbone_freeze_after = 999999999
 
     # Logging — adjusted per device
     log_every = 500 if not torch.cuda.is_available() else 1000
@@ -387,10 +387,12 @@ n_classes = len(sector_counts)
 # Inverse frequency weights: rare sectors get higher weight
 class_weights = torch.zeros(N_DS)
 for lbl, count in sector_counts.items():
-    class_weights[lbl] = n_train / (n_classes * count)
+    class_weights[lbl] = math.sqrt(n_train / (n_classes * count))
 
-# Cap extreme weights (very rare sectors)
-class_weights = class_weights.clamp(max=50.0)
+# Cap extreme weights
+class_weights = class_weights.clamp(max=5.0)
+# Normalize so mean weight = 1
+class_weights = class_weights / class_weights.mean()
 class_weights = class_weights.to(device)
 
 print(f"\nClass weights (top 5 highest):")

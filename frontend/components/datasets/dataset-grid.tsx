@@ -514,16 +514,25 @@ export function DatasetGrid() {
               // Upload files sequentially to avoid connection issues
               uploadToastId = toast.loading("Uploading " + files.length + " files...")
               let uploaded = 0
+              const failedFiles: string[] = []
               const allSheets: {name: string, rows: number, columns: number, file_id: string}[] = []
               let mainFileId = ""
               for (const file of files) {
-                const result = await api.upload(file, undefined)
-                if (result?.warning) {
-                  toast.dismiss(uploadToastId)
-                  toast.error(result.warning, { duration: 8000 })
-                  return
+                try {
+                  const result = await api.upload(file, undefined)
+                  if (result?.error) {
+                    failedFiles.push(file.name + ": " + result.error)
+                    toast.dismiss(uploadToastId)
+                    toast.loading("Uploaded " + uploaded + "/" + files.length + " files...", { id: uploadToastId })
+                    continue
+                  }
+                  if (result?.warning) {
+                    toast.warning(file.name + ": " + result.warning, { duration: 8000 })
+                  }
+                  uploaded++
+                } catch (e: any) {
+                  failedFiles.push(file.name + ": " + (e?.message || "Unknown error"))
                 }
-                uploaded++
                 toast.dismiss(uploadToastId)
                 toast.loading("Uploaded " + uploaded + "/" + files.length + " files...", { id: uploadToastId })
                 // Check for Excel multi-sheet files
@@ -538,6 +547,9 @@ export function DatasetGrid() {
                 }
               }
               toast.dismiss(uploadToastId)
+              if (failedFiles.length > 0) {
+                toast.error(failedFiles.length + " file(s) failed:\n" + failedFiles.join("\n"), { duration: 10000 })
+              }
               // If Excel had multiple sheets, show selection dialog
               if (allSheets.length > 0) {
                 const sheetOnly = allSheets.filter(s => s.name !== "(main_xlsx)")
@@ -549,7 +561,7 @@ export function DatasetGrid() {
                 toast.success("Select which sheets to keep.")
                 return // Don't loadData yet, wait for sheet selection
               } else {
-                toast.success(uploaded + " files uploaded successfully!")
+                if (uploaded > 0) toast.success(uploaded + " of " + files.length + " files uploaded successfully!")
               }
             } catch (error) {
               toast.dismiss(uploadToastId)
