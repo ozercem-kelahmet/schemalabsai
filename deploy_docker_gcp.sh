@@ -162,19 +162,8 @@ build_svc() {
   local PROGRESS=""
   [ "$BK" -eq 1 ] && PROGRESS="--progress=plain"
 
-  # Build in background so SSH idle timeout cant kill it
-  sudo DOCKER_BUILDKIT=$BK docker compose build $PROGRESS ${SVC} > ${LOG} 2>&1 &
-  local PID=$!
-
-  # Poll log for progress every 10s
-  while kill -0 $PID 2>/dev/null; do
-    sleep 10
-    local LAST=$(tail -1 ${LOG} 2>/dev/null)
-    local DUR=$(( $(date +%s) - START ))
-    echo "  [${DUR}s] $LAST"
-  done
-
-  wait $PID
+  # Use script to keep output flowing and prevent SSH idle kill
+  script -qfc "sudo DOCKER_BUILDKIT=$BK docker compose build $PROGRESS ${SVC}" ${LOG}
   local EXIT=$?
   local DUR=$(( $(date +%s) - START ))
   if [ "$EXIT" -eq 0 ]; then
