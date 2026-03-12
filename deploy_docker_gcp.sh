@@ -159,7 +159,9 @@ build_svc() {
   local LOG="/tmp/build-${SVC}.log"
   local START=$(date +%s)
   echo "Building ${SVC} (BuildKit=$BK)..."
-  sudo DOCKER_BUILDKIT=$BK docker compose build --progress=plain ${SVC} 2>&1 | tee ${LOG}
+  local PROGRESS=""
+  [ "$BK" -eq 1 ] && PROGRESS="--progress=plain"
+  sudo DOCKER_BUILDKIT=$BK docker compose build $PROGRESS ${SVC} 2>&1 | tee ${LOG}
   local EXIT=${PIPESTATUS[0]}
   local DUR=$(( $(date +%s) - START ))
   if [ "$EXIT" -eq 0 ]; then
