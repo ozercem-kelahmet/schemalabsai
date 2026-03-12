@@ -2426,8 +2426,15 @@ if accuracy == 0 {
 	ftModel.Status = "failed"
 	log.Printf("Training returned accuracy 0 - marking as failed")
 	trainingProgressMu.Lock()
-	if trainingProgress.ModelID == preModelID { trainingProgress = &TrainingProgressEntry{} }
+	trainingProgress.Status = "failed"
+	trainingProgress.Error = "Training completed but model could not learn from this data (0% accuracy). Please check data quality."
 	trainingProgressMu.Unlock()
+	setActiveTrainingProgress(req.QueryID, trainingProgress)
+	if req.QueryID != "" {
+		failedJSON, _ := json.Marshal(map[string]interface{}{"status": "failed", "error": "Training completed but model could not learn from this data (0% accuracy). Please check data quality.", "query_id": req.QueryID})
+		rc := getRedisClient()
+		rc.Set(context.Background(), "training:"+req.QueryID, string(failedJSON), 5*time.Minute)
+	}
 } else {
 	ftModel.Status = "active"
 }
