@@ -49,3 +49,6 @@ schema_v1_production.py
 schema_v1_poc.py
 test_data_large.csv
 *.sql
+venv
+frontend/node_modules
+frontend/.next

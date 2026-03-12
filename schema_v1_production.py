@@ -375,41 +375,37 @@ train_indices = all_indices[:split]
 test_indices = all_indices[split:]
 
 # ============================================================
-# BALANCED SAMPLING — cap large sectors, oversample small ones
+# CLASS WEIGHTS for balanced loss
 # ============================================================
-from torch.utils.data import WeightedRandomSampler
 from collections import Counter
 
-MAX_PER_SECTOR = 10000
-MIN_PER_SECTOR = 1000
-
-# Count per sector in train set
 train_labels = [labels_all[i].item() for i in train_indices]
 sector_counts = Counter(train_labels)
+n_train = len(train_labels)
+n_classes = len(sector_counts)
 
-# Compute sample weights: inverse frequency, capped
-weights = []
-for lbl in train_labels:
-    count = sector_counts[lbl]
-    # Cap: if sector has > MAX, reduce weight; if < MIN, increase weight
-    if count > MAX_PER_SECTOR:
-        w = MAX_PER_SECTOR / count
-    elif count < MIN_PER_SECTOR:
-        w = MIN_PER_SECTOR / count
-    else:
-        w = 1.0
-    weights.append(w)
+# Inverse frequency weights: rare sectors get higher weight
+class_weights = torch.zeros(N_DS)
+for lbl, count in sector_counts.items():
+    class_weights[lbl] = n_train / (n_classes * count)
 
-sample_weights = torch.tensor(weights, dtype=torch.float64)
+# Cap extreme weights (very rare sectors)
+class_weights = class_weights.clamp(max=50.0)
+class_weights = class_weights.to(device)
 
-# Target ~150K samples per epoch (balanced)
-balanced_epoch_size = min(150000, len(train_indices))
-train_sampler = WeightedRandomSampler(sample_weights, num_samples=balanced_epoch_size, replacement=True)
+print(f"\nClass weights (top 5 highest):")
+top_w = sorted([(I2S[i], class_weights[i].item()) for i in range(N_DS)], key=lambda x: -x[1])[:5]
+for s, w in top_w:
+    print(f"  {s:35s} weight={w:.1f}")
+bot_w = sorted([(I2S[i], class_weights[i].item()) for i in range(N_DS)], key=lambda x: x[1])[:3]
+print(f"Bottom 3:")
+for s, w in bot_w:
+    print(f"  {s:35s} weight={w:.1f}")
 
 _is_cuda = torch.cuda.is_available()
 
 train_loader = DataLoader(
-    PrecomputedDataset(train_indices), batch_size=cfg.batch_size, sampler=train_sampler,
+    PrecomputedDataset(train_indices), batch_size=cfg.batch_size, shuffle=True,
     num_workers=4 if _is_cuda else 0, pin_memory=_is_cuda,
     persistent_workers=True if _is_cuda else False,
     prefetch_factor=4 if _is_cuda else None, drop_last=True)
@@ -419,18 +415,7 @@ test_loader = DataLoader(
     num_workers=2 if _is_cuda else 0, pin_memory=_is_cuda,
     persistent_workers=True if _is_cuda else False)
 
-# Show balanced distribution
-balanced_counts = Counter()
-for w, lbl in zip(weights, train_labels):
-    balanced_counts[I2S[lbl]] += w
-total_w = sum(balanced_counts.values())
-print(f"\nBalanced sampling: {balanced_epoch_size:,} samples/epoch (was {len(train_indices):,})")
-top5 = balanced_counts.most_common(5)
-bot5 = balanced_counts.most_common()[-5:]
-print(f"  Top 5: {', '.join(f'{s}:{n/total_w*100:.1f}%' for s,n in top5)}")
-print(f"  Bot 5: {', '.join(f'{s}:{n/total_w*100:.1f}%' for s,n in bot5)}")
-
-print(f"Train: {len(train_indices):,} (balanced epoch: {balanced_epoch_size:,}), Test: {len(test_indices):,}")
+print(f"Train: {len(train_indices):,}, Test: {len(test_indices):,}")
 print(f"Batches/epoch: {len(train_loader):,}, Batch size: {cfg.batch_size}")
 
 # ============================================================
@@ -915,8 +900,8 @@ for epoch in range(start_epoch, cfg.total_epochs):
 
         with amp_autocast():
             sl, cl, mcm_l, mir_l, mid_l = model(ce, cm, df, cv, cmask, cin, sector_emb_matrix, training=True)
-            s_loss = F.cross_entropy(sl, lbl, label_smoothing=cfg.label_smoothing)
-            c_loss = F.cross_entropy(cl, lbl, label_smoothing=cfg.label_smoothing)
+            s_loss = F.cross_entropy(sl, lbl, weight=class_weights, label_smoothing=cfg.label_smoothing)
+            c_loss = F.cross_entropy(cl, lbl, weight=class_weights, label_smoothing=cfg.label_smoothing)
             loss = c_loss + s_loss + cfg.mcm_weight*mcm_l + cfg.miras_weight*mir_l + cfg.midas_weight*mid_l
             loss = loss / cfg.grad_accum  # normalize for accumulation
 
@@ -954,8 +939,8 @@ for epoch in range(start_epoch, cfg.total_epochs):
             elapsed = time.time() - t_ep
             done = (bi + 1) * cfg.batch_size
             rate = done / elapsed
-            eta = (balanced_epoch_size - done) / max(rate, 1)
-            print(f"  E{epoch+1} [{done:,}/{balanced_epoch_size:,}] "
+            eta = (len(train_indices) - done) / max(rate, 1)
+            print(f"  E{epoch+1} [{done:,}/{len(train_indices):,}] "
                   f"loss={ep_loss/ep_n:.4f} s_acc={ep_correct_s/ep_n*100:.1f}% c_acc={ep_correct_c/ep_n*100:.1f}% "
                   f"lr={lr:.6f} rate={rate:.0f}/s eta={eta:.0f}s")
 
