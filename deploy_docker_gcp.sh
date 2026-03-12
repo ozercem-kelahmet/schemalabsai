@@ -161,8 +161,21 @@ build_svc() {
   echo "Building ${SVC} (BuildKit=$BK)..."
   local PROGRESS=""
   [ "$BK" -eq 1 ] && PROGRESS="--progress=plain"
-  sudo DOCKER_BUILDKIT=$BK docker compose build $PROGRESS ${SVC} 2>&1 | tee ${LOG}
-  local EXIT=${PIPESTATUS[0]}
+
+  # Build in background so SSH idle timeout cant kill it
+  sudo DOCKER_BUILDKIT=$BK docker compose build $PROGRESS ${SVC} > ${LOG} 2>&1 &
+  local PID=$!
+
+  # Poll log for progress every 10s
+  while kill -0 $PID 2>/dev/null; do
+    sleep 10
+    local LAST=$(tail -1 ${LOG} 2>/dev/null)
+    local DUR=$(( $(date +%s) - START ))
+    echo "  [${DUR}s] $LAST"
+  done
+
+  wait $PID
+  local EXIT=$?
   local DUR=$(( $(date +%s) - START ))
   if [ "$EXIT" -eq 0 ]; then
     echo "[OK] ${SVC} ($(sudo docker images schemalabsai-${SVC} --format '{{.Size}}' 2>/dev/null), ${DUR}s)"
