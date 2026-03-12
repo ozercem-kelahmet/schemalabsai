@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { Checkbox } from "@/components/ui/checkbox"
-import { FileSpreadsheet } from "lucide-react"
+import { FileSpreadsheet, Database, Server, Globe } from "lucide-react"
 import { Label } from "@/components/ui/label"
 import type { DataSource, Vertical, Complexity, RowCount } from "@/lib/types"
 
@@ -86,41 +86,37 @@ const sources: { id: DataSource; label: string; icon: React.ReactNode }[] = [
   {
     id: "postgresql",
     label: "PostgreSQL",
-    icon: (
-      <svg viewBox="0 0 24 24" className="h-4 w-4 text-[#336791]" fill="currentColor">
-        <path d="M17.128 0a10.134 10.134 0 00-2.755.403l-.063.02a10.922 10.922 0 00-1.612.556c-.108.043-.185.076-.242.1l-.066.029a9.923 9.923 0 00-.463.221 9.5 9.5 0 00-.612.334c-.108.064-.216.131-.324.2a9.064 9.064 0 00-1.852 1.585A8.63 8.63 0 007.458 5.4l-.028.064a8.487 8.487 0 00-.46 1.493l-.017.074a8.349 8.349 0 00-.144 2.32l.007.065.009.098a8.63 8.63 0 00.274 1.4l-.002-.012c.074.276.161.548.262.813l.015.041a8.724 8.724 0 001.79 2.835l.009.01c.067.07.135.14.205.207l.01.01a8.964 8.964 0 002.332 1.681l.048.024a9.088 9.088 0 001.79.683l.056.014a9.104 9.104 0 002.032.283h.111a9.184 9.184 0 002.032-.283l.056-.014a9.088 9.088 0 001.79-.683l.048-.024a8.964 8.964 0 002.332-1.681l.01-.01c.07-.067.138-.137.205-.207l.009-.01a8.724 8.724 0 001.79-2.835l.015-.041c.101-.265.188-.537.262-.813l-.002.012a8.63 8.63 0 00.274-1.4l.009-.098.007-.065a8.349 8.349 0 00-.144-2.32l-.017-.074a8.487 8.487 0 00-.46-1.493l-.028-.064a8.63 8.63 0 00-1.681-1.953 9.064 9.064 0 00-1.852-1.585c-.108-.069-.216-.136-.324-.2a9.5 9.5 0 00-.612-.334 9.923 9.923 0 00-.463-.221l-.066-.029c-.057-.024-.134-.057-.242-.1a10.922 10.922 0 00-1.612-.556l-.063-.02A10.134 10.134 0 0017.128 0z"/>
-      </svg>
-    ),
+    icon: <Database className="h-4 w-4 text-[#336791]" />,
   },
   {
     id: "mysql",
     label: "MySQL",
-    icon: <svg viewBox="0 0 24 24" className="h-4 w-4 text-[#4479A1]" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/></svg>,
+    icon: <Database className="h-4 w-4 text-[#4479A1]" />,
   },
   {
     id: "mongodb",
     label: "MongoDB",
-    icon: <svg viewBox="0 0 24 24" className="h-4 w-4 text-[#47A248]" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/></svg>,
+    icon: <Database className="h-4 w-4 text-[#47A248]" />,
   },
   {
     id: "snowflake",
     label: "Snowflake",
-    icon: <svg viewBox="0 0 24 24" className="h-4 w-4 text-[#29B5E8]" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/></svg>,
+    icon: <Database className="h-4 w-4 text-[#29B5E8]" />,
   },
   {
     id: "pinecone",
     label: "Pinecone",
-    icon: <svg viewBox="0 0 24 24" className="h-4 w-4 text-[#7B61FF]" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/></svg>,
+    icon: <Server className="h-4 w-4 text-[#7B61FF]" />,
   },
   {
     id: "weaviate",
     label: "Weaviate",
-    icon: <svg viewBox="0 0 24 24" className="h-4 w-4 text-[#00C8A8]" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/></svg>,
+    icon: <Server className="h-4 w-4 text-[#00C8A8]" />,
   },
   {
     id: "chroma",
     label: "Chroma",
-    icon: <svg viewBox="0 0 24 24" className="h-4 w-4 text-[#FFD700]" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/></svg>,
+    icon: <Server className="h-4 w-4 text-[#FFD700]" />,
   },
   {
     id: "lancedb",
