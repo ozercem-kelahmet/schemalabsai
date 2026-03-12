@@ -131,7 +131,7 @@ const sources: { id: DataSource; label: string; icon: React.ReactNode }[] = [
   {
     id: "rest",
     label: "REST API",
-    icon: <svg viewBox="0 0 24 24" className="h-4 w-4 text-[#6366F1]" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/></svg>,
+    icon: <Globe className="h-4 w-4 text-[#6366F1]" />,
   },
   {
     id: "gcs",
