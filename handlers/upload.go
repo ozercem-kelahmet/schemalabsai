@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"runtime"
 	"path/filepath"
 	"strings"
 	"time"
@@ -19,11 +20,31 @@ import (
 
 // sanitizeFilename - Path traversal önlemek için filename sanitize et
 func sanitizeFilename(name string) string {
-	// Path separator ve tehlikeli karakterleri kaldır
 	name = filepath.Base(name)
 	name = strings.ReplaceAll(name, "..", "")
 	name = strings.ReplaceAll(name, "/", "")
 	name = strings.ReplaceAll(name, "\\", "")
+	name = strings.ReplaceAll(name, " ", "_")
+	name = strings.ReplaceAll(name, "'", "")
+	name = strings.ReplaceAll(name, "\"", "")
+	name = strings.ReplaceAll(name, "#", "")
+	name = strings.ReplaceAll(name, "&", "")
+	name = strings.ReplaceAll(name, "(", "")
+	name = strings.ReplaceAll(name, ")", "")
+	name = strings.ReplaceAll(name, "{", "")
+	name = strings.ReplaceAll(name, "}", "")
+	name = strings.ReplaceAll(name, "[", "")
+	name = strings.ReplaceAll(name, "]", "")
+	name = strings.ReplaceAll(name, ";", "")
+	name = strings.ReplaceAll(name, "!", "")
+	name = strings.ReplaceAll(name, "@", "")
+	name = strings.ReplaceAll(name, "$", "")
+	name = strings.ReplaceAll(name, "%", "")
+	name = strings.ReplaceAll(name, "^", "")
+	name = strings.ReplaceAll(name, "+", "")
+	name = strings.ReplaceAll(name, "=", "")
+	name = strings.ReplaceAll(name, "`", "")
+	name = strings.ReplaceAll(name, "~", "")
 	if name == "" || name == "." {
 		return "unnamed_file"
 	}
@@ -64,6 +85,7 @@ type UploadResponse struct {
 
 
 func flattenJSON(prefix string, m map[string]interface{}) map[string]interface{} {
+	if strings.Count(prefix, ".") > 10 { return map[string]interface{}{prefix: fmt.Sprintf("%v", m)} }
 	result := make(map[string]interface{})
 	for k, v := range m {
 		key := k
@@ -84,8 +106,20 @@ func flattenJSON(prefix string, m map[string]interface{}) map[string]interface{}
 }
 
 func UploadHandler(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			buf := make([]byte, 4096)
+			n := runtime.Stack(buf, false)
+			log.Printf("UPLOAD PANIC: %v\nStack:\n%s", rec, buf[:n])
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Upload failed due to server error. Please try again."})
+		}
+	}()
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
 		return
 	}
 
@@ -128,6 +162,12 @@ maxFileSizeMB = getEnvInt("MAX_FILE_SIZE_MB_UNLIMITED", 100)
 }
 }
 maxFileSize := int64(maxFileSizeMB) * 1024 * 1024
+	if header.Size == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "File is empty (0 bytes). Please upload a valid file."})
+		return
+	}
 	if header.Size > maxFileSize {
 		w.Header().Set("Content-Type", "application/json")
 w.WriteHeader(http.StatusBadRequest)
@@ -206,7 +246,12 @@ json.NewEncoder(w).Encode(map[string]string{"error": "File type not supported. S
 		finalFilename = fmt.Sprintf("%s_%s%s", baseName, dateStr, ext)
 	}
 
-	destFilename := fileID + "_" + sanitizeFilename(finalFilename)
+	sanitized := sanitizeFilename(finalFilename)
+	if len(sanitized) > 200 {
+		ext := filepath.Ext(sanitized)
+		sanitized = sanitized[:200-len(ext)] + ext
+	}
+	destFilename := fileID + "_" + sanitized
 	destPath := filepath.Join(uploadDir, destFilename)
 
 	dest, err := os.Create(destPath)
@@ -225,7 +270,14 @@ json.NewEncoder(w).Encode(map[string]string{"error": "Failed to write file"})
 		return
 	}
 	dest.Sync()
-	dest.Close() // Close before parsing so Excel/JSON can read the file
+	dest.Close()
+	if size == 0 {
+		os.Remove(destPath)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "File write failed - 0 bytes written. Please try again."})
+		return
+	}
 
 // Verify file written correctly
 if fi, statErr := os.Stat(destPath); statErr == nil {
@@ -245,12 +297,40 @@ log.Printf("File stat error: %v", statErr)
 		
 		if strings.HasSuffix(strings.ToLower(finalFilename), ".csv") {
 			if csvFile, err := os.Open(destPath); err == nil {
+			defer csvFile.Close()
+				// BOM strip
+				buf := make([]byte, 3)
+				csvFile.Read(buf)
+				if buf[0] == 0xEF && buf[1] == 0xBB && buf[2] == 0xBF {
+					csvFile.Seek(3, 0)
+				} else {
+					csvFile.Seek(0, 0)
+				}
+				// Auto-detect delimiter
+				peekBuf := make([]byte, 1024)
+				n, _ := csvFile.Read(peekBuf)
+				if buf[0] == 0xEF && buf[1] == 0xBB && buf[2] == 0xBF {
+					csvFile.Seek(3, 0)
+				} else {
+					csvFile.Seek(0, 0)
+				}
+				delimiter := ','
+				if n > 0 {
+					line := string(peekBuf[:n])
+					if idx := strings.IndexByte(line, '\n'); idx > 0 { line = line[:idx] }
+					if strings.Count(line, ";") > strings.Count(line, ",") { delimiter = ';' }
+					if strings.Count(line, "\t") > strings.Count(line, string(delimiter)) { delimiter = '\t' }
+				}
 				reader := csv.NewReader(csvFile)
+				reader.Comma = delimiter
+				reader.LazyQuotes = true
+				reader.TrimLeadingSpace = true
 				if headers, err := reader.Read(); err == nil {
 					columns = strings.Join(headers, ",")
 					
 					// Find target column (last column or 'sector'/'subsector'/'category')
-					targetIdx := len(headers) - 1
+					targetIdx := -1
+					if len(headers) > 0 { targetIdx = len(headers) - 1 }
 					for i, h := range headers {
 						hl := strings.ToLower(h)
 						if hl == "sector" || hl == "subsector" || hl == "category" || hl == "class" || hl == "target" || hl == "label" {
@@ -266,8 +346,9 @@ log.Printf("File stat error: %v", statErr)
 						if err != nil {
 							break
 						}
+
 						rowCount++
-						if targetIdx < len(record) {
+						if targetIdx >= 0 && targetIdx < len(record) {
 							uniqueMap[record[targetIdx]] = true
 						}
 					}
@@ -286,6 +367,7 @@ log.Printf("File stat error: %v", statErr)
 		// Parse Excel files
 		if strings.HasSuffix(strings.ToLower(finalFilename), ".xlsx") || strings.HasSuffix(strings.ToLower(finalFilename), ".xls") {
 			if xlFile, err := excelize.OpenFile(destPath); err == nil {
+				defer xlFile.Close()
 				sheets := xlFile.GetSheetList()
 log.Printf("Excel opened: %s, sheets=%v (%d)", destPath, sheets, len(sheets))
 				if len(sheets) > 0 {
@@ -294,7 +376,8 @@ log.Printf("Excel sheet[0] %q: rows=%d err=%v", sheets[0], len(rows), err)
 					if err == nil && len(rows) > 0 {
 						columns = strings.Join(rows[0], ",")
 						rowCount = len(rows) - 1
-						targetIdx := len(rows[0]) - 1
+						targetIdx := -1
+					if len(rows[0]) > 0 { targetIdx = len(rows[0]) - 1 }
 						for i, h := range rows[0] {
 							hl := strings.ToLower(h)
 							if hl == "sector" || hl == "subsector" || hl == "category" || hl == "class" || hl == "target" || hl == "label" {
@@ -304,7 +387,7 @@ log.Printf("Excel sheet[0] %q: rows=%d err=%v", sheets[0], len(rows), err)
 						}
 						uniqueMap := make(map[string]bool)
 						for i := 1; i < len(rows); i++ {
-							if targetIdx < len(rows[i]) {
+							if targetIdx >= 0 && targetIdx < len(rows[i]) {
 								uniqueMap[rows[i][targetIdx]] = true
 							}
 						}
@@ -337,9 +420,11 @@ for _, row := range sheetRows {
 sheetWriter.Write(row)
 }
 sheetWriter.Flush()
-sheetInfo, _ := sheetFile.Stat()
-sheetSize := sheetInfo.Size()
 sheetFile.Close()
+sheetSize := int64(0)
+if sheetInfo, statErr := os.Stat(sheetPath); statErr == nil {
+	sheetSize = sheetInfo.Size()
+}
 sheetCols := ""
 sheetRowCount := len(sheetRows) - 1
 sheetColCount := 0

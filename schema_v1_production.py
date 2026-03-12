@@ -55,7 +55,7 @@ class Config:
     # Training
     batch_size = 1 if not torch.cuda.is_available() else 32
     lr = 1e-4
-    warmup_epochs = 3
+    warmup_epochs = 1
     total_epochs = 20
     label_smoothing = 0.1
     weight_decay = 0.01
@@ -346,6 +346,7 @@ with open(PRECOMP_DIR / "metadata.json") as f:
 DS_SECTORS = meta["ds_sectors"]
 DS_S2I = meta["ds_s2i"]
 N_DS = len(DS_SECTORS)
+I2S = {int(i): s for s, i in DS_S2I.items()}
 N = len(labels_all)
 print(f"Loaded {N:,} samples in {time.time()-t0:.1f}s — {N_DS} sectors")
 
@@ -373,10 +374,42 @@ split = int(0.95 * N)
 train_indices = all_indices[:split]
 test_indices = all_indices[split:]
 
+# ============================================================
+# BALANCED SAMPLING — cap large sectors, oversample small ones
+# ============================================================
+from torch.utils.data import WeightedRandomSampler
+from collections import Counter
+
+MAX_PER_SECTOR = 10000
+MIN_PER_SECTOR = 1000
+
+# Count per sector in train set
+train_labels = [labels_all[i].item() for i in train_indices]
+sector_counts = Counter(train_labels)
+
+# Compute sample weights: inverse frequency, capped
+weights = []
+for lbl in train_labels:
+    count = sector_counts[lbl]
+    # Cap: if sector has > MAX, reduce weight; if < MIN, increase weight
+    if count > MAX_PER_SECTOR:
+        w = MAX_PER_SECTOR / count
+    elif count < MIN_PER_SECTOR:
+        w = MIN_PER_SECTOR / count
+    else:
+        w = 1.0
+    weights.append(w)
+
+sample_weights = torch.tensor(weights, dtype=torch.float64)
+
+# Target ~150K samples per epoch (balanced)
+balanced_epoch_size = min(150000, len(train_indices))
+train_sampler = WeightedRandomSampler(sample_weights, num_samples=balanced_epoch_size, replacement=True)
+
 _is_cuda = torch.cuda.is_available()
 
 train_loader = DataLoader(
-    PrecomputedDataset(train_indices), batch_size=cfg.batch_size, shuffle=True,
+    PrecomputedDataset(train_indices), batch_size=cfg.batch_size, sampler=train_sampler,
     num_workers=4 if _is_cuda else 0, pin_memory=_is_cuda,
     persistent_workers=True if _is_cuda else False,
     prefetch_factor=4 if _is_cuda else None, drop_last=True)
@@ -386,7 +419,18 @@ test_loader = DataLoader(
     num_workers=2 if _is_cuda else 0, pin_memory=_is_cuda,
     persistent_workers=True if _is_cuda else False)
 
-print(f"Train: {len(train_indices):,}, Test: {len(test_indices):,}")
+# Show balanced distribution
+balanced_counts = Counter()
+for w, lbl in zip(weights, train_labels):
+    balanced_counts[I2S[lbl]] += w
+total_w = sum(balanced_counts.values())
+print(f"\nBalanced sampling: {balanced_epoch_size:,} samples/epoch (was {len(train_indices):,})")
+top5 = balanced_counts.most_common(5)
+bot5 = balanced_counts.most_common()[-5:]
+print(f"  Top 5: {', '.join(f'{s}:{n/total_w*100:.1f}%' for s,n in top5)}")
+print(f"  Bot 5: {', '.join(f'{s}:{n/total_w*100:.1f}%' for s,n in bot5)}")
+
+print(f"Train: {len(train_indices):,} (balanced epoch: {balanced_epoch_size:,}), Test: {len(test_indices):,}")
 print(f"Batches/epoch: {len(train_loader):,}, Batch size: {cfg.batch_size}")
 
 # ============================================================
@@ -910,8 +954,8 @@ for epoch in range(start_epoch, cfg.total_epochs):
             elapsed = time.time() - t_ep
             done = (bi + 1) * cfg.batch_size
             rate = done / elapsed
-            eta = (len(train_indices) - done) / max(rate, 1)
-            print(f"  E{epoch+1} [{done:,}/{len(train_indices):,}] "
+            eta = (balanced_epoch_size - done) / max(rate, 1)
+            print(f"  E{epoch+1} [{done:,}/{balanced_epoch_size:,}] "
                   f"loss={ep_loss/ep_n:.4f} s_acc={ep_correct_s/ep_n*100:.1f}% c_acc={ep_correct_c/ep_n*100:.1f}% "
                   f"lr={lr:.6f} rate={rate:.0f}/s eta={eta:.0f}s")
 
@@ -974,9 +1018,9 @@ for epoch in range(start_epoch, cfg.total_epochs):
 
     if not hasattr(model, "_no_improve"):
         model._no_improve = 0
-    if sa <= prev_best and epoch > 5:
+    if sa <= prev_best and epoch > 2:
         model._no_improve += 1
-        if model._no_improve >= 5:
+        if model._no_improve >= 2:
             print(f"  Early stop (best={best_acc:.1f}%)")
             break
     else:
