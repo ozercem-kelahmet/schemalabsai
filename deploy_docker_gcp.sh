@@ -100,7 +100,6 @@ echo "[OK] Dockerfile & Compose updated"
 step 5 "Remote Build & Deploy"
 ssh -o ServerAliveInterval=10 -o ServerAliveCountMax=360 -o TCPKeepAlive=yes $SERVER << 'DEPLOY_EOF'
 #!/bin/bash
-set -e
 cd /opt/schemalabsai
 
 step() {
@@ -162,14 +161,16 @@ build_svc() {
   local PROGRESS=""
   [ "$BK" -eq 1 ] && PROGRESS="--progress=plain"
 
-  script -qfc "sudo DOCKER_BUILDKIT=$BK docker compose build $PROGRESS ${SVC}" ${LOG} || true
+  sudo DOCKER_BUILDKIT=$BK docker compose build $PROGRESS ${SVC} > ${LOG} 2>&1
+  local EXIT=$?
+  cat ${LOG}
 
   local DUR=$(( $(date +%s) - START ))
-  if grep -qE "Successfully built|Successfully tagged|Image.*Built" ${LOG} 2>/dev/null; then
+  if [ "$EXIT" -eq 0 ]; then
     echo "[OK] ${SVC} ($(sudo docker images schemalabsai-${SVC} --format '{{.Size}}' 2>/dev/null), ${DUR}s)"
+    return 0
   else
     echo "[FAIL] ${SVC} after ${DUR}s"
-    tail -20 ${LOG}
     return 1
   fi
 }
