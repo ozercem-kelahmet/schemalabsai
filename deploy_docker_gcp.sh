@@ -116,27 +116,15 @@ step() {
 
 step 5 "Malware Scan"
 MALWARE=0
-
-# Check for suspicious executables in root dir (report only, don't auto-delete)
-SUSPICIOUS_ROOT=$(sudo find / -maxdepth 1 -type f -executable -not -name "*.sh" 2>/dev/null)
-if [ -n "$SUSPICIOUS_ROOT" ]; then
-  echo "[WARN] Suspicious files in /:"
-  echo "$SUSPICIOUS_ROOT"
-  echo "[WARN] Review manually — not auto-deleting to protect system binaries"
-  MALWARE=1
-fi
-
-# Kill crypto miners and suspicious high-CPU processes (but never system processes)
-SAFE_PROCS="python|node|next|postgres|redis|nginx|sshd|systemd|journalctl|go|schemalabsai|awk|ps|npm|docker|dockerd|containerd|grafana|prometheus|flask|gunicorn|pip|apt|dpkg|rsync|ssh|bash|sh|cron|udevadm|systemd-udevd|networkd|resolved|snapd|polkit|dbus"
-SUSPECT=$(ps aux | awk '$3>80' | grep -v -E "$SAFE_PROCS" | grep -v "grep" | wc -l)
+for f in $(sudo find / -maxdepth 1 -type f -executable 2>/dev/null); do
+  echo "[WARN] MALWARE: $f"; sudo rm -f "$f"; MALWARE=1
+done
+SUSPECT=$(ps aux | awk '$3>80' | grep -v -E 'python|node|next|postgres|redis|nginx|sshd|systemd|journalctl|go|schemalabsai|awk|ps|npm|docker' | wc -l)
 if [ "$SUSPECT" -gt 0 ]; then
-  echo "[WARN] High-CPU suspicious processes:"
-  ps aux | awk '$3>80' | grep -v -E "$SAFE_PROCS" | grep -v "grep"
-  ps aux | awk '$3>80' | grep -v -E "$SAFE_PROCS" | grep -v "grep" | awk '{print $2}' | xargs -r sudo kill -9
+  ps aux | awk '$3>80' | grep -v -E 'python|node|next|postgres|redis|nginx|sshd|systemd|journalctl|go|schemalabsai|awk|ps|npm|docker' | awk '{print $2}' | xargs -r sudo kill -9
   MALWARE=1
 fi
-
-[ "$MALWARE" -eq 0 ] && echo "[OK] System clean" || echo "[WARN] Suspicious activity detected — review above"
+[ "$MALWARE" -eq 0 ] && echo "[OK] System clean" || echo "[WARN] Malware cleaned"
 
 step 6 "System Prep"
 sudo chattr -i / 2>/dev/null || true
@@ -167,10 +155,11 @@ sudo docker image prune -f > /dev/null 2>&1 || true
 
 build_svc() {
   local SVC=$1
+  local BK=$2
   local LOG="/tmp/build-${SVC}.log"
   local START=$(date +%s)
-  echo "Building ${SVC}..."
-  sudo DOCKER_BUILDKIT=1 docker compose build --progress=plain ${SVC} 2>&1 | tee ${LOG}
+  echo "Building ${SVC} (BuildKit=$BK)..."
+  sudo DOCKER_BUILDKIT=$BK docker compose build --progress=plain ${SVC} 2>&1 | tee ${LOG}
   local EXIT=${PIPESTATUS[0]}
   local DUR=$(( $(date +%s) - START ))
   if [ "$EXIT" -eq 0 ]; then
@@ -182,16 +171,19 @@ build_svc() {
   fi
 }
 
-build_svc go || exit 1
+# Go: BUILDKIT=0 (BuildKit kills go compiler with signal 137)
+# Flask: BUILDKIT=0 (same reason, large pip install)
+# Frontend: BUILDKIT=1 (npm ci layer cache needed)
+build_svc go 0 || exit 1
 
 FLASK_IMG=$(sudo docker images -q schemalabsai-flask 2>/dev/null)
 if [ -z "$FLASK_IMG" ]; then
-  build_svc flask || exit 1
+  build_svc flask 0 || exit 1
 else
   echo "[OK] Flask reused ($(sudo docker images schemalabsai-flask --format '{{.Size}}'))"
 fi
 
-build_svc frontend || exit 1
+build_svc frontend 1 || exit 1
 
 step 8 "Start Containers"
 sudo fuser -k 6000/tcp 3000/tcp 8080/tcp 2>/dev/null || true
@@ -254,12 +246,7 @@ sudo chattr +i /opt/schemalabsai/frontend 2>/dev/null || true
 sudo systemctl restart schemalabs-website.service 2>/dev/null || true
 
 CLEAN=1
-SUSPICIOUS_POST=$(sudo find / -maxdepth 1 -type f -executable -not -name "*.sh" 2>/dev/null)
-if [ -n "$SUSPICIOUS_POST" ]; then
-  echo "[WARN] Post-deploy: suspicious files in /:"
-  echo "$SUSPICIOUS_POST"
-  CLEAN=0
-fi
+for f in $(sudo find / -maxdepth 1 -type f -executable 2>/dev/null); do echo "[WARN] MALWARE: $f"; CLEAN=0; done
 [ "$CLEAN" -eq 1 ] && echo "[OK] Post-deploy scan clean"
 
 echo ""
