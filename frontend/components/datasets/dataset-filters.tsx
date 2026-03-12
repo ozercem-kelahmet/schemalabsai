@@ -60,6 +60,11 @@ const sources: { id: DataSource; label: string; icon: React.ReactNode }[] = [
     ),
   },
   {
+    id: "excel",
+    label: "Excel",
+    icon: <svg viewBox="0 0 24 24" className="h-4 w-4 text-[#217346]" fill="currentColor"><path d="M21.17 3H7.83A1.83 1.83 0 006 4.83v14.34A1.83 1.83 0 007.83 21h13.34A1.83 1.83 0 0023 19.17V4.83A1.83 1.83 0 0021.17 3zM15 17h-2l-2-3-2 3H7l3-5-3-5h2l2 3 2-3h2l-3 5 3 5z"/></svg>,
+  },
+  {
     id: "upload",
     label: "Uploaded Files",
     icon: (
