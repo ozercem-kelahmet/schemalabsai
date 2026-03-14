@@ -260,6 +260,7 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 
 	sessionID, _ := CreateSession(user.ID, user.Email, user.Name)
 	AuthEventsTotal.WithLabelValues("login").Inc()
+	ip := r.Header.Get("X-Forwarded-For"); if ip == "" { ip = r.RemoteAddr }; updateUserGeoLocation(user.ID, ip)
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session",
@@ -3788,6 +3789,7 @@ func GoogleLoginCallbackHandler(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
+	ip := r.Header.Get("X-Forwarded-For"); if ip == "" { ip = r.RemoteAddr }; updateUserGeoLocation(user.ID, ip)
 
 	http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
 }

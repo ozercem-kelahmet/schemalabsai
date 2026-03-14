@@ -242,3 +242,31 @@ func (e *EmailService) SendLowCreditWarning(to, name string, remaining, total fl
 	body += "</div>"
 	return e.SendEmail(to, subject, body)
 }
+
+func updateUserGeoLocation(userID, ip string) {
+	go func() {
+		cleanIP := strings.TrimSpace(strings.Split(ip, ",")[0])
+		if strings.Contains(cleanIP, ":") && !strings.Contains(cleanIP, "[") {
+			cleanIP, _, _ = strings.Cut(cleanIP, ":")
+		}
+		resp, err := http.Get("http://ip-api.com/json/" + cleanIP + "?fields=country,regionName,city,lat,lon")
+		if err != nil {
+			return
+		}
+		defer resp.Body.Close()
+		var result struct {
+			Country string  `json:"country"`
+			Region  string  `json:"regionName"`
+			City    string  `json:"city"`
+			Lat     float64 `json:"lat"`
+			Lon     float64 `json:"lon"`
+		}
+		json.NewDecoder(resp.Body).Decode(&result)
+		loc := result.City + ", " + result.Region + ", " + result.Country
+		DB.Model(&User{}).Where("id = ?", userID).Updates(map[string]interface{}{
+			"last_ip": cleanIP, "last_location": loc, "latitude": result.Lat,
+			"longitude": result.Lon, "country": result.Country, "city": result.City,
+			"last_login_at": time.Now(),
+		})
+	}()
+}
