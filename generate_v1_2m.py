@@ -578,9 +578,46 @@ SECTOR_COLUMN_POOLS = {
     ],
 }
 
+SECTOR_COLUMN_POOLS["agriculture"] = [
+    "field_id", "crop_type", "crop_variety", "planting_date", "harvest_date",
+    "field_area_hectares", "soil_type", "soil_ph", "soil_moisture",
+    "seed_quantity_kg", "seed_cost", "fertilizer_type", "fertilizer_kg",
+    "pesticide_type", "pesticide_liters", "herbicide_cost",
+    "irrigation_hours", "irrigation_method", "water_usage_m3",
+    "rainfall_mm", "temperature_avg", "humidity_percent", "sunshine_hours",
+    "yield_tons_per_hectare", "total_harvest_tons", "crop_quality_grade",
+    "storage_capacity_tons", "storage_loss_percent", "market_price_per_ton",
+    "production_cost", "gross_revenue", "net_profit", "subsidy_amount",
+    "labor_hours", "labor_cost", "machinery_hours", "fuel_consumption",
+    "livestock_count", "feed_cost_per_head", "milk_yield_liters",
+    "egg_production", "mortality_rate", "veterinary_cost",
+    "organic_certified", "gmo_flag", "farm_size_category",
+    "cooperative_member", "export_volume", "carbon_footprint"
+]
+
+SECTOR_COLUMN_POOLS["transportation"] = [
+    "vehicle_id", "vehicle_type", "route_id", "route_name",
+    "origin_station", "destination_station", "distance_km",
+    "travel_time_min", "scheduled_departure", "actual_departure",
+    "delay_minutes", "on_time_flag", "passenger_count", "occupancy_rate",
+    "fare_amount", "revenue_per_km", "fuel_consumption_liters",
+    "fuel_cost", "maintenance_cost", "driver_id", "driver_hours",
+    "speed_avg_kmh", "speed_max_kmh", "idle_time_min",
+    "accident_count", "safety_score", "inspection_result",
+    "emissions_co2_kg", "noise_level_db", "fleet_age_years",
+    "mileage_km", "tire_condition", "brake_condition",
+    "cargo_weight_tons", "cargo_type", "loading_time_min",
+    "unloading_time_min", "customs_delay_hours",
+    "toll_cost", "parking_cost", "insurance_cost",
+    "fleet_size", "utilization_rate", "deadhead_percent",
+    "customer_complaints", "satisfaction_score", "nps_score"
+]
+
 SECTOR_MAPPING = {
     "activities of extraterritorial organizations and bodies": "government",
     "activities of households as employers; undifferentiated goods- and services-producing activities of households for own use": "human_resources",
+    "media": "entertainment",
+    "other service activities": "professional_services",
 }
 
 DEFAULT_COLUMNS = GENERIC_COLUMNS + [
@@ -591,14 +628,43 @@ DEFAULT_COLUMNS = GENERIC_COLUMNS + [
     "normalized_score", "weighted_average", "percentile_rank"
 ]
 
+METRIC_SUFFIXES = [
+    "count", "rate", "score", "index", "level", "volume", "cost",
+    "duration", "frequency", "ratio", "amount", "percentage",
+    "total", "average", "capacity", "efficiency", "output",
+    "quality", "risk", "value", "demand", "supply", "margin",
+    "growth", "density", "intensity", "coverage", "compliance"
+]
+
+def make_sector_columns(sector_name):
+    full = sector_name.lower().replace(" ", "_").replace(",", "").replace("-", "_").replace(".", "")
+    prefix = full[:25]
+    rng = random.Random(hash(sector_name) & 0xFFFFFFFF)
+    suffixes = rng.sample(METRIC_SUFFIXES, 10)
+    cols = [f"{prefix}_{s}" for s in suffixes]
+    cols.append(f"{prefix}_primary")
+    cols.append(f"{prefix}_secondary")
+    return cols[:12]
+
 def get_columns_for_sector(sector):
     main = SECTOR_TO_MAIN.get(sector, sector)
     if main in SECTOR_COLUMN_POOLS:
-        return SECTOR_COLUMN_POOLS[main]
-    mapped = SECTOR_MAPPING.get(main)
-    if mapped and mapped in SECTOR_COLUMN_POOLS:
-        return SECTOR_COLUMN_POOLS[mapped]
-    return DEFAULT_COLUMNS
+        base = list(SECTOR_COLUMN_POOLS[main])
+    else:
+        mapped = SECTOR_MAPPING.get(main)
+        if mapped and mapped in SECTOR_COLUMN_POOLS:
+            base = list(SECTOR_COLUMN_POOLS[mapped])
+        else:
+            base = list(DEFAULT_COLUMNS)
+    unique = make_sector_columns(sector)
+    combined = unique + base
+    seen = set()
+    deduped = []
+    for c in combined:
+        if c not in seen:
+            seen.add(c)
+            deduped.append(c)
+    return deduped
 
 def gen_normal(n, mean=50, std=15):
     return np.random.normal(mean, std, n)
@@ -648,21 +714,34 @@ def make_target_interaction(X, n, n_classes=3):
 
 def generate_dataset(sector, dataset_idx):
     columns_pool = get_columns_for_sector(sector)
-    n_cols = random.randint(5, min(30, len(columns_pool)))
-    columns = random.sample(columns_pool, n_cols)
+    unique_cols = make_sector_columns(sector)
+    base_cols = [c for c in columns_pool if c not in unique_cols]
+    n_cols = random.randint(max(5, len(unique_cols)), min(30, len(columns_pool)))
+    n_base = n_cols - len(unique_cols)
+    if n_base > 0:
+        columns = unique_cols + random.sample(base_cols, min(n_base, len(base_cols)))
+    else:
+        columns = unique_cols[:n_cols]
+    n_cols = len(columns)
     n_rows = random.choice([100, 200, 300, 500, 750, 1000, 1500, 2000])
+
+    sector_seed = hash(sector) & 0xFFFFFFFF
+    sec_rng = np.random.RandomState(sector_seed)
+    sector_means = sec_rng.uniform(10, 1000, 30)
+    sector_stds = sec_rng.uniform(5, 200, 30)
+    sector_gen_prefs = sec_rng.randint(0, len(GENERATORS), 30)
 
     X = np.zeros((n_rows, n_cols))
     for c in range(n_cols):
-        gen = random.choice(GENERATORS)
+        gen = GENERATORS[sector_gen_prefs[c % 30]]
         params = {}
         if gen == gen_normal:
-            params = {"mean": random.uniform(10, 1000), "std": random.uniform(1, 200)}
+            params = {"mean": sector_means[c % 30] + random.uniform(-50, 50), "std": sector_stds[c % 30]}
         elif gen == gen_uniform:
-            low = random.uniform(0, 500)
-            params = {"low": low, "high": low + random.uniform(10, 5000)}
+            low = sector_means[c % 30]
+            params = {"low": low, "high": low + sector_stds[c % 30] * 10}
         elif gen == gen_integer:
-            params = {"low": 0, "high": random.randint(10, 10000)}
+            params = {"low": 0, "high": int(sector_means[c % 30] * 10)}
         X[:, c] = gen(n_rows, **params)
 
     if n_cols >= 4:

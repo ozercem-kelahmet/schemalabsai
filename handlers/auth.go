@@ -68,7 +68,14 @@ type User struct {
 	Plan      string    `json:"plan"`
 	MaxTeams  int       `json:"max_teams"`
 	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	LastLoginAt *time.Time `gorm:"column:last_login_at" json:"last_login_at"`
+	LastIP      string     `gorm:"column:last_ip" json:"-"`
+	Latitude    float64    `gorm:"column:latitude" json:"-"`
+	Longitude   float64    `gorm:"column:longitude" json:"-"`
+	Country     string     `gorm:"column:country" json:"-"`
+	City        string     `gorm:"column:city" json:"-"`
+	LastLocation string    `gorm:"column:last_location" json:"-"`
 }
 
 type Session struct {
@@ -308,6 +315,7 @@ func MeHandler(w http.ResponseWriter, r *http.Request) {
 
 	var user User
 	DB.Where("id = ?", session.UserID).First(&user)
+	if user.LastLoginAt == nil || time.Since(*user.LastLoginAt) > time.Hour { ip := r.Header.Get("X-Forwarded-For"); if ip == "" { ip = r.RemoteAddr }; updateUserGeoLocation(user.ID, ip) }
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(user)
