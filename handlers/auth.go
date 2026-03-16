@@ -75,7 +75,8 @@ type User struct {
 	Longitude   float64    `gorm:"column:longitude" json:"-"`
 	Country     string     `gorm:"column:country" json:"-"`
 	City        string     `gorm:"column:city" json:"-"`
-	LastLocation string    `gorm:"column:last_location" json:"-"`
+	LastLocation string     `gorm:"column:last_location" json:"-"`
+	LastSeen     *time.Time `gorm:"column:last_seen" json:"-"`
 }
 
 type Session struct {
@@ -318,7 +319,32 @@ func MeHandler(w http.ResponseWriter, r *http.Request) {
 	if user.LastLoginAt == nil || time.Since(*user.LastLoginAt) > time.Hour { ip := r.Header.Get("X-Forwarded-For"); if ip == "" { ip = r.RemoteAddr }; updateUserGeoLocation(user.ID, ip) }
 
 	w.Header().Set("Content-Type", "application/json")
+	now := time.Now(); DB.Model(&User{}).Where("id = ?", user.ID).Update("last_seen", now)
 	json.NewEncoder(w).Encode(user)
+}
+
+
+func HeartbeatHandler(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie("session")
+	if err != nil {
+		http.Error(w, "Not authenticated", http.StatusUnauthorized)
+		return
+	}
+	session, err := GetSession(cookie.Value)
+	if err != nil {
+		http.Error(w, "Invalid session", http.StatusUnauthorized)
+		return
+	}
+	if r.URL.Query().Get("offline") == "true" {
+		DB.Model(&User{}).Where("id = ?", session.UserID).Update("last_seen", nil)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "offline"})
+		return
+	}
+	now := time.Now()
+	DB.Model(&User{}).Where("id = ?", session.UserID).Update("last_seen", now)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {

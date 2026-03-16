@@ -155,6 +155,7 @@ func main() {
 		fmt.Fprintf(w, `{"version":"%s"}`, BuildVersion)
 	})
 	http.HandleFunc("/api/auth/me", enableCORS(handlers.MeHandler))
+	http.HandleFunc("/api/heartbeat", enableCORS(handlers.HeartbeatHandler))
 	http.HandleFunc("/api/auth/update-profile", enableCORS(handlers.AuthMiddleware(handlers.UpdateProfileHandler)))
 	http.HandleFunc("/api/auth/delete-account", enableCORS(handlers.AuthMiddleware(handlers.DeleteAccountHandler)))
 	http.HandleFunc("/api/auth/change-password-request", enableCORS(handlers.AuthMiddleware(handlers.ChangePasswordRequestHandler)))

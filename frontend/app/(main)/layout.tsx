@@ -5,8 +5,10 @@ import { VersionChecker } from "@/components/version-checker"
 import type React from "react"
 import { Sidebar, SidebarProvider } from "@/components/layout/sidebar"
 import { MainContent } from "@/components/layout/main-content"
+import { useHeartbeat } from "@/hooks/useHeartbeat"
 
 export default function MainLayout({ children }: { children: React.ReactNode }) {
+  useHeartbeat()
   return (
     <SidebarProvider>
       <Sidebar />
