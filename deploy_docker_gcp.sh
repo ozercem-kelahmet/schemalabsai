@@ -200,7 +200,9 @@ fi
 step 8 "Start Containers"
 sudo fuser -k 6000/tcp 3000/tcp 8080/tcp 2>/dev/null || true
 sleep 2
-sudo docker compose up -d postgres redis flask go frontend spark spark-app
+sudo docker compose up -d postgres redis flask go frontend
+# Spark ayrı başlat - fail olursa diğerleri etkilenmesin
+sudo docker compose up -d spark spark-app 2>/dev/null || echo "[WARN] Spark containers failed, continuing without Spark"
 sleep 3
 
 GRAFANA=$(sudo docker ps -q -f name=schemalabs-grafana 2>/dev/null)
