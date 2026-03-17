@@ -42,10 +42,10 @@ rsync -avz -e ssh \
   --include='google_credentials.json' \
   --include='.dockerignore' \
   --include='docker-compose.yml' \
-  --include='docker/' --include='docker/***' \
+  --include='docker/' --include='docker/***' --include='docker/Dockerfile.spark' \
   --include='model/' --include='model/*.py' --include='model/adapters/***' --include='model/layers/***' --include='model/miras/***' --include='model/inference/***' --exclude='model/finetuned_models' --exclude='model/checkpoints' --exclude='model/data' --exclude='model/uploads' \
   --include='handlers/' --include='handlers/*.go' \
-  --include='services/' --include='services/*.go' \
+  --include='services/' --include='services/*.go' --include='services/spark_app/***' \
   --include='frontend/' \
   --include='frontend/.env' --include='frontend/.env.local' --include='frontend/.npmrc' \
   --include='frontend/components/***' --include='frontend/lib/***' \
@@ -189,10 +189,18 @@ fi
 
 build_svc frontend 1 || exit 1
 
+# Spark app build
+SPARK_IMG=$(sudo docker images -q schemalabsai-spark-app 2>/dev/null)
+if [ -z "$SPARK_IMG" ]; then
+  build_svc spark-app 0 || echo "[WARN] Spark build failed, continuing without Spark"
+else
+  echo "[OK] Spark-app reused ($(sudo docker images schemalabsai-spark-app --format '{{.Size}}'))"
+fi
+
 step 8 "Start Containers"
 sudo fuser -k 6000/tcp 3000/tcp 8080/tcp 2>/dev/null || true
 sleep 2
-sudo docker compose up -d postgres redis flask go frontend
+sudo docker compose up -d postgres redis flask go frontend spark spark-app
 sleep 3
 
 GRAFANA=$(sudo docker ps -q -f name=schemalabs-grafana 2>/dev/null)

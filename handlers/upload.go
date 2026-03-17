@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"schemalabsai/services"
 	"path/filepath"
 	"strings"
 	"time"
@@ -296,6 +297,23 @@ log.Printf("File stat error: %v", statErr)
 		uniqueValues := ""
 		
 		if strings.HasSuffix(strings.ToLower(finalFilename), ".csv") {
+			// Büyük CSV → Spark ile row count al
+			if size > 0 && services.DefaultSpark != nil && services.DefaultSpark.IsAvailable() && services.DefaultSpark.ShouldUseSparkBySize(size) {
+				log.Printf("[SPARK] Large CSV upload: %.1fMB, using Spark", float64(size)/(1024*1024))
+				job := services.SparkJobRequest{
+					JobType:    "parse_csv",
+					OutputPath: destPath + "_spark.csv",
+					Config:     map[string]string{"input_path": destPath},
+				}
+				resp, err := services.DefaultSpark.SubmitJob(job)
+				if err == nil {
+					result, werr := services.DefaultSpark.WaitForJob(resp.JobID, 10*60*1000000000)
+					if werr == nil && result.Status == "completed" {
+						rowCount = int(result.RowCount)
+						log.Printf("[SPARK] CSV parsed: %d rows", rowCount)
+					}
+				}
+			}
 			if csvFile, err := os.Open(destPath); err == nil {
 			defer csvFile.Close()
 				// BOM strip

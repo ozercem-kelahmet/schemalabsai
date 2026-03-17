@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"schemalabsai/services"
 )
 
 func enableCORS(next http.HandlerFunc) http.HandlerFunc {
@@ -116,6 +117,12 @@ func main() {
 	handlers.InitGoogleOAuth()
 	handlers.InitErrorLogs()
 	log.Printf("Google OAuth initialized in %v", time.Since(start))
+
+// Initialize Storage backend (local → GCS → S3 env ile seçilir)
+services.InitStorage()
+
+// Initialize Spark (local → standalone → Dataproc env ile seçilir)
+services.InitSpark()
 	flaskPort := getEnv("FLASK_PORT", "6000")
 	frontendPort := getEnv("FRONTEND_PORT", "3000")
 	apiPort := getEnv("API_PORT", "8080")

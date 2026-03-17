@@ -26,6 +26,7 @@ sf "github.com/snowflakedb/gosnowflake"
 	"time"
 
 	"github.com/google/uuid"
+	"schemalabsai/services"
 )
 
 // sanitizeFileID - Path traversal önlemek için file ID sanitize et
@@ -735,10 +736,17 @@ if mongoSelMap != nil && !mongoSelMap[collName] { continue }
 				expReq.Header.Set("Authorization", "Bearer "+conn.APIKey)
 				expResp, err := httpClient.Do(expReq)
 				if err != nil { continue }
-				bodyBytes, _ := io.ReadAll(io.LimitReader(expResp.Body, 50*1024*1024))
-				expResp.Body.Close()
-				csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, sanitizeTableName(f.Name))
-				os.WriteFile(csvPath, bodyBytes, 0644)
+			csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, sanitizeTableName(f.Name))
+			csvFile, _ := os.Create(csvPath)
+			limitBytes := getEnvInt("MAX_FILE_SIZE_MB", 50) * 1024 * 1024
+			if quota, qerr := GetOrCreateQuota(conn.UserID); qerr == nil && quota != nil {
+				if quota.Plan == "alpha_unlimited" || quota.Plan == "limitless" || quota.Plan == "unlimited" {
+					limitBytes = getEnvInt("MAX_FILE_SIZE_MB_UNLIMITED", 10240) * 1024 * 1024
+				}
+			}
+			io.Copy(csvFile, io.LimitReader(expResp.Body, limitBytes))
+			csvFile.Close()
+			expResp.Body.Close()
 				filePaths = append(filePaths, csvPath)
 				log.Printf("Exported Google Drive file %s to %s", f.Name, csvPath)
 			}
@@ -782,10 +790,17 @@ if mongoSelMap != nil && !mongoSelMap[collName] { continue }
 					objReq, _ := http.NewRequest("GET", objURL, nil)
 					objResp, err := httpClient.Do(objReq)
 					if err != nil { continue }
-					objBytes, _ := io.ReadAll(io.LimitReader(objResp.Body, 50*1024*1024))
-					objResp.Body.Close()
 					csvPath := fmt.Sprintf("./uploads/conn_%s_%s", connID, sanitizeFilename(objName))
-					os.WriteFile(csvPath, objBytes, 0644)
+					csvFile, _ := os.Create(csvPath)
+					limitBytes := getEnvInt("MAX_FILE_SIZE_MB", 50) * 1024 * 1024
+					if quota, qerr := GetOrCreateQuota(conn.UserID); qerr == nil && quota != nil {
+						if quota.Plan == "alpha_unlimited" || quota.Plan == "limitless" || quota.Plan == "unlimited" {
+							limitBytes = getEnvInt("MAX_FILE_SIZE_MB_UNLIMITED", 10240) * 1024 * 1024
+						}
+					}
+					io.Copy(csvFile, io.LimitReader(objResp.Body, limitBytes))
+					csvFile.Close()
+					objResp.Body.Close()
 					filePaths = append(filePaths, csvPath)
 					log.Printf("Exported S3 object %s to %s", objName, csvPath)
 				}
@@ -811,10 +826,17 @@ if mongoSelMap != nil && !mongoSelMap[collName] { continue }
 					objReq.Header.Set("Authorization", "Bearer "+conn.APIKey)
 					objResp, err := httpClient.Do(objReq)
 					if err != nil { continue }
-					objBytes, _ := io.ReadAll(io.LimitReader(objResp.Body, 50*1024*1024))
-					objResp.Body.Close()
 					csvPath := fmt.Sprintf("./uploads/conn_%s_%s", connID, sanitizeFilename(item.Name))
-					os.WriteFile(csvPath, objBytes, 0644)
+					csvFile, _ := os.Create(csvPath)
+					limitBytes := int64(50 * 1024 * 1024)
+					if quota, err := GetOrCreateQuota(conn.UserID); err == nil && quota != nil {
+						if quota.Plan == "alpha_unlimited" || quota.Plan == "limitless" || quota.Plan == "unlimited" {
+							limitBytes = int64(10240 * 1024 * 1024)
+						}
+					}
+					io.Copy(csvFile, io.LimitReader(objResp.Body, limitBytes))
+					csvFile.Close()
+					objResp.Body.Close()
 					filePaths = append(filePaths, csvPath)
 					log.Printf("Exported GCS object %s to %s", item.Name, csvPath)
 				}
@@ -886,6 +908,26 @@ for _, s := range sel { selectedMap[s] = true }
 }
 	for _, tableName := range tableNames {
 if selectedMap != nil && !selectedMap[tableName] { continue }
+
+		// Row count kontrolü - büyük tablolar için Spark
+		var rowCount int64
+		countQ := fmt.Sprintf(`SELECT COUNT(*) FROM "%s"`, tableName)
+		if !quoteTable { countQ = fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName) }
+		sqlDB.QueryRow(countQ).Scan(&rowCount)
+		log.Printf("Table %s: %d rows", tableName, rowCount)
+
+		if services.DefaultSpark != nil && services.DefaultSpark.ShouldUseSpark(rowCount) && services.DefaultSpark.IsAvailable() {
+			log.Printf("[SPARK] Large table %s (%d rows), using Spark", tableName, rowCount)
+			// dsn'den jdbc url oluştur
+			jdbcURL := strings.Replace(dsn, "postgresql://", "jdbc:postgresql://", 1)
+			csvPath := writeRowsToCSVWithSpark(jdbcURL, tableName, connID, tableName, "org.postgresql.Driver")
+			if csvPath != "" {
+				filePaths = append(filePaths, csvPath)
+				continue
+			}
+			log.Printf("[SPARK] Fallback to Go for table %s", tableName)
+		}
+
 		q := fmt.Sprintf("SELECT * FROM %s", tableName)
 		if quoteTable { q = fmt.Sprintf(`SELECT * FROM "%s"`, tableName) }
 		dataRows, err := sqlDB.Query(q)
@@ -1191,11 +1233,16 @@ func writeRowsToCSV(dataRows *sql.Rows, connID, tableName string) string {
 	cols, _ := dataRows.Columns()
 	csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, tableName)
 	csvFile, _ := os.Create(csvPath)
+	if csvFile == nil {
+		log.Printf("Failed to create CSV file: %s", csvPath)
+		return ""
+	}
 	csvWriter := csv.NewWriter(csvFile)
 	csvWriter.Write(cols)
 	values := make([]interface{}, len(cols))
 	valuePtrs := make([]interface{}, len(cols))
 	for i := range values { valuePtrs[i] = &values[i] }
+	rowCount := int64(0)
 	for dataRows.Next() {
 		dataRows.Scan(valuePtrs...)
 		row := make([]string, len(cols))
@@ -1203,10 +1250,54 @@ func writeRowsToCSV(dataRows *sql.Rows, connID, tableName string) string {
 			if v == nil { row[i] = "" } else { row[i] = fmt.Sprintf("%v", v) }
 		}
 		csvWriter.Write(row)
+		rowCount++
+		// Flush every 10K rows to avoid memory buildup
+		if rowCount % 10000 == 0 {
+			csvWriter.Flush()
+			log.Printf("Exported %d rows from table %s...", rowCount, tableName)
+		}
 	}
 	csvWriter.Flush()
 	csvFile.Close()
-	log.Printf("Exported table %s to %s", tableName, csvPath)
+	log.Printf("Exported table %s to %s (%d rows)", tableName, csvPath, rowCount)
+	return csvPath
+}
+
+// writeRowsToCSVWithSpark - büyük tablolar için Spark kullan
+func writeRowsToCSVWithSpark(jdbcURL, table, connID, tableName, driver string) string {
+	csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, tableName)
+	
+	if services.DefaultSpark == nil || !services.DefaultSpark.IsAvailable() {
+		log.Printf("[SPARK] Not available, falling back to Go for table %s", tableName)
+		return ""
+	}
+
+	job := services.SparkJobRequest{
+		JobType:    "export_sql",
+		ConnType:   driver,
+		ConnID:     connID,
+		OutputPath: csvPath,
+		Config: map[string]string{
+			"jdbc_url": jdbcURL,
+			"table":    table,
+			"driver":   driver,
+		},
+	}
+
+	resp, err := services.DefaultSpark.SubmitJob(job)
+	if err != nil {
+		log.Printf("[SPARK] Job submit failed for %s: %v", tableName, err)
+		return ""
+	}
+
+	// Wait max 30 minutes
+	result, err := services.DefaultSpark.WaitForJob(resp.JobID, 30*60*1000000000)
+	if err != nil || result.Status == "failed" {
+		log.Printf("[SPARK] Job failed for %s: %v", tableName, err)
+		return ""
+	}
+
+	log.Printf("[SPARK] Exported %s: %d rows → %s", tableName, result.RowCount, csvPath)
 	return csvPath
 }
 
@@ -1387,28 +1478,67 @@ if req.ConnectionIDs != "" {
 				for _, collName := range collections {
 					if mongoSelectedMap != nil && !mongoSelectedMap[collName] { continue }
 					coll := client.Database(dbName).Collection(collName)
+					// Önce count al
+					collCount, _ := coll.CountDocuments(context.Background(), map[string]interface{}{})
+					log.Printf("MongoDB collection %s: %d docs", collName, collCount)
+
+					// Spark ile export dene
+					if services.DefaultSpark != nil && services.DefaultSpark.ShouldUseSpark(collCount) && services.DefaultSpark.IsAvailable() {
+						log.Printf("[SPARK] Large collection %s (%d docs), using Spark", collName, collCount)
+						csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, collName)
+						job := services.SparkJobRequest{
+							JobType: "export_mongodb",
+							ConnID:  connID,
+							OutputPath: csvPath,
+							Config: map[string]string{
+								"uri":        mongoURI,
+								"database":   dbName,
+								"collection": collName,
+							},
+						}
+						resp, err := services.DefaultSpark.SubmitJob(job)
+						if err == nil {
+							result, err := services.DefaultSpark.WaitForJob(resp.JobID, 30*60*1000000000)
+							if err == nil && result.Status == "completed" {
+								filePaths = append(filePaths, csvPath)
+								log.Printf("[SPARK] MongoDB %s exported: %d rows", collName, result.RowCount)
+								continue
+							}
+						}
+						log.Printf("[SPARK] Fallback to Go for MongoDB %s", collName)
+					}
+
+					// Go stream - cursor ile satır satır oku
 					cursor, cerr := coll.Find(context.Background(), map[string]interface{}{})
 					if cerr != nil { continue }
-					var docs []map[string]interface{}
-					cursor.All(context.Background(), &docs)
-					if len(docs) > 0 {
-						csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, collName)
-						csvFile, _ := os.Create(csvPath)
-						csvWriter := csv.NewWriter(csvFile)
-						var headers []string
-						for k := range docs[0] { headers = append(headers, k) }
-						csvWriter.Write(headers)
-						for _, doc := range docs {
-							row := make([]string, len(headers))
-							for i, h := range headers {
-								if v, exists := doc[h]; exists && v != nil { row[i] = fmt.Sprintf("%v", v) }
-							}
-							csvWriter.Write(row)
+					csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, collName)
+					csvFile, _ := os.Create(csvPath)
+					csvWriter := csv.NewWriter(csvFile)
+					headersWritten := false
+					var headers []string
+					rowCount := 0
+					for cursor.Next(context.Background()) {
+						var doc map[string]interface{}
+						if cursor.Decode(&doc) != nil { continue }
+						if !headersWritten {
+							for k := range doc { headers = append(headers, k) }
+							csvWriter.Write(headers)
+							headersWritten = true
 						}
-						csvWriter.Flush()
-						csvFile.Close()
+						row := make([]string, len(headers))
+						for i, h := range headers {
+							if v, exists := doc[h]; exists && v != nil { row[i] = fmt.Sprintf("%v", v) }
+						}
+						csvWriter.Write(row)
+						rowCount++
+						if rowCount % 10000 == 0 { csvWriter.Flush() }
+					}
+					cursor.Close(context.Background())
+					csvWriter.Flush()
+					csvFile.Close()
+					if rowCount > 0 {
 						filePaths = append(filePaths, csvPath)
-						log.Printf("Exported MongoDB %s.%s to %s (%d rows)", connID, collName, csvPath, len(docs))
+						log.Printf("Exported MongoDB %s.%s to %s (%d rows)", connID, collName, csvPath, rowCount)
 					}
 				}
 			}
@@ -1472,6 +1602,41 @@ if req.ConnectionIDs != "" {
 			sfRows.Close()
 			for _, tableName := range sfTableNames {
 				if sfSelectedMap != nil && !sfSelectedMap[tableName] { continue }
+
+				// Row count kontrolü
+				var sfRowCount int64
+				sfDB.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)).Scan(&sfRowCount)
+				log.Printf("[SNOWFLAKE] Table %s: %d rows", tableName, sfRowCount)
+
+				if services.DefaultSpark != nil && services.DefaultSpark.ShouldUseSpark(sfRowCount) && services.DefaultSpark.IsAvailable() {
+					log.Printf("[SPARK] Large Snowflake table %s (%d rows), using Spark", tableName, sfRowCount)
+					csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, tableName)
+					job := services.SparkJobRequest{
+						JobType: "export_snowflake",
+						ConnID:  connID,
+						OutputPath: csvPath,
+						Config: map[string]string{
+							"url":       conn.Host,
+							"user":      conn.Username,
+							"password":  conn.Password,
+							"database":  conn.Database,
+							"warehouse": conn.Bucket,
+							"table":     tableName,
+						},
+					}
+					resp, err := services.DefaultSpark.SubmitJob(job)
+					if err == nil {
+						result, werr := services.DefaultSpark.WaitForJob(resp.JobID, 30*60*1000000000)
+						if werr == nil && result.Status == "completed" {
+							filePaths = append(filePaths, csvPath)
+							log.Printf("[SPARK] Snowflake %s exported: %d rows", tableName, result.RowCount)
+							sfDB.Close()
+							continue
+						}
+					}
+					log.Printf("[SPARK] Fallback to Go for Snowflake %s", tableName)
+				}
+
 				dataRows, err := sfDB.Query(fmt.Sprintf("SELECT * FROM %s", tableName))
 				if err != nil { continue }
 				cols, _ := dataRows.Columns()
@@ -1568,6 +1733,37 @@ if req.ConnectionIDs != "" {
 			if len(dbTables) > 0 { log.Printf("[DB-DEBUG] dbTables sample: %v", dbTables[:1]) }
 			for _, tableFull := range dbTables {
 				if selectedMap != nil && !selectedMap[tableFull] { log.Printf("[DB-DEBUG] SKIP table=%s", tableFull); continue }
+
+				// Spark threshold kontrolü
+				if services.DefaultSpark != nil && services.DefaultSpark.IsAvailable() {
+					log.Printf("[SPARK] Using Spark for Databricks table %s", tableFull)
+					csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, strings.ReplaceAll(tableFull, ".", "_"))
+					jdbcURL := fmt.Sprintf("jdbc:databricks://%s:443/default;transportMode=http;ssl=1;httpPath=%s;AuthMech=3;UID=token;PWD=%s",
+						strings.TrimPrefix(strings.TrimPrefix(conn.Host, "https://"), "http://"),
+						warehouseID, conn.APIKey)
+					job := services.SparkJobRequest{
+						JobType:    "export_sql",
+						ConnType:   "databricks",
+						ConnID:     connID,
+						OutputPath: csvPath,
+						Config: map[string]string{
+							"jdbc_url": jdbcURL,
+							"table":    fmt.Sprintf("%s.%s", dbCatalog, tableFull),
+							"driver":   "com.databricks.client.jdbc.Driver",
+						},
+					}
+					resp, err := services.DefaultSpark.SubmitJob(job)
+					if err == nil {
+						result, werr := services.DefaultSpark.WaitForJob(resp.JobID, 30*60*1000000000)
+						if werr == nil && result.Status == "completed" {
+							filePaths = append(filePaths, csvPath)
+							log.Printf("[SPARK] Databricks %s exported: %d rows", tableFull, result.RowCount)
+							continue
+						}
+					}
+					log.Printf("[SPARK] Fallback to Go for Databricks %s", tableFull)
+				}
+
 				query := fmt.Sprintf("SELECT * FROM %s.%s LIMIT 10000", dbCatalog, tableFull)
 				reqBody, _ := json.Marshal(map[string]interface{}{"statement": query, "warehouse_id": warehouseID, "wait_timeout": "50s"})
 				sqlReq, _ := http.NewRequest("POST", dbWorkspaceURL+"/api/2.0/sql/statements", bytes.NewReader(reqBody))
@@ -1718,7 +1914,12 @@ if req.ConnectionIDs != "" {
 			}
 			zeroVec := make([]string, dim)
 			for i := range zeroVec { zeroVec[i] = "0" }
-			queryBody := fmt.Sprintf(`{"topK":10000,"includeMetadata":true,"vector":[%s]}`, strings.Join(zeroVec, ","))
+			// Spark available ise daha büyük batch al
+			topK := 10000
+			if services.DefaultSpark != nil && services.DefaultSpark.IsAvailable() {
+				topK = 100000
+			}
+			queryBody := fmt.Sprintf(`{"topK":%d,"includeMetadata":true,"vector":[%s]}`, topK, strings.Join(zeroVec, ","))
 			req, _ := http.NewRequest("POST", conn.Endpoint+"/query", strings.NewReader(queryBody))
 			req.Header.Set("Api-Key", conn.APIKey)
 			req.Header.Set("Content-Type", "application/json")
@@ -1808,6 +2009,7 @@ csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, sanitizeFilename(pine
 						for k := range getResult.Metadatas[0] { headers = append(headers, k) }
 					}
 					csvWriter.Write(headers)
+					rowCount := 0
 					for i, id := range getResult.IDs {
 						row := []string{id}
 						if i < len(getResult.Documents) { row = append(row, getResult.Documents[i]) } else { row = append(row, "") }
@@ -1817,11 +2019,13 @@ csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, sanitizeFilename(pine
 							}
 						}
 						csvWriter.Write(row)
+						rowCount++
+						if rowCount % 10000 == 0 { csvWriter.Flush() }
 					}
 					csvWriter.Flush()
 					csvFile.Close()
 					filePaths = append(filePaths, csvPath)
-					log.Printf("Exported Chroma %s.%s to %s (%d rows)", connID, coll.Name, csvPath, len(getResult.IDs))
+					log.Printf("Exported Chroma %s.%s to %s (%d rows)", connID, coll.Name, csvPath, rowCount)
 				}
 			}
 			continue
@@ -1858,10 +2062,11 @@ csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, sanitizeFilename(pine
 					exportReq.Header.Set("Authorization", "Bearer "+conn.APIKey)
 					exportResp, eerr := httpClient.Do(exportReq)
 					if eerr != nil { continue }
-					bodyBytes, _ := io.ReadAll(io.LimitReader(exportResp.Body, 50*1024*1024))
-					exportResp.Body.Close()
 					csvPath := fmt.Sprintf("./uploads/conn_%s_%s", connID, f.Name)
-					os.WriteFile(csvPath, bodyBytes, 0644)
+					csvFile, _ := os.Create(csvPath)
+					io.Copy(csvFile, exportResp.Body)
+					csvFile.Close()
+					exportResp.Body.Close()
 					filePaths = append(filePaths, csvPath)
 					log.Printf("Exported Google Drive %s to %s", f.Name, csvPath)
 				}
@@ -1909,11 +2114,12 @@ csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, sanitizeFilename(pine
 						objReq, _ := http.NewRequest("GET", objURL, nil)
 						objResp, oerr := httpClient.Do(objReq)
 						if oerr != nil { continue }
-						objBytes, _ := io.ReadAll(io.LimitReader(objResp.Body, 50*1024*1024))
 						objResp.Body.Close()
 						safeName := strings.ReplaceAll(objName, "/", "_")
 						csvPath := fmt.Sprintf("./uploads/conn_%s_%s", connID, safeName)
-						os.WriteFile(csvPath, objBytes, 0644)
+						csvFile, _ := os.Create(csvPath)
+						io.Copy(csvFile, objResp.Body)
+						csvFile.Close()
 						filePaths = append(filePaths, csvPath)
 						log.Printf("Exported S3 %s to %s", objName, csvPath)
 					}
@@ -1944,11 +2150,12 @@ csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, sanitizeFilename(pine
 						dlReq.Header.Set("Authorization", "Bearer "+conn.APIKey)
 						dlResp, derr := httpClient.Do(dlReq)
 						if derr != nil { continue }
-						bodyBytes, _ := io.ReadAll(io.LimitReader(dlResp.Body, 50*1024*1024))
 						dlResp.Body.Close()
 						safeName := strings.ReplaceAll(item.Name, "/", "_")
 						csvPath := fmt.Sprintf("./uploads/conn_%s_%s", connID, safeName)
-						os.WriteFile(csvPath, bodyBytes, 0644)
+						csvFile, _ := os.Create(csvPath)
+						io.Copy(csvFile, dlResp.Body)
+						csvFile.Close()
 						filePaths = append(filePaths, csvPath)
 						log.Printf("Exported GCS %s to %s", item.Name, csvPath)
 					}
@@ -2194,6 +2401,37 @@ for _, fp := range filePaths {
 	}
 }
 filePaths = convertedPaths
+
+	// Büyük dosya merge → Spark ile
+	totalSize := int64(0)
+	for _, fp := range filePaths {
+		if info, err := os.Stat(fp); err == nil {
+			totalSize += info.Size()
+		}
+	}
+	sparkMergedPath := ""
+	if len(filePaths) > 1 && services.DefaultSpark != nil && services.DefaultSpark.IsAvailable() && services.DefaultSpark.ShouldUseSparkBySize(totalSize) {
+		log.Printf("[SPARK] Large merge: %d files, %.1fMB total, using Spark", len(filePaths), float64(totalSize)/(1024*1024))
+		mergeOutputPath := fmt.Sprintf("./uploads/spark_merged_%s.csv", uuid.New().String()[:8])
+		inputPaths := strings.Join(filePaths, ",")
+		job := services.SparkJobRequest{
+			JobType:    "merge_csv",
+			OutputPath: mergeOutputPath,
+			Config:     map[string]string{"input_paths": inputPaths},
+		}
+		resp, err := services.DefaultSpark.SubmitJob(job)
+		if err == nil {
+			result, werr := services.DefaultSpark.WaitForJob(resp.JobID, 30*60*1000000000)
+			if werr == nil && result.Status == "completed" {
+				sparkMergedPath = mergeOutputPath
+				filePaths = []string{mergeOutputPath}
+				log.Printf("[SPARK] Merge completed: %d rows → %s", result.RowCount, mergeOutputPath)
+			}
+		}
+		if sparkMergedPath == "" {
+			log.Printf("[SPARK] Merge failed, falling back to Go")
+		}
+	}
 
 	// Create multipart form with multiple files
 	body := &bytes.Buffer{}
