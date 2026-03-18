@@ -213,21 +213,8 @@ func CheckStorage(userID string, additionalMB float64) (bool, string) {
 	var totalSize int64
 	DB.Model(&UploadedFile{}).Where("user_id = ?", userID).Select("COALESCE(SUM(size), 0)").Scan(&totalSize)
 usedMB := float64(totalSize) / (1024 * 1024)
-var connFiles2 []Connection
-DB.Where("user_id = ?", userID).Find(&connFiles2)
-for _, c := range connFiles2 {
-if c.CachedTables != "" && c.CachedTables != "null" && c.CachedTables != "[]" {
-var cached2 struct{ TableDetails []struct{ Rows int `json:"rows"`; Columns int `json:"columns"` } `json:"table_details"` }
-if json.Unmarshal([]byte(c.CachedTables), &cached2) == nil {
-for _, t := range cached2.TableDetails {
-cols := t.Columns; if cols < 10 { cols = 10 }
-usedMB += float64(t.Rows * cols * 20) / (1024 * 1024)
-}
-}
-}
-}
 	if usedMB + additionalMB > quota.StorageLimitMB {
-		return false, fmt.Sprintf("Storage limit exceeded. Used: %.0fMB / %.0fMB", usedMB, quota.StorageLimitMB)
+		return false, fmt.Sprintf("Upload failed: storage limit reached. You have used %.0fMB of your %.0fMB quota. Please delete some files.", usedMB, quota.StorageLimitMB)
 	}
 	return true, ""
 }
