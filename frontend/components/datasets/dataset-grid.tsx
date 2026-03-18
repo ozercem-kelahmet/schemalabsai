@@ -518,8 +518,9 @@ export function DatasetGrid() {
               const allSheets: {name: string, rows: number, columns: number, file_id: string}[] = []
               let mainFileId = ""
               for (const file of files) {
+                let result: any = null
                 try {
-                  const result = await api.upload(file, undefined)
+                  result = await api.upload(file, undefined)
                   if (result?.error) {
                     failedFiles.push(file.name + ": " + result.error)
                     toast.dismiss(uploadToastId)

@@ -192,7 +192,7 @@ build_svc frontend 1 || exit 1
 # Spark app build
 SPARK_IMG=$(sudo docker images -q schemalabsai-spark-app 2>/dev/null)
 if [ -z "$SPARK_IMG" ]; then
-  build_svc spark-app 0 || echo "[WARN] Spark build failed, continuing without Spark"
+  build_svc spark-app 0 || { echo "[WARN] Spark build failed, trying with BUILDKIT=0..."; sudo DOCKER_BUILDKIT=0 docker compose build spark-app 2>&1 | tail -5 || echo "[WARN] Spark build failed, continuing without Spark"; }
 else
   echo "[OK] Spark-app reused ($(sudo docker images schemalabsai-spark-app --format '{{.Size}}'))"
 fi
@@ -202,7 +202,7 @@ sudo fuser -k 6000/tcp 3000/tcp 8080/tcp 2>/dev/null || true
 sleep 2
 sudo docker compose up -d postgres redis flask go frontend
 # Spark ayrı başlat - fail olursa diğerleri etkilenmesin
-sudo docker compose up -d spark spark-app 2>/dev/null || echo "[WARN] Spark containers failed, continuing without Spark"
+sudo docker compose up -d spark-app 2>/dev/null || echo "[WARN] Spark containers failed, continuing without Spark"
 sleep 3
 
 GRAFANA=$(sudo docker ps -q -f name=schemalabs-grafana 2>/dev/null)

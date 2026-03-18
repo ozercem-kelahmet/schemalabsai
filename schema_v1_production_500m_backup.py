@@ -34,7 +34,7 @@ class Config:
     n_heads = 16
     head_dim = 64
     n_latent = 256
-    ffn_hidden = 3969
+    ffn_hidden = 4096
     n_local_layers = 6
     n_global_layers = 6
     n_schema_layers = 6
@@ -211,30 +211,6 @@ class LowRankProjection(nn.Module):
         self.down = nn.Linear(d, k, bias=False); self.up = nn.Linear(k, d, bias=False)
     def forward(self, x): return self.up(self.down(x))
 
-class SDPAttention(nn.Module):
-    """Fast attention using F.scaled_dot_product_attention"""
-    def __init__(self, d, nh, dropout=0.0):
-        super().__init__()
-        self.nh = nh; self.hd = d // nh
-        self.q_proj = nn.Linear(d, d, bias=False)
-        self.k_proj = nn.Linear(d, d, bias=False)
-        self.v_proj = nn.Linear(d, d, bias=False)
-        self.o_proj = nn.Linear(d, d, bias=False)
-        self.dropout = dropout
-    def forward(self, q, k=None, v=None, key_padding_mask=None):
-        if k is None: k = q
-        if v is None: v = k
-        B, S, D = q.shape; S2 = k.shape[1]
-        qq = self.q_proj(q).view(B, S, self.nh, self.hd).transpose(1, 2)
-        kk = self.k_proj(k).view(B, S2, self.nh, self.hd).transpose(1, 2)
-        vv = self.v_proj(v).view(B, S2, self.nh, self.hd).transpose(1, 2)
-        attn_mask = None
-        if key_padding_mask is not None:
-            attn_mask = key_padding_mask.unsqueeze(1).unsqueeze(2).expand(B, self.nh, S, S2)
-            attn_mask = torch.where(attn_mask, float('-inf'), 0.0).to(qq.dtype)
-        o = F.scaled_dot_product_attention(qq, kk, vv, attn_mask=attn_mask, dropout_p=self.dropout if self.training else 0.0)
-        return self.o_proj(o.transpose(1, 2).reshape(B, S, D))
-
 # ============================================================
 # 1-6. MIDAS
 # ============================================================
@@ -257,9 +233,9 @@ class MIDAS(nn.Module):
             work_mask = col_mask
         confidences = []
         for it in range(cfg.midas_iterations):
-            noisy = (current + torch.randn_like(current) * cfg.midas_noise_std * work_mask.unsqueeze(-1).to(current.dtype)) if (training and it == 0) else current
-            val_emb = self.value_proj(noisy * work_mask.unsqueeze(-1).to(current.dtype))
-            mask_emb = self.mask_proj(work_mask.unsqueeze(-1).to(current.dtype).expand_as(noisy))
+            noisy = (current + torch.randn_like(current) * cfg.midas_noise_std * work_mask.unsqueeze(-1).float()) if (training and it == 0) else current
+            val_emb = self.value_proj(noisy * work_mask.unsqueeze(-1).float())
+            mask_emb = self.mask_proj(work_mask.unsqueeze(-1).float().expand_as(noisy))
             encoded = self.encoder(torch.cat([val_emb, mask_emb], dim=-1))
             decoded = self.decoder(encoded)
             conf = self.confidence_head(encoded).squeeze(-1)
@@ -294,7 +270,6 @@ class CellProcessing(nn.Module):
 
     def forward(self, col_embs, dist_fps, cell_values, cell_mask, cell_is_numeric):
         B, C, _ = col_embs.shape; R = cell_values.shape[1]
-        # CRITICAL: cast to float32 BEFORE passing to linear layers
         sbert_emb = self.sbert_proj(col_embs.float())
         fp_emb = self.fp_proj(dist_fps.float())
         pos_emb = self.pos_emb(torch.arange(C, device=col_embs.device)).unsqueeze(0).expand(B, -1, -1)
@@ -315,10 +290,10 @@ class CellProcessing(nn.Module):
 class SchemaTransformerLayer(nn.Module):
     def __init__(self, d, nh):
         super().__init__()
-        self.norm1 = RMSNorm(d); self.attn = SDPAttention(d, nh, dropout=cfg.dropout)
+        self.norm1 = RMSNorm(d); self.attn = nn.MultiheadAttention(d, nh, dropout=cfg.dropout, batch_first=True)
         self.norm2 = RMSNorm(d); self.ffn = SwiGLU(d, cfg.ffn_hidden); self.drop = nn.Dropout(cfg.dropout)
     def forward(self, x, mask=None):
-        h = self.norm1(x); h = self.attn(h, key_padding_mask=mask); x = x + self.drop(h)
+        h = self.norm1(x); h, _ = self.attn(h, h, h, key_padding_mask=mask); x = x + self.drop(h)
         return x + self.drop(self.ffn(self.norm2(x)))
 
 class SchemaProcessing(nn.Module):
@@ -328,7 +303,7 @@ class SchemaProcessing(nn.Module):
     def forward(self, x, col_mask=None):
         pm = ~col_mask if col_mask is not None else None
         for l in self.layers:
-            x = l(x, pm)
+            x = grad_checkpoint(l, x, pm, use_reentrant=False)
         return self.norm(x)
 
 # ============================================================
@@ -337,13 +312,13 @@ class SchemaProcessing(nn.Module):
 class AxialAttentionLayer(nn.Module):
     def __init__(self, d, nh):
         super().__init__()
-        self.rn = RMSNorm(d); self.ra = SDPAttention(d, nh, dropout=cfg.dropout)
-        self.cn = RMSNorm(d); self.ca = SDPAttention(d, nh, dropout=cfg.dropout)
+        self.rn = RMSNorm(d); self.ra = nn.MultiheadAttention(d, nh, dropout=cfg.dropout, batch_first=True)
+        self.cn = RMSNorm(d); self.ca = nn.MultiheadAttention(d, nh, dropout=cfg.dropout, batch_first=True)
         self.fn = RMSNorm(d); self.ffn = SwiGLU(d, cfg.ffn_hidden); self.drop = nn.Dropout(cfg.dropout)
     def forward(self, x):
         B, R, C, D = x.shape
-        xr = x.reshape(B*R, C, D); h = self.rn(xr); h = self.ra(h); xr = xr + self.drop(h); x = xr.reshape(B, R, C, D)
-        xc = x.permute(0,2,1,3).reshape(B*C, R, D); h = self.cn(xc); h = self.ca(h); xc = xc + self.drop(h); x = xc.reshape(B, C, R, D).permute(0,2,1,3)
+        xr = x.reshape(B*R, C, D); h = self.rn(xr); h, _ = self.ra(h, h, h); xr = xr + self.drop(h); x = xr.reshape(B, R, C, D)
+        xc = x.permute(0,2,1,3).reshape(B*C, R, D); h = self.cn(xc); h, _ = self.ca(h, h, h); xc = xc + self.drop(h); x = xc.reshape(B, C, R, D).permute(0,2,1,3)
         return x + self.drop(self.ffn(self.fn(x)))
 
 class LocalReasoning(nn.Module):
@@ -353,7 +328,7 @@ class LocalReasoning(nn.Module):
     def forward(self, cell_grid):
         x = cell_grid
         for l in self.layers:
-            x = l(x)
+            x = grad_checkpoint(l, x, use_reentrant=False)
         return self.norm(x).mean(dim=(1, 2))
 
 # ============================================================
@@ -362,12 +337,12 @@ class LocalReasoning(nn.Module):
 class PerceiverLayer(nn.Module):
     def __init__(self, d, nh):
         super().__init__()
-        self.cnq = RMSNorm(d); self.cnkv = RMSNorm(d); self.ca = SDPAttention(d, nh, dropout=cfg.dropout)
-        self.sn = RMSNorm(d); self.sa = SDPAttention(d, nh, dropout=cfg.dropout)
+        self.cnq = RMSNorm(d); self.cnkv = RMSNorm(d); self.ca = nn.MultiheadAttention(d, nh, dropout=cfg.dropout, batch_first=True)
+        self.sn = RMSNorm(d); self.sa = nn.MultiheadAttention(d, nh, dropout=cfg.dropout, batch_first=True)
         self.fn = RMSNorm(d); self.ffn = SwiGLU(d, cfg.ffn_hidden); self.drop = nn.Dropout(cfg.dropout)
     def forward(self, lat, ctx):
-        h = self.cnq(lat); c = self.cnkv(ctx); h = self.ca(h, c, c); lat = lat + self.drop(h)
-        h = self.sn(lat); h = self.sa(h); lat = lat + self.drop(h)
+        h = self.cnq(lat); c = self.cnkv(ctx); h, _ = self.ca(h, c, c); lat = lat + self.drop(h)
+        h = self.sn(lat); h, _ = self.sa(h, h, h); lat = lat + self.drop(h)
         return lat + self.drop(self.ffn(self.fn(lat)))
 
 class GlobalReasoning(nn.Module):
@@ -378,7 +353,7 @@ class GlobalReasoning(nn.Module):
     def forward(self, ctx):
         lat = self.latents.expand(ctx.shape[0], -1, -1)
         for l in self.layers:
-            lat = l(lat, ctx)
+            lat = grad_checkpoint(l, lat, ctx, use_reentrant=False)
         return self.norm(lat).mean(dim=1)
 
 # ============================================================
@@ -428,9 +403,9 @@ class DomainKnowledgeInjection(nn.Module):
     def __init__(self, d, nh):
         super().__init__()
         self.nq = RMSNorm(d); self.nkv = RMSNorm(d)
-        self.ca = SDPAttention(d, nh, dropout=cfg.dropout); self.drop = nn.Dropout(cfg.dropout)
+        self.ca = nn.MultiheadAttention(d, nh, dropout=cfg.dropout, batch_first=True); self.drop = nn.Dropout(cfg.dropout)
     def forward(self, cr, se):
-        q = self.nq(cr); kv = self.nkv(se); h = self.ca(q, kv, kv); return cr + self.drop(h)
+        q = self.nq(cr); kv = self.nkv(se); h, _ = self.ca(q, kv, kv); return cr + self.drop(h)
 
 class SchemaCellFusion(nn.Module):
     def __init__(self, d):
@@ -517,7 +492,7 @@ class MIRAS(nn.Module):
         mn = ~mp
         for i in range(labels.shape[0]): mn[i, i] = False
         es = torch.exp(sim - sim.max(dim=1, keepdim=True).values.detach())
-        pos = (es*mp.to(es.dtype)).sum(1); neg = (es*mn.to(es.dtype)).sum(1)
+        pos = (es*mp.float()).sum(1); neg = (es*mn.float()).sum(1)
         return (-torch.log(pos/(pos+neg+1e-8)+1e-8)).mean()
 
     def calibrate(self, lo): return self.layers[0].calibrated_logits(lo)
@@ -630,7 +605,7 @@ class SchemaV1(nn.Module):
         self.domain_heads = DomainSpecificHeads(d)
         self.miras = MIRAS(d, cfg.n_miras_layers)
         self.combine_proj = nn.Sequential(nn.Linear(d*3, d), RMSNorm(d))
-        self.register_buffer('_sem', torch.zeros(cfg.n_sectors, cfg.sbert_dim))
+        self.register_buffer('_sem', torch.zeros(1, cfg.sbert_dim))
 
     def set_sector_emb(self, m): self._sem = m
 
@@ -721,10 +696,10 @@ def run_precompute():
     ts = time.time()
     for si in range(ns):
         ss = si*cfg.shard_size; se = min(ss+cfg.shard_size, N); sl = se-ss
-        ce = torch.zeros(sl, cfg.max_cols, cfg.sbert_dim, dtype=torch.float32)
+        ce = torch.zeros(sl, cfg.max_cols, cfg.sbert_dim, dtype=torch.float16)
         cm = torch.zeros(sl, cfg.max_cols, dtype=torch.bool)
-        df = torch.zeros(sl, cfg.max_cols, cfg.fingerprint_dim, dtype=torch.float32)
-        cv = torch.zeros(sl, cfg.max_rows, cfg.max_cols, dtype=torch.float32)
+        df = torch.zeros(sl, cfg.max_cols, cfg.fingerprint_dim, dtype=torch.float16)
+        cv = torch.zeros(sl, cfg.max_rows, cfg.max_cols, dtype=torch.float16)
         cmk = torch.zeros(sl, cfg.max_rows, cfg.max_cols, dtype=torch.bool)
         cin = torch.zeros(sl, cfg.max_rows, cfg.max_cols, dtype=torch.bool)
         lb = torch.zeros(sl, dtype=torch.long)
@@ -733,11 +708,11 @@ def run_precompute():
             lb[i] = DS_S2I.get(d.get("sector", d.get("main_sector","unknown")), 0)
             for ci2, col in enumerate(cols[:cfg.max_cols]):
                 k = col.lower().replace("_"," ")
-                if k in CEM: ce[i,ci2] = torch.tensor(CEM[k], dtype=torch.float32)
+                if k in CEM: ce[i,ci2] = torch.tensor(CEM[k], dtype=torch.float16)
                 cm[i,ci2] = True
             for ci2 in range(min(len(cols), cfg.max_cols)):
                 cvs = [row[ci2] if ci2<len(row) else "" for row in rows]
-                df[i,ci2] = torch.tensor(cfp(cvs), dtype=torch.float32)
+                df[i,ci2] = torch.tensor(cfp(cvs), dtype=torch.float16)
                 for ri, v in enumerate(cvs[:cfg.max_rows]):
                     if v and str(v).strip():
                         cmk[i,ri,ci2] = True
@@ -778,6 +753,7 @@ def train():
     log.info(f"  Batch:       {cfg.batch_size} x {cfg.grad_accum} = {cfg.batch_size*cfg.grad_accum} effective")
     log.info(f"  LR:          {cfg.lr}")
     log.info(f"  Epochs:      {cfg.total_epochs} (early stop patience={cfg.early_stop_patience})")
+    log.info(f"  Loss:        cls + sector + {cfg.mcm_weight}*mcm + {cfg.miras_weight}*miras + midas + 0.01*reg + {cfg.contrastive_weight}*contrastive + ewc")
     log.info(f"  Smoothing:   {cfg.label_smoothing}")
     log.info(f"  Curriculum:  {cfg.curriculum_enabled}")
     log.info(f"  Self-learn:  {cfg.self_learning_enabled}")
@@ -795,7 +771,8 @@ def train():
     w = torch.sqrt(counts.sum()/(counts+1)).clamp(max=5.0); w = (w/w.mean()).to(device)
     log.info(f"  Class weights computed from {total_samples:,} samples")
 
-    # Shard-sequential loading
+    # Shard-sequential loading — ALL shards used for both train and val
+    # Each shard: first 90% train, last 10% val (ensures label overlap)
     n_shards = meta["n_shards"]
     train_shards = list(range(n_shards))
     val_shard_ids = list(range(n_shards))
@@ -808,6 +785,7 @@ def train():
             d[k] = torch.load(PRECOMP_DIR/f"{k}_{si}.pt", weights_only=True)
         return d
 
+    # Prefetch shard loading with threading
     from concurrent.futures import ThreadPoolExecutor
     _prefetch_executor = ThreadPoolExecutor(max_workers=1)
 
@@ -818,6 +796,7 @@ def train():
             if i + 1 < len(shard_ids):
                 future = _prefetch_executor.submit(load_shard_tensors, shard_ids[i + 1])
             n = d["labels"].shape[0]
+            # Shuffle within shard first, then split
             perm = torch.randperm(n)
             for k in d: d[k] = d[k][perm]
             split_idx = int(n * 0.9)
@@ -832,39 +811,25 @@ def train():
                        d["labels"][idx])
             del d; gc.collect()
 
-    # Create optimizer and scaler BEFORE auto batch detection
-    opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay, fused=True if torch.cuda.is_available() else False)
-    scaler = GradScaler("cuda") if torch.cuda.is_available() else None
-
-    # Auto batch size detection with PROPER dtype (float32, matching model weights)
+    # Auto batch size detection
     if torch.cuda.is_available():
         log.info("Auto-detecting batch size...")
-        for try_bs in [128, 96, 64, 48, 32]:
+        for try_bs in [256, 192, 128, 96, 64, 48]:
             try:
                 torch.cuda.empty_cache()
-                model.zero_grad(); opt.zero_grad()
-                with amp_autocast():
-                    test_out = model.forward_from_tensors(
-                        torch.randn(try_bs, cfg.max_cols, cfg.sbert_dim, device=device),
-                        torch.ones(try_bs, cfg.max_cols, dtype=torch.bool, device=device),
-                        torch.randn(try_bs, cfg.max_cols, cfg.fingerprint_dim, device=device),
-                        torch.randn(try_bs, cfg.max_rows, cfg.max_cols, device=device),
-                        torch.ones(try_bs, cfg.max_rows, cfg.max_cols, dtype=torch.bool, device=device),
-                        torch.ones(try_bs, cfg.max_rows, cfg.max_cols, dtype=torch.bool, device=device),
-                        training=True
-                    )
+                test_out = model.forward_from_tensors(
+                    torch.randn(try_bs, cfg.max_cols, cfg.sbert_dim, dtype=torch.float16, device=device),
+                    torch.ones(try_bs, cfg.max_cols, dtype=torch.bool, device=device),
+                    torch.randn(try_bs, cfg.max_cols, cfg.fingerprint_dim, dtype=torch.float16, device=device),
+                    torch.randn(try_bs, cfg.max_rows, cfg.max_cols, dtype=torch.float16, device=device),
+                    torch.ones(try_bs, cfg.max_rows, cfg.max_cols, dtype=torch.bool, device=device),
+                    torch.ones(try_bs, cfg.max_rows, cfg.max_cols, dtype=torch.bool, device=device),
+                    training=True
+                )
                 fake_labels = torch.randint(0, NS, (try_bs,), device=device)
-                with amp_autocast():
-                    loss = F.cross_entropy(test_out['cls_logits'], fake_labels)
-                if scaler:
-                    scaler.scale(loss).backward()
-                    scaler.unscale_(opt)
-                    scaler.step(opt)
-                    scaler.update()
-                else:
-                    loss.backward()
-                    opt.step()
-                model.zero_grad(); opt.zero_grad()
+                loss = F.cross_entropy(test_out['cls_logits'], fake_labels)
+                loss.backward()
+                model.zero_grad()
                 torch.cuda.empty_cache()
                 cfg.batch_size = try_bs
                 log.info(f"  Batch size {try_bs} OK (VRAM: {torch.cuda.memory_allocated()/1024**3:.1f}GB used)")
@@ -873,24 +838,29 @@ def train():
                 if "out of memory" in str(e).lower():
                     log.info(f"  Batch size {try_bs} OOM, trying smaller...")
                     torch.cuda.empty_cache()
-                    model.zero_grad(); opt.zero_grad()
+                    model.zero_grad()
                 else:
-                    log.error(f"  Batch size {try_bs} error: {e}")
                     raise
         log.info(f"  Final batch size: {cfg.batch_size} x {cfg.grad_accum} = {cfg.batch_size*cfg.grad_accum} effective")
 
-    # Re-create optimizer after auto-detect (clean state)
-    opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay, fused=True if torch.cuda.is_available() else False)
-    scaler = GradScaler("cuda") if torch.cuda.is_available() else None
+    # Compile model for faster execution
+    if torch.cuda.is_available() and hasattr(torch, 'compile'):
+        try:
+            # torch.compile disabled
+            log.info("  torch.compile enabled (reduce-overhead)")
+        except Exception as e:
+            log.info(f"  torch.compile failed ({e}), continuing without")
 
     batches_per_epoch = tsz // cfg.batch_size
     log.info(f"Train: {tsz:,} | Val: {vsz:,} | Batches/epoch: {batches_per_epoch:,}")
 
+    opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay, fused=True if torch.cuda.is_available() else False)
     ts2 = batches_per_epoch*cfg.total_epochs//max(cfg.grad_accum,1); ws = batches_per_epoch*cfg.warmup_epochs//max(cfg.grad_accum,1)
     def lrs(s):
         if s < ws: return max(s/max(ws,1), 1e-2)
         return max(0.5*(1+math.cos(math.pi*(s-ws)/max(ts2-ws,1))), 1e-2)
     sch = torch.optim.lr_scheduler.LambdaLR(opt, lrs)
+    scaler = GradScaler("cuda") if torch.cuda.is_available() else None
     ewc = EWCModule(); sl2 = SelfLearner(); ood = OODDetector()
     se2 = 0; ba = 0; step = 0; ni = 0
 
@@ -935,6 +905,7 @@ def train():
                     # Contrastive every 10 batches
                     if (bi+1) % 10 == 0:
                         l_cont = model.miras.contrastive_loss(out['contrastive_emb'], labels)*cfg.contrastive_weight
+                        _cached_cont = l_cont.item()
                     else:
                         l_cont = torch.tensor(0.0, device=device)
                     # EWC every 10 batches
@@ -949,10 +920,7 @@ def train():
 
                 if scaler: scaler.unscale_(opt); nn.utils.clip_grad_norm_(model.parameters(), cfg.max_grad_norm); scaler.step(opt); scaler.update()
                 else: nn.utils.clip_grad_norm_(model.parameters(), cfg.max_grad_norm); opt.step()
-
-                sch.step()
-                opt.zero_grad()
-                step += 1
+                sch.step(); opt.zero_grad(); step += 1
 
                 with torch.no_grad():
                     cls_preds = out['cls_logits'].argmax(-1)
@@ -967,8 +935,8 @@ def train():
                     e_midas_loss += l_midas.item(); e_cont_loss += l_cont.item()
 
                 if (bi+1) % cfg.log_every == 0:
-                    elapsed = time.time()-te; rate = e_total/max(elapsed,1)
-                    pct = 100*(bi+1)/batches_per_epoch
+                    elapsed = time.time()-te; rate = (bi+1)*cfg.batch_size/max(elapsed,1)
+                    pct = 100*(bi+1)/batches_per_epoch; bar_len=20; filled=int(pct/100*bar_len); bar_str="2588"*filled+"2591"*(bar_len-filled)
                     n = bi+1
                     vr = f" vram={torch.cuda.memory_allocated()/1024**3:.1f}/{torch.cuda.get_device_properties(0).total_memory/1024**3:.1f}GB" if torch.cuda.is_available() else ""
                     log.info(
@@ -978,7 +946,7 @@ def train():
                         f"sec={100*e_sec_correct/max(e_total,1):.1f}% "
                         f"top5={100*e_top5_correct/max(e_total,1):.1f}% "
                         f"lr={opt.param_groups[0]['lr']:.2e} "
-                        f"rate={rate:.0f}/s "
+                        f"rate={rate:.0f}/s acc={50*(e_cls_correct+e_sec_correct)/max(e_total,1):.1f}% "
                         f"eta={(batches_per_epoch-bi-1)*cfg.batch_size/max(rate,1)/60:.0f}min"
                         f"{vr}"
                     )
@@ -1022,7 +990,6 @@ def train():
         v_embeddings = []
         with torch.no_grad():
             for batch in shard_batches(val_shard_ids, cfg.batch_size, shuffle=False, split="val"):
-                if v_total >= 20000: break
                 items = [b.to(device, non_blocking=True) for b in batch]; labels = items[-1]
                 with amp_autocast(): out = model.forward_from_tensors(*items[:-1], training=False)
                 cls_p = out['cls_logits'].argmax(-1); sec_p = out['sector_logits'].argmax(-1)
@@ -1047,6 +1014,7 @@ def train():
         log.info(f"  Train:  cls={t_cls_acc:.1f}%")
         log.info(f"  Val:    cls={v_cls_acc:.1f}%  sec={v_sec_acc:.1f}%  top5={v_top5_acc:.1f}%  ({v_total:,} samples)")
 
+        # Per-sector accuracy (worst 10)
         sector_accs = {}
         for sid in v_per_sector:
             total_s = v_per_sector[sid]
@@ -1054,8 +1022,8 @@ def train():
             sector_accs[sid] = 100*correct_s/max(total_s,1)
         worst = sorted(sector_accs.items(), key=lambda x: x[1])[:10]
         best = sorted(sector_accs.items(), key=lambda x: -x[1])[:5]
-        log.info(f"  Best sectors:  {', '.join(f'{I2S.get(str(s),str(s))[:20]}={a:.0f}%' for s,a in best)}")
-        log.info(f"  Worst sectors: {', '.join(f'{I2S.get(str(s),str(s))[:20]}={a:.0f}%' for s,a in worst)}")
+        log.info(f"  Best sectors:  {', '.join(f'{I2S.get(s,str(s))[:20]}={a:.0f}%' for s,a in best)}")
+        log.info(f"  Worst sectors: {', '.join(f'{I2S.get(s,str(s))[:20]}={a:.0f}%' for s,a in worst)}")
         zero_acc = [s for s, a in sector_accs.items() if a == 0]
         log.info(f"  Zero-acc sectors: {len(zero_acc)}/{len(sector_accs)}")
         log.info(f"{'='*60}")
