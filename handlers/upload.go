@@ -177,6 +177,13 @@ json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("File too large
 	}
 
 	maxTotalMB := getEnvInt("MAX_TOTAL_STORAGE_MB", 1024)
+	if userID != "" && DB != nil {
+		if quota, err := GetOrCreateQuota(userID); err == nil && quota != nil {
+			if quota.Plan == "alpha_unlimited" || quota.Plan == "limitless" || quota.Plan == "unlimited" {
+				maxTotalMB = getEnvInt("MAX_TOTAL_STORAGE_MB_UNLIMITED", 102400)
+			}
+		}
+	}
 	maxTotalSize := maxTotalMB * 1024 * 1024
 	var totalUsed int64
 	if userID != "" && DB != nil {
@@ -184,8 +191,8 @@ json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("File too large
 	}
 	if totalUsed + header.Size > maxTotalSize {
 		w.Header().Set("Content-Type", "application/json")
-w.WriteHeader(http.StatusBadRequest)
-json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("Storage limit exceeded. Max: %dMB, Used: %dMB", maxTotalMB, totalUsed/(1024*1024))})
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("Upload failed: storage limit reached. You have used %dMB of your %dMB storage quota. Please delete some files to free up space.", totalUsed/(1024*1024), maxTotalMB)})
 		return
 	}
 
