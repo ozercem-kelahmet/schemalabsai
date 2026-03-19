@@ -26,9 +26,12 @@ var (
 
 func SSEHandler(w http.ResponseWriter, r *http.Request) {
 	userID := r.Header.Get("X-User-ID")
+	if userID == "" {
+		userID = "anonymous"
+	}
 	queryID := r.URL.Query().Get("query_id")
-	if userID == "" || queryID == "" {
-		http.Error(w, "user_id and query_id required", http.StatusBadRequest)
+	if queryID == "" {
+		http.Error(w, "query_id required", http.StatusBadRequest)
 		return
 	}
 
