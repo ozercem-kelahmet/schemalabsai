@@ -186,7 +186,14 @@ services.InitSpark()
 	http.HandleFunc("/api/train/analyze", enableCORS(handlers.AuthMiddleware(handlers.AnalyzeFilesHandler)))
 	http.HandleFunc("/api/train/cancel", enableCORS(handlers.AuthMiddleware(handlers.TrainingCancelHandler)))
 	http.HandleFunc("/api/train/progress", enableCORS(handlers.TrainingProgressHandler))
-	http.HandleFunc("/api/train/stream", enableCORS(handlers.SSEHandler))
+	http.HandleFunc("/api/train/stream", func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin"); if origin == "" { origin = getEnv("CORS_ORIGIN", "http://localhost:8080") }
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		w.Header().Set("Cache-Control", "no-cache")
+		if r.Method == "OPTIONS" { w.WriteHeader(http.StatusOK); return }
+		handlers.SSEHandler(w, r)
+	})
 	http.HandleFunc("/api/config/limits", enableCORS(handlers.GetUploadLimitsHandler))
 	http.HandleFunc("/api/files", enableCORS(handlers.AuthMiddleware(handlers.GetUploadedFilesHandler)))
 	http.HandleFunc("/api/files/delete", enableCORS(handlers.AuthMiddleware(handlers.DeleteFileHandler)))
