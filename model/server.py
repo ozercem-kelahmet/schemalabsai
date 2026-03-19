@@ -2504,69 +2504,93 @@ def finetune(bypass_queue=False):
         save_session(query_id, session)
         
         merge_files = request.form.get('merge_files', 'false').lower() == 'true'
+        spark_preprocessed = request.form.get('spark_preprocessed', 'false').lower() == 'true'
+        spark_merged_path = request.form.get('spark_merged_path', None)
         
-        # Çoklu dosya kontrolü
-        files = request.files.getlist('file')
-        if not files or len(files) == 0:
-            if 'file' in request.files:
-                files = [request.files['file']]
-            else:
-                return jsonify({"error": "No file provided"}), 400
-        
-        dataframes = []
-        file_names = []
-        
-        for file in files:
-            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
-            file.save(temp_file.name)
-            temp_file.close()
+        # Spark pre-merged CSV varsa direkt oku, smart_merge atla
+        if spark_merged_path and os.path.exists(spark_merged_path):
+            print(f"[SPARK] Using pre-merged CSV: {spark_merged_path}")
+            try:
+                df = pd.read_csv(spark_merged_path)
+                print(f"[SPARK] Loaded: {df.shape[0]} rows x {df.shape[1]} cols")
+                target_col = auto_select_target(df, target_column)
+                if not spark_preprocessed:
+                    df, _ = smart_data_cleaning(df)
+                    df, _ = smart_time_series_prep(df)
+                else:
+                    print("[SPARK] Skipping smart_data_cleaning - already preprocessed by Spark")
+                merged_file_id = None
+                # Training'e direkt git
+                goto_training = True
+            except Exception as e:
+                print(f"[SPARK] Failed to load merged CSV: {e}, falling back to normal flow")
+                goto_training = False
+        else:
+            goto_training = False
+
+        if not goto_training:
+            # Çoklu dosya kontrolü
+            files = request.files.getlist('file')
+            if not files or len(files) == 0:
+                if 'file' in request.files:
+                    files = [request.files['file']]
+                else:
+                    return jsonify({"error": "No file provided"}), 400
             
-            # CSV, Excel, JSON, Parquet
-            if file.filename.endswith(('.xlsx', '.xls')):
-                df_temp = pd.read_excel(temp_file.name)
-            elif file.filename.endswith('.json'):
-                df_temp = pd.read_json(temp_file.name)
-            elif file.filename.endswith('.parquet'):
-                df_temp = pd.read_parquet(temp_file.name)
-            else:
-                # Multi-row header detection: if first row has many duplicate values, skip it
-                try:
-                    first_row = pd.read_csv(temp_file.name, nrows=0).columns.tolist()
-                    unique_ratio = len(set(str(c).split('.')[0] for c in first_row)) / max(len(first_row), 1)
-                    if unique_ratio < 0.5 and len(first_row) > 3:
-                        df_temp = pd.read_csv(temp_file.name, header=1)
-                        print(f"Multi-row header detected in {file.filename}, using row 2 as header")
-                    else:
+            dataframes = []
+            file_names = []
+            
+            for file in files:
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
+                file.save(temp_file.name)
+                temp_file.close()
+                
+                # CSV, Excel, JSON, Parquet
+                if file.filename.endswith(('.xlsx', '.xls')):
+                    df_temp = pd.read_excel(temp_file.name)
+                elif file.filename.endswith('.json'):
+                    df_temp = pd.read_json(temp_file.name)
+                elif file.filename.endswith('.parquet'):
+                    df_temp = pd.read_parquet(temp_file.name)
+                else:
+                    # Multi-row header detection: if first row has many duplicate values, skip it
+                    try:
+                        first_row = pd.read_csv(temp_file.name, nrows=0).columns.tolist()
+                        unique_ratio = len(set(str(c).split('.')[0] for c in first_row)) / max(len(first_row), 1)
+                        if unique_ratio < 0.5 and len(first_row) > 3:
+                            df_temp = pd.read_csv(temp_file.name, header=1)
+                            print(f"Multi-row header detected in {file.filename}, using row 2 as header")
+                        else:
+                            df_temp = pd.read_csv(temp_file.name)
+                    except:
                         df_temp = pd.read_csv(temp_file.name)
-                except:
-                    df_temp = pd.read_csv(temp_file.name)
-            
-            dataframes.append(df_temp)
-            file_names.append(file.filename)
-            os.unlink(temp_file.name)
+                
+                dataframes.append(df_temp)
+                file_names.append(file.filename)
+                os.unlink(temp_file.name)
         
         # Birden fazla dosya varsa smart merge yap
-        merged_file_id = None
-        if len(dataframes) > 1 and merge_files:
-            df = smart_merge_datasets(dataframes, file_names)
+        if not goto_training:
+            merged_file_id = None
+            if len(dataframes) > 1 and merge_files:
+                df = smart_merge_datasets(dataframes, file_names)
+                import uuid
+                from datetime import datetime
+                merged_file_id = str(uuid.uuid4())
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                merged_filename = f"{merged_file_id[:8]}_merged_all_{timestamp}.csv"
+                merged_path = os.path.join('../uploads', merged_filename)
+                df.to_csv(merged_path, index=False)
+            else:
+                df = dataframes[0]
             
-            # Save merged file to uploads
-            import uuid
-            from datetime import datetime
-            merged_file_id = str(uuid.uuid4())
-            from datetime import datetime; timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            merged_filename = f"{merged_file_id[:8]}_merged_all_{timestamp}.csv"
-            merged_path = os.path.join('../uploads', merged_filename)
-            df.to_csv(merged_path, index=False)
-        else:
-            df = dataframes[0]
-        
-        # Otomatik akıllı target seçimi
-        target_col = auto_select_target(df, target_column)
-        # print(f"Auto-selected target: {target_col}")
-        
-        df, cleaning_report = smart_data_cleaning(df)
-        df, ts_report = smart_time_series_prep(df)
+            # Otomatik akıllı target seçimi
+            target_col = auto_select_target(df, target_column)
+            if not spark_preprocessed:
+                df, cleaning_report = smart_data_cleaning(df)
+                df, ts_report = smart_time_series_prep(df)
+            else:
+                print("[SPARK] Skipping smart_data_cleaning - already preprocessed by Spark")
         numeric_df = df.select_dtypes(include=['number'])
         # Agnostik: Tüm sayısal kolonları feature olarak kullan
         col_mapping, feature_cols = smart_column_mapping(numeric_df.columns.tolist(), target_col)

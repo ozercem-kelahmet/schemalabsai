@@ -1416,7 +1416,13 @@ if req.ConnectionIDs != "" {
 				continue
 			}
 			defer resp.Body.Close()
-			bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
+			limitBytes := getEnvInt("MAX_FILE_SIZE_MB", 50) * 1024 * 1024
+			if quota, err := GetOrCreateQuota(userID); err == nil && quota != nil {
+				if quota.Plan == "alpha_unlimited" || quota.Plan == "limitless" || quota.Plan == "unlimited" {
+					limitBytes = getEnvInt("MAX_FILE_SIZE_MB_UNLIMITED", 10240) * 1024 * 1024
+				}
+			}
+			bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, limitBytes))
 			var jsonArray []map[string]interface{}
 			if json.Unmarshal(bodyBytes, &jsonArray) == nil && len(jsonArray) > 0 {
 				csvPath := fmt.Sprintf("./uploads/conn_%s_api_data.csv", connID)
@@ -2433,7 +2439,39 @@ filePaths = convertedPaths
 		}
 	}
 
-	// Create multipart form with multiple files
+	// Spark preprocessing - null handling, class imbalance, normalization
+if services.DefaultSpark != nil && services.DefaultSpark.IsAvailable() {
+	log.Printf("[SPARK] Preprocessing %d files", len(filePaths))
+	var preprocessedPaths []string
+	for _, fp := range filePaths {
+		if !strings.HasSuffix(strings.ToLower(fp), ".csv") {
+			preprocessedPaths = append(preprocessedPaths, fp)
+			continue
+		}
+		outputPath := strings.TrimSuffix(fp, ".csv") + "_preprocessed.csv"
+		job := services.SparkJobRequest{
+			JobType:    "preprocess",
+			OutputPath: outputPath,
+			Config: map[string]string{
+				"input_paths": fp,
+			},
+		}
+		resp, err := services.DefaultSpark.SubmitJob(job)
+		if err == nil {
+			result, werr := services.DefaultSpark.WaitForJob(resp.JobID, 10*60*1000000000)
+			if werr == nil && result.Status == "completed" {
+				preprocessedPaths = append(preprocessedPaths, outputPath)
+				log.Printf("[SPARK] Preprocessed: %s → %d rows", fp, result.RowCount)
+				continue
+			}
+		}
+		log.Printf("[SPARK] Preprocessing failed for %s, using original", fp)
+		preprocessedPaths = append(preprocessedPaths, fp)
+	}
+	filePaths = preprocessedPaths
+}
+
+// Create multipart form with multiple files
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
@@ -2466,6 +2504,27 @@ queryIDField.Write([]byte(req.QueryID))
 
 	mergeField, _ := writer.CreateFormField("merge_files")
 	mergeField.Write([]byte("true"))
+
+	// Spark merge path — Flask smart_merge'i atlasın
+	if sparkMergedPath != "" {
+		sparkPathField, _ := writer.CreateFormField("spark_merged_path")
+		sparkPathField.Write([]byte(sparkMergedPath))
+		log.Printf("[SPARK] Sending spark_merged_path to Flask: %s", sparkMergedPath)
+	}
+
+	// Spark preprocessing yapıldıysa Flask'a bildir — smart_data_cleaning atlasın
+	sparkPreprocessed := false
+	for _, fp := range filePaths {
+		if strings.Contains(fp, "_preprocessed.csv") {
+			sparkPreprocessed = true
+			break
+		}
+	}
+	if sparkPreprocessed {
+		preprocessedField, _ := writer.CreateFormField("spark_preprocessed")
+		preprocessedField.Write([]byte("true"))
+		log.Printf("[SPARK] Sending spark_preprocessed=true to Flask")
+	}
 
 	writer.Close()
 
