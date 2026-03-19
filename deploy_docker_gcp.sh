@@ -45,7 +45,7 @@ rsync -avz -e ssh \
   --include='docker/' --include='docker/***' --include='docker/Dockerfile.spark' \
   --include='model/' --include='model/*.py' --include='model/adapters/***' --include='model/layers/***' --include='model/miras/***' --include='model/inference/***' --exclude='model/finetuned_models' --exclude='model/checkpoints' --exclude='model/data' --exclude='model/uploads' \
   --include='handlers/' --include='handlers/*.go' \
-  --include='services/' --include='services/*.go' --include='services/spark_app/***' \
+  --include='services/' --include='services/*.go' --include='services/spark_app/***' \\n  --include='airflow/' --include='airflow/dags/***' \
   --include='frontend/' \
   --include='frontend/.env' --include='frontend/.env.local' --include='frontend/.npmrc' \
   --include='frontend/components/***' --include='frontend/lib/***' \
@@ -198,6 +198,11 @@ sleep 2
 sudo docker compose up -d postgres redis flask go frontend
 # Spark ayrı başlat - fail olursa diğerleri etkilenmesin
 sudo docker compose up -d spark-app 2>/dev/null || echo "[WARN] Spark containers failed, continuing without Spark"
+sudo docker compose up -d zookeeper 2>/dev/null || echo "[WARN] Zookeeper failed"
+sleep 5
+sudo docker compose up -d kafka 2>/dev/null || echo "[WARN] Kafka failed"
+sleep 5
+sudo docker compose up -d airflow 2>/dev/null || echo "[WARN] Airflow failed"
 sleep 3
 
 GRAFANA=$(sudo docker ps -q -f name=schemalabs-grafana 2>/dev/null)

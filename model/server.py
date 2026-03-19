@@ -1294,6 +1294,32 @@ def save_session(query_id, session):
             rc.setex(f"training:{query_id}", 86400, json.dumps(session, default=str))
     except Exception as e:
         print(f"[SESSION] Redis write failed: {e}")
+    
+    # Kafka event - fallback: sadece log
+    try:
+        import os as _os
+        kafka_servers = _os.getenv("KAFKA_BOOTSTRAP_SERVERS", "")
+        if kafka_servers and ep > 0:
+            from kafka import KafkaProducer
+            _producer = KafkaProducer(
+                bootstrap_servers=kafka_servers.split(","),
+                value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+                request_timeout_ms=3000,
+                max_block_ms=3000
+            )
+            _producer.send("training_progress", {
+                "query_id": query_id,
+                "epoch": ep,
+                "accuracy": ac,
+                "loss": lo,
+                "status": session.get("status", "training"),
+                "epochs": session.get("epochs", 0)
+            })
+            _producer.flush(timeout=2)
+            _producer.close()
+    except Exception as _ke:
+        pass  # Kafka fail → Redis fallback zaten çalışıyor
+
     _save_sessions()
 
 

@@ -52,6 +52,36 @@ export function BuildWizard() {
   const skipCheckRef = useRef(false)
   const completedByPollingRef = useRef(false)
   const trainCancelledRef = useRef(false)
+  const sseRef = useRef<EventSource | null>(null)
+
+  // SSE connect - Kafka push, polling fallback
+  const connectSSE = (queryId: string) => {
+    if (sseRef.current) sseRef.current.close()
+    try {
+      const sse = new EventSource(`/api/train/stream?query_id=${queryId}`, { withCredentials: true })
+      sse.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data)
+          if (data.status && data.epoch !== undefined) {
+            // SSE data geldi - polling'i yavaşlat
+            if (pollingRef.current) {
+              clearInterval(pollingRef.current)
+              pollingRef.current = setInterval(pollProgress, 10000) // 10s fallback
+            }
+            pollProgress() // Anında güncelle
+          }
+        } catch {}
+      }
+      sse.onerror = () => {
+        // SSE fail → polling devam eder
+        sse.close()
+        sseRef.current = null
+      }
+      sseRef.current = sse
+    } catch {
+      // SSE not supported → polling devam eder
+    }
+  }
 
 
   // Check for ongoing training on mount (e.g. after page refresh)
@@ -395,7 +425,8 @@ export function BuildWizard() {
         clearTrainingStorage()
         setCurrentStep("evaluate")
       } else if (result.status === "training") {
-        // Training started async - polling will track progress
+        // Training started async - SSE + polling will track progress
+      connectSSE(trainingQueryIdRef.current)
         return
       } else {
         addLog(`Error: ${result.error || result.message || "Training failed"}`)
@@ -553,6 +584,7 @@ export function BuildWizard() {
   const stopPolling = () => {
     if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null }
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
+    if (sseRef.current) { sseRef.current.close(); sseRef.current = null }
   }
 
   const handlePause = () => { setIsPaused(true); setTrainingStatus("paused"); addLog("Build paused") }
