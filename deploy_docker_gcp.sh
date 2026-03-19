@@ -43,7 +43,7 @@ rsync -avz -e ssh \
   --include='.dockerignore' \
   --include='docker-compose.yml' \
   --include='docker/' --include='docker/***' --include='docker/Dockerfile.spark' \
-  --include='model/' --include='model/*.py' --include='model/adapters/***' --include='model/layers/***' --include='model/miras/***' --include='model/inference/***' --exclude='model/finetuned_models' --exclude='model/checkpoints' --exclude='model/data' --exclude='model/uploads' \
+  --include='model/' --include='model/*.py' --include='model/requirements.txt' --include='model/adapters/***' --include='model/layers/***' --include='model/miras/***' --include='model/inference/***' --exclude='model/finetuned_models' --exclude='model/checkpoints' --exclude='model/data' --exclude='model/uploads' \
   --include='handlers/' --include='handlers/*.go' \
   --include='services/' --include='services/*.go' --include='services/spark_app/***' \\n  --include='airflow/' --include='airflow/dags/***' \
   --include='frontend/' \
@@ -146,7 +146,7 @@ sudo docker rm -f schemalabs-flask schemalabs-go schemalabs-frontend 2>/dev/null
 sudo fuser -k 6000/tcp 3000/tcp 8080/tcp 2>/dev/null || true
 sleep 2
 
-/opt/schemalabsai/venv/bin/pip freeze | grep -v -E "^torch|^torchvision|^nvidia|^cuda|^cudf|^cupy" > /opt/schemalabsai/model/requirements.txt
+# requirements.txt is managed by local deploy, not overwritten
 echo "[OK] System ready ($(free -m | awk '/Mem/{print $7}')MB free)"
 
 step 7 "Docker Build"
