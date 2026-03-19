@@ -190,12 +190,7 @@ fi
 build_svc frontend 1 || exit 1
 
 # Spark app build
-SPARK_IMG=$(sudo docker images -q schemalabsai-spark-app 2>/dev/null)
-if [ -z "$SPARK_IMG" ]; then
-  build_svc spark-app 0 || { echo "[WARN] Spark build failed, trying with BUILDKIT=0..."; sudo DOCKER_BUILDKIT=0 docker compose build spark-app 2>&1 | tail -5 || echo "[WARN] Spark build failed, continuing without Spark"; }
-else
-  echo "[OK] Spark-app reused ($(sudo docker images schemalabsai-spark-app --format '{{.Size}}'))"
-fi
+build_svc spark-app 0 || { echo "[WARN] Spark build failed, trying with BUILDKIT=0..."; sudo DOCKER_BUILDKIT=0 docker compose build spark-app 2>&1 | tail -5 || echo "[WARN] Spark build failed, continuing without Spark"; }
 
 step 8 "Start Containers"
 sudo fuser -k 6000/tcp 3000/tcp 8080/tcp 2>/dev/null || true

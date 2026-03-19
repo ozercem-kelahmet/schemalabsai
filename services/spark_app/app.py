@@ -136,6 +136,29 @@ def run_job(job_id, req):
             }
             return
 
+        # Preprocess job
+        elif job_type == "preprocess":
+            input_paths = config.get("input_paths", config.get("input_path", ""))
+            target_col = config.get("target_col", None)
+            paths = [p.strip() for p in input_paths.split(",") if p.strip()]
+            dfs = []
+            for p in paths:
+                try:
+                    df_temp = spark.read                         .option("header", "true")                         .option("inferSchema", "true")                         .option("multiLine", "true")                         .option("escape", chr(34))                         .csv(p)
+                    dfs.append(df_temp)
+                    log.info(f"[PREPROCESS] Loaded {p}: {df_temp.count()} rows")
+                except Exception as e:
+                    log.error(f"[PREPROCESS] Failed to load {p}: {e}")
+            if not dfs:
+                jobs[job_id] = {"status": "failed", "error": "No files loaded"}
+                return
+            if len(dfs) > 1:
+                from functools import reduce
+                df = reduce(lambda a, b: a.unionByName(b, allowMissingColumns=True), dfs)
+            else:
+                df = dfs[0]
+            df = preprocess_dataframe(df, target_col)
+
         if df is None:
             jobs[job_id] = {"status": "failed", "error": f"Unknown job_type: {job_type}"}
             return
@@ -207,3 +230,29 @@ def merge_csvs_with_spark(spark, input_paths, output_path):
     
     log.info(f"Merged {len(dfs)} files: {row_count} rows → {output_path}")
     return row_count
+
+def preprocess_dataframe(df, target_col=None):
+    from pyspark.sql import functions as F
+    from pyspark.sql.types import NumericType, StringType
+    for field in df.schema.fields:
+        if isinstance(field.dataType, NumericType):
+            df = df.fillna({field.name: 0})
+        else:
+            df = df.fillna({field.name: ""})
+    if target_col and target_col in df.columns:
+        class_counts = df.groupBy(target_col).count()
+        max_count = class_counts.agg(F.max("count")).collect()[0][0]
+        min_count = class_counts.agg(F.min("count")).collect()[0][0]
+        if max_count / max(min_count, 1) > 5:
+            log.info(f"[PREPROCESS] Class imbalance detected, applying oversampling")
+            dfs = []
+            counts = {row[target_col]: row["count"] for row in class_counts.collect()}
+            for cls, cnt in counts.items():
+                cls_df = df.filter(F.col(target_col) == cls)
+                ratio = int(max_count / cnt)
+                if ratio > 1:
+                    cls_df = cls_df.sample(withReplacement=True, fraction=float(ratio))
+                dfs.append(cls_df)
+            from functools import reduce
+            df = reduce(lambda a, b: a.union(b), dfs)
+    return df
