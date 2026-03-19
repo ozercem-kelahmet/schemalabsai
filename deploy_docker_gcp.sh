@@ -180,12 +180,7 @@ build_svc() {
 # Frontend: BUILDKIT=1 (npm ci layer cache needed)
 build_svc go 0 || exit 1
 
-FLASK_IMG=$(sudo docker images -q schemalabsai-flask 2>/dev/null)
-if [ -z "$FLASK_IMG" ]; then
-  build_svc flask 0 || exit 1
-else
-  echo "[OK] Flask reused ($(sudo docker images schemalabsai-flask --format '{{.Size}}'))"
-fi
+build_svc flask 0 || exit 1
 
 build_svc frontend 1 || exit 1
 
