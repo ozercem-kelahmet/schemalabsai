@@ -198,6 +198,11 @@ sleep 2
 sudo docker compose up -d postgres redis flask go frontend
 # Spark ayrı başlat - fail olursa diğerleri etkilenmesin
 sudo docker compose up -d spark-app 2>/dev/null || echo "[WARN] Spark containers failed, continuing without Spark"
+# Flask server.py'yi direkt container'a kopyala (volume mount yok)
+sleep 5
+sudo docker cp /opt/schemalabsai/model/server.py schemalabs-flask:/app/model/server.py 2>/dev/null || true
+sudo docker restart schemalabs-flask 2>/dev/null || true
+echo "[OK] Flask server.py updated"
 sudo docker compose up -d zookeeper 2>/dev/null || echo "[WARN] Zookeeper failed"
 sleep 10
 sudo docker compose up -d kafka 2>/dev/null || echo "[WARN] Kafka failed"
@@ -209,6 +214,7 @@ sudo docker exec schemalabs-airflow airflow db upgrade 2>/dev/null || sudo docke
 sudo docker exec schemalabs-airflow airflow users create --username admin --password ${AIRFLOW_ADMIN_PASSWORD} --firstname Schema --lastname Labs --role Admin --email admin@schemalabs.ai 2>/dev/null || true
 sudo docker exec schemalabs-airflow airflow dags unpause training_monitor 2>/dev/null || true
 sudo docker exec schemalabs-airflow airflow dags unpause connection_sync 2>/dev/null || true
+sudo docker exec schemalabs-airflow airflow dags unpause incremental_learning 2>/dev/null || true
 echo "[OK] Airflow DAGs unpaused"
 sleep 3
 

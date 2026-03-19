@@ -1252,6 +1252,52 @@ def _load_sessions():
     except:
         training_sessions = {}
 
+# Global Kafka producer
+_kafka_producer = None
+def _get_kafka_producer():
+    global _kafka_producer
+    import os as _os2
+    kafka_servers = _os2.getenv("KAFKA_BOOTSTRAP_SERVERS", "")
+    if not kafka_servers:
+        return None
+    try:
+        if _kafka_producer is None:
+            from kafka import KafkaProducer
+            _kafka_producer = KafkaProducer(
+                bootstrap_servers=kafka_servers.split(","),
+                value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+                request_timeout_ms=5000,
+                max_block_ms=5000
+            )
+            print("[KAFKA] Producer initialized")
+        return _kafka_producer
+    except Exception as e:
+        print(f"[KAFKA INIT ERROR] {e}")
+        return None
+
+# Global Kafka producer
+_kafka_producer = None
+def _get_kafka_producer():
+    global _kafka_producer
+    import os as _os2
+    kafka_servers = _os2.getenv("KAFKA_BOOTSTRAP_SERVERS", "")
+    if not kafka_servers:
+        return None
+    try:
+        if _kafka_producer is None:
+            from kafka import KafkaProducer
+            _kafka_producer = KafkaProducer(
+                bootstrap_servers=kafka_servers.split(","),
+                value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+                request_timeout_ms=5000,
+                max_block_ms=5000
+            )
+            print("[KAFKA] Producer initialized")
+        return _kafka_producer
+    except Exception as e:
+        print(f"[KAFKA INIT ERROR] {e}")
+        return None
+
 def _save_sessions():
     try:
         with open(SESSIONS_FILE, 'w') as f:
@@ -1295,32 +1341,25 @@ def save_session(query_id, session):
     except Exception as e:
         print(f"[SESSION] Redis write failed: {e}")
     
-    # Kafka event - fallback: sadece log
+      # Kafka event - global producer ile
     try:
-        import os as _os
-        kafka_servers = _os.getenv("KAFKA_BOOTSTRAP_SERVERS", "")
-        if kafka_servers and ep > 0:
-            from kafka import KafkaProducer
-            _producer = KafkaProducer(
-                bootstrap_servers=kafka_servers.split(","),
-                value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-                request_timeout_ms=3000,
-                max_block_ms=3000
-            )
-            _producer.send("training_progress", {
-                "query_id": query_id,
-                "epoch": ep,
-                "accuracy": ac,
-                "loss": lo,
-                "status": session.get("status", "training"),
-                "epochs": session.get("epochs", 0),
-                "user_id": session.get("user_id", ""),
-                "model_id": session.get("model_id", "")
-            })
-            _producer.flush(timeout=2)
-            _producer.close()
+        if ep > 0:
+            _kp = _get_kafka_producer()
+            if _kp:
+                _kp.send("training_progress", {
+                    "query_id": query_id,
+                    "epoch": ep,
+                    "accuracy": ac,
+                    "loss": lo,
+                    "status": session.get("status", "training"),
+                    "epochs": session.get("epochs", 0),
+                    "user_id": session.get("user_id", ""),
+                    "model_id": session.get("model_id", "")
+                })
+                _kp.flush(timeout=2)
+                print(f"[KAFKA] Sent: qid={query_id} epoch={ep}")
     except Exception as _ke:
-        pass  # Kafka fail → Redis fallback zaten çalışıyor
+        print(f"[KAFKA ERROR] {_ke}")
 
     _save_sessions()
 
