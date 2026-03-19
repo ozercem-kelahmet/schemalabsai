@@ -1,0 +1,20 @@
+FROM python:3.10-slim
+
+ENV AIRFLOW_HOME=/opt/airflow
+ENV AIRFLOW__CORE__EXECUTOR=LocalExecutor
+ENV AIRFLOW__CORE__LOAD_EXAMPLES=False
+
+RUN apt-get update && apt-get install -y curl gcc libpq-dev && rm -rf /var/lib/apt/lists/*
+
+RUN curl -o /constraints.txt "https://raw.githubusercontent.com/apache/airflow/constraints-2.7.3/constraints-3.10.txt"
+
+RUN pip install --no-cache-dir "apache-airflow==2.7.3" --constraint /constraints.txt
+
+RUN pip install --no-cache-dir "flask-session==0.4.1" kafka-python==2.0.2 psycopg2-binary requests==2.31.0
+
+WORKDIR /opt/airflow
+COPY airflow/dags/ /opt/airflow/dags/
+
+EXPOSE 8080
+
+CMD ["bash", "-c", "airflow db upgrade 2>/dev/null || true && airflow scheduler & airflow webserver --port 8080"]
