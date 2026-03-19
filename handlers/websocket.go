@@ -41,10 +41,30 @@ func SSEHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
+	// Unwrap ResponseWriter to get underlying flusher
+	type flusherWriter interface {
+		http.ResponseWriter
+		http.Flusher
+	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "SSE not supported", http.StatusInternalServerError)
-		return
+		// Try to unwrap
+		type unwrapper interface {
+			Unwrap() http.ResponseWriter
+		}
+		rw := w
+		for !ok {
+			if uw, isUW := rw.(unwrapper); isUW {
+				rw = uw.Unwrap()
+				flusher, ok = rw.(http.Flusher)
+			} else {
+				break
+			}
+		}
+		if !ok {
+			http.Error(w, "SSE not supported", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	client := &SSEClient{
