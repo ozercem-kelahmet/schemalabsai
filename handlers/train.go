@@ -3455,8 +3455,6 @@ func RestoreTrainingFromRedis() {
 	if err != nil || len(keys) == 0 {
 		return
 	}
-	trainingProgressMu.Lock()
-	defer trainingProgressMu.Unlock()
 	for _, key := range keys {
 		data, err := rdb.Get(ctx, key).Result()
 		if err != nil {
@@ -3471,21 +3469,12 @@ func RestoreTrainingFromRedis() {
 			continue
 		}
 		queryID := strings.TrimPrefix(key, "training:")
-		if _, exists := trainingProgressMap[queryID]; !exists {
-			p := &TrainingProgressEntry{
-				Status: "training",
-			}
-			if modelID, ok := progress["model_id"].(string); ok {
-				p.ModelID = modelID
-			}
-			if epoch, ok := progress["epoch"].(float64); ok {
-				p.Epoch = int(epoch)
-			}
-			if epochs, ok := progress["epochs"].(float64); ok {
-				p.Epochs = int(epochs)
-			}
-			trainingProgressMap[queryID] = p
-			log.Printf("[STARTUP] Restored training from Redis: %s model=%s", queryID, p.ModelID)
+		// Orphan training — process restart oldu, bu training öldü
+		progress["status"] = "failed"
+		progress["error"] = "Training process was interrupted (server restart)"
+		if updated, err := json.Marshal(progress); err == nil {
+			rdb.SetEx(ctx, key, string(updated), 86400*time.Second)
+			log.Printf("[STARTUP] Orphan training marked as failed: %s", queryID)
 		}
 	}
 }

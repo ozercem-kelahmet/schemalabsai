@@ -62,13 +62,39 @@ export function BuildWizard() {
       sse.onmessage = (e) => {
         try {
           const data = JSON.parse(e.data)
-          if (data.status && data.epoch !== undefined) {
-            // SSE data geldi - polling'i yavaşlat
+          if (data.epoch !== undefined && data.epoch > 0) {
+            // Kafka'dan direkt veri - Redis'e gitme
             if (pollingRef.current) {
               clearInterval(pollingRef.current)
-              pollingRef.current = setInterval(pollProgress, 10000) // 10s fallback
+              pollingRef.current = setInterval(pollProgress, 15000) // 15s fallback only
             }
-            pollProgress() // Anında güncelle
+            const epoch = data.epoch
+            const epochs = data.epochs || epoch
+            const accuracy = data.accuracy > 1 ? data.accuracy / 100 : data.accuracy
+            const loss = data.loss || 0
+            const status = data.status || "training"
+
+            if (status === "completed") {
+              pollProgress() // Tamamlandığında Redis'ten tam veriyi al
+              return
+            }
+
+            setTotalEpochs(prev => Math.max(prev, epochs))
+            setCurrentMetrics(prev => {
+              if (!prev || epoch >= prev.epoch) {
+                return { epoch, totalEpochs: epochs, loss, accuracy, learningRate: 0.001 }
+              }
+              return prev
+            })
+            setMetricsHistory(prev => {
+              const exists = prev.some((m: any) => m.epoch === epoch)
+              if (!exists && epoch > 0) {
+                const newEntry = { epoch, totalEpochs: epochs, loss, accuracy, learningRate: 0.001 }
+                return [...prev, newEntry].sort((a: any, b: any) => a.epoch - b.epoch)
+              }
+              return prev
+            })
+            addLog(`Epoch ${epoch}/${epochs} - Loss: ${loss.toFixed(4)}, Accuracy: ${(accuracy * 100).toFixed(1)}%`)
           }
         } catch {}
       }

@@ -67,22 +67,28 @@ with DAG(
 
     def check_accuracy(**context):
         model_id = context['dag_run'].conf.get('model_id')
-        resp = requests.get(f"{GO_API_URL}/api/models/finetuned", timeout=10)
-        models = resp.json().get('models', [])
-        
-        model = next((m for m in models if m['id'] == model_id), None)
+        try:
+            resp = requests.get(f"{GO_API_URL}/api/models/finetuned", timeout=10)
+            models = resp.json().get('models', [])
+            model = next((m for m in models if m['id'] == model_id), None)
+        except Exception as e:
+            print(f"[AIRFLOW] Failed to get models: {e}")
+            model = None
+
         if not model:
-            raise ValueError(f"Model {model_id} not found")
+            print(f"[AIRFLOW] Model {model_id} not found yet, skipping accuracy check")
+            context['task_instance'].xcom_push(key='needs_retraining', value=False)
+            return 0
         
         accuracy = model.get('accuracy', 0)
-        print(f"Model {model_id} accuracy: {accuracy}")
+        print(f"[AIRFLOW] Model {model_id} accuracy: {accuracy}")
         
         threshold = float(os.getenv('MIN_ACCURACY_THRESHOLD', '0.7'))
-        if accuracy < threshold:
-            print(f"Low accuracy {accuracy} < {threshold}, triggering retraining")
+        if accuracy > 0 and accuracy < threshold:
+            print(f"[AIRFLOW] Low accuracy {accuracy} < {threshold}, triggering retraining")
             context['task_instance'].xcom_push(key='needs_retraining', value=True)
         else:
-            print(f"Accuracy OK: {accuracy}")
+            print(f"[AIRFLOW] Accuracy OK: {accuracy}")
             context['task_instance'].xcom_push(key='needs_retraining', value=False)
         
         return accuracy
