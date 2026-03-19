@@ -207,6 +207,9 @@ sleep 30
 # Airflow DB init - ilk kurulumda
 sudo docker exec schemalabs-airflow airflow db upgrade 2>/dev/null || sudo docker exec schemalabs-airflow airflow db init 2>/dev/null || true
 sudo docker exec schemalabs-airflow airflow users create --username admin --password ${AIRFLOW_ADMIN_PASSWORD} --firstname Schema --lastname Labs --role Admin --email admin@schemalabs.ai 2>/dev/null || true
+sudo docker exec schemalabs-airflow airflow dags unpause training_monitor 2>/dev/null || true
+sudo docker exec schemalabs-airflow airflow dags unpause connection_sync 2>/dev/null || true
+echo "[OK] Airflow DAGs unpaused"
 sleep 3
 
 GRAFANA=$(sudo docker ps -q -f name=schemalabs-grafana 2>/dev/null)

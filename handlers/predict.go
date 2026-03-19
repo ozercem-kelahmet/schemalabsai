@@ -1,16 +1,20 @@
 package handlers
 
 import (
-"strings"
 	"bytes"
 	"encoding/json"
-	"io"
-	"net/http"
 	"fmt"
+	"io"
+	"log"
+	"mime/multipart"
+	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"schemalabsai/services"
 )
 
 type PredictRequest struct {
@@ -181,4 +185,103 @@ func generateNarrative(predResult map[string]interface{}, userID string) string 
 	fmt.Printf("[NARRATIVE] Generated in %dms for user %s\n", ms, userID)
 
 	return narrative
+}
+
+// BatchPredictHandler - Spark ile 1M+ satır toplu tahmin
+func BatchPredictHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	userID := r.Header.Get("X-User-ID")
+
+	// Multipart file upload
+	if err := r.ParseMultipartForm(500 << 20); err != nil {
+		http.Error(w, "File too large", http.StatusBadRequest)
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, "No file provided", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	modelID := r.FormValue("model_id")
+	if modelID == "" {
+		http.Error(w, "model_id required", http.StatusBadRequest)
+		return
+	}
+
+	// Quota check
+	if userID != "" {
+		if ok, reason := CheckQuota(userID, "query"); !ok {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]string{"error": reason})
+			return
+		}
+	}
+
+	// Temp dosyaya kaydet
+	tmpPath := fmt.Sprintf("./uploads/batch_%s_%s.csv", userID, uuid.New().String()[:8])
+	tmpFile, err := os.Create(tmpPath)
+	if err != nil {
+		http.Error(w, "Failed to save file", http.StatusInternalServerError)
+		return
+	}
+	io.Copy(tmpFile, file)
+	tmpFile.Close()
+	defer os.Remove(tmpPath)
+
+	log.Printf("[BATCH PREDICT] File: %s size=%.1fMB model=%s", header.Filename, float64(fileSize(tmpPath))/(1024*1024), modelID)
+
+	// Spark ile büyük dosyaysa preprocess
+	outputPath := strings.TrimSuffix(tmpPath, ".csv") + "_result.csv"
+	if services.DefaultSpark != nil && services.DefaultSpark.IsAvailable() && services.DefaultSpark.ShouldUseSparkBySize(fileSize(tmpPath)) {
+		job := services.SparkJobRequest{
+			JobType:    "preprocess",
+			OutputPath: outputPath,
+			Config:     map[string]string{"input_paths": tmpPath},
+		}
+		resp, err := services.DefaultSpark.SubmitJob(job)
+		if err == nil {
+			result, werr := services.DefaultSpark.WaitForJob(resp.JobID, 10*60*1000000000)
+			if werr == nil && result.Status == "completed" {
+				tmpPath = outputPath
+				log.Printf("[BATCH PREDICT] Spark preprocessed: %d rows", result.RowCount)
+			}
+		}
+	}
+
+	// Flask'a batch predict gönder
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, _ := writer.CreateFormFile("file", filepath.Base(tmpPath))
+	f, _ := os.Open(tmpPath)
+	io.Copy(part, f)
+	f.Close()
+	writer.WriteField("model_id", modelID)
+	writer.WriteField("batch_mode", "true")
+	writer.Close()
+
+	flaskResp, err := http.Post(GetFlaskURL()+"/batch_predict", writer.FormDataContentType(), body)
+	if err != nil {
+		http.Error(w, "Flask error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer flaskResp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	io.Copy(w, flaskResp.Body)
+}
+
+func fileSize(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
 }

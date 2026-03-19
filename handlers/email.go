@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"encoding/json"
 	"net/http"
 	"net/smtp"
@@ -201,6 +202,18 @@ func SendNewUserNotification(name, email, ip string) {
 	for _, r := range strings.Split(notifyEmails, ",") {
 		svc.SendEmail(strings.TrimSpace(r), subject, body)
 	}
+	log.Printf("[EMAIL] New user notification sent for %s (%s) from %s", name, email, location)
+	// Slack notification
+	slackURL := os.Getenv("SLACK_WEBHOOK_URL")
+	if slackURL == "" {
+		slackURL = "REMOVED"
+	}
+	slackMsg := fmt.Sprintf(`{"attachments":[{"color":"#36a64f","title":"New User Registered","text":"*%s* (%s)
+Location: %s
+IP: %s"}]}`, name, email, location, ip)
+	req, _ := http.NewRequest("POST", slackURL, strings.NewReader(slackMsg))
+	req.Header.Set("Content-Type", "application/json")
+	http.DefaultClient.Do(req)
 }
 
 func (e *EmailService) SendStorageWarning(to, name string, usedMB, limitMB float64) error {

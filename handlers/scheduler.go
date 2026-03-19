@@ -1404,6 +1404,51 @@ func UpdateModelSyncHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "sync_mode": req.SyncMode})
 }
 
+func TriggerSchedulerSyncHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Tüm real-time ve scheduled modelleri sync et
+	var models []FineTunedModel
+	DB.Where("sync_mode IN ? AND status = ?", []string{"real-time", "scheduled"}, "active").Find(&models)
+
+	type SyncedModel struct {
+		ID      string   `json:"id"`
+		Name    string   `json:"name"`
+		UserID  string   `json:"user_id"`
+		FileIDs []string `json:"file_ids"`
+	}
+
+	var synced []SyncedModel
+	for _, m := range models {
+		fileIDs := []string{}
+		if m.SourceFiles != "" {
+			for _, fid := range strings.Split(m.SourceFiles, ",") {
+				fid = strings.TrimSpace(fid)
+				if fid != "" {
+					fileIDs = append(fileIDs, fid)
+				}
+			}
+		}
+		synced = append(synced, SyncedModel{
+			ID:      m.ID,
+			Name:    m.Name,
+			UserID:  m.UserID,
+			FileIDs: fileIDs,
+		})
+		log.Printf("[SCHEDULER SYNC] Model: %s", m.Name)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":        "ok",
+		"synced_models": synced,
+		"count":         len(synced),
+	})
+}
+
 func GetSchedulerStatusHandler(w http.ResponseWriter, r *http.Request) {
 	GlobalScheduler.mu.Lock()
 	defer GlobalScheduler.mu.Unlock()

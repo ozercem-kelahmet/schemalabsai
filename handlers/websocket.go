@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"schemalabsai/services"
 )
 
 // WebSocket yerine SSE (Server-Sent Events) kullanıyoruz
@@ -80,6 +82,13 @@ func SSEHandler(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		}
+	}
+}
+
+// InitSSEKafkaCallback - Kafka consumer'dan gelen event'leri SSE'ye bağla
+func InitSSEKafkaCallback() {
+	services.OnTrainingProgress = func(userID, queryID string, data map[string]interface{}) {
+		BroadcastTrainingProgress(userID, queryID, data)
 	}
 }
 

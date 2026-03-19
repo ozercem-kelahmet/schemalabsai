@@ -2775,6 +2775,36 @@ log.Printf("MULTI EMAIL SENT to %s", user.Email)
 }
 }
 }
+
+// Airflow training_monitor DAG tetikle — fallback: sadece log
+go func() {
+airflowURL := os.Getenv("AIRFLOW_URL")
+if airflowURL == "" { airflowURL = "http://airflow:8080" }
+payload := fmt.Sprintf(`{"conf":{"model_id":"%s","query_id":"%s","user_id":"%s","file_ids":[%s]}}`,
+dbModelID, req.QueryID, userID,
+func() string {
+ids := ""
+for i, fid := range req.FileIDs {
+if i > 0 { ids += "," }
+ids += `"` + fid + `"`
+}
+return ids
+}())
+airflowUser := os.Getenv("AIRFLOW_ADMIN_USER")
+if airflowUser == "" { airflowUser = "admin" }
+airflowPass := os.Getenv("AIRFLOW_ADMIN_PASSWORD")
+airflowReq, _ := http.NewRequest("POST", airflowURL+"/api/v1/dags/training_monitor/dagRuns", strings.NewReader(payload))
+airflowReq.Header.Set("Content-Type", "application/json")
+airflowReq.SetBasicAuth(airflowUser, airflowPass)
+httpClient := &http.Client{Timeout: 10 * time.Second}
+resp, err := httpClient.Do(airflowReq)
+if err != nil {
+log.Printf("[AIRFLOW] Trigger failed (non-critical): %v", err)
+return
+}
+defer resp.Body.Close()
+log.Printf("[AIRFLOW] training_monitor triggered: status=%d", resp.StatusCode)
+}()
 }()
 	// w kullanma - response zaten gonderildi (goroutine icindeyiz)
 	epochs := 0

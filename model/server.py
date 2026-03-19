@@ -1313,7 +1313,9 @@ def save_session(query_id, session):
                 "accuracy": ac,
                 "loss": lo,
                 "status": session.get("status", "training"),
-                "epochs": session.get("epochs", 0)
+                "epochs": session.get("epochs", 0),
+                "user_id": session.get("user_id", ""),
+                "model_id": session.get("model_id", "")
             })
             _producer.flush(timeout=2)
             _producer.close()
@@ -1461,6 +1463,94 @@ def predict():
         traceback.print_exc()
         print(f"best_acc at exception: {best_acc if 'best_acc' in locals() else 'UNDEFINED'}")
         print("="*80)
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/batch_predict', methods=['POST'])
+def batch_predict_csv():
+    """Batch prediction for CSV file upload (Spark preprocessed)"""
+    try:
+        if 'file' not in request.files:
+            return jsonify({"error": "No file provided"}), 400
+        
+        file = request.files['file']
+        model_id = request.form.get('model_id', None)
+        
+        import tempfile
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
+        file.save(temp_file.name)
+        temp_file.close()
+        
+        df = pd.read_csv(temp_file.name)
+        os.unlink(temp_file.name)
+        
+        print(f"[BATCH PREDICT] {len(df)} rows, {len(df.columns)} cols, model={model_id}")
+        
+        # Load model
+        ckpt = None
+        if model_id:
+            ckpt_path = f"./finetuned_models/{model_id}.pt"
+            if os.path.exists(ckpt_path):
+                ckpt = torch.load(ckpt_path, map_location=device)
+        
+        if ckpt is None:
+            return jsonify({"error": f"Model {model_id} not found"}), 404
+        
+        ft_model = load_finetuned_model(ckpt)
+        if ft_model is None:
+            return jsonify({"error": "Failed to load model"}), 500
+        
+        # Preprocess
+        numeric_df = df.select_dtypes(include=['number'])
+        if len(numeric_df.columns) == 0:
+            return jsonify({"error": "No numeric features"}), 400
+        
+        X = numeric_df.values.astype(np.float32)
+        X = np.nan_to_num(X, nan=0.0)
+        
+        if 'scaler' in ckpt and ckpt['scaler'] is not None:
+            X = ckpt['scaler'].transform(X)
+        
+        # Batch predict - 1000 satır chunk
+        all_preds = []
+        all_confs = []
+        chunk_size = 1000
+        
+        ft_model.eval()
+        with torch.inference_mode():
+            for i in range(0, len(X), chunk_size):
+                chunk = torch.FloatTensor(X[i:i+chunk_size]).to(device)
+                out = ft_model(chunk)
+                if isinstance(out, dict):
+                    logits = out.get('logits', out.get('output', list(out.values())[0]))
+                else:
+                    logits = out
+                probs = torch.softmax(logits, dim=1)
+                conf, pred = probs.max(1)
+                all_preds.extend(pred.cpu().numpy().tolist())
+                all_confs.extend(conf.cpu().numpy().tolist())
+        
+        # Le classes
+        le = ckpt.get('label_encoder', None)
+        class_names = le.classes_.tolist() if le else [str(i) for i in range(len(set(all_preds)))]
+        labels = [class_names[p] if p < len(class_names) else str(p) for p in all_preds]
+        
+        df['prediction'] = labels
+        df['confidence'] = all_confs
+        
+        print(f"[BATCH PREDICT] Done: {len(df)} predictions")
+        
+        return jsonify({
+            "status": "ok",
+            "rows": len(df),
+            "predictions": labels,
+            "confidences": all_confs,
+            "columns": df.columns.tolist()
+        })
+        
+    except Exception as e:
+        import traceback
+        print(f"[BATCH PREDICT ERROR] {e}")
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 @app.route('/predict/batch', methods=['POST'])

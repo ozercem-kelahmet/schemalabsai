@@ -34,14 +34,36 @@ with DAG(
         if not model_id:
             raise ValueError("model_id required")
         
-        resp = requests.get(f"{GO_API_URL}/api/training/progress?query_id={query_id}", timeout=10)
-        status = resp.json()
-        print(f"Training status: {status}")
+        # Training tamamlanana kadar bekle (max 30 dakika)
+        import time
+        max_wait = 1800
+        waited = 0
+        while waited < max_wait:
+            try:
+                resp = requests.get(
+                    f"{GO_API_URL}/api/train/progress?query_id={query_id}",
+                    timeout=10
+                )
+                if resp.status_code == 200 and resp.text:
+                    status = resp.json()
+                    current_status = status.get("status", "unknown")
+                    print(f"[AIRFLOW] Training status: {current_status} epoch={status.get('epoch',0)}/{status.get('epochs',0)}")
+                    
+                    if current_status == "completed":
+                        print(f"[AIRFLOW] Training completed!")
+                        return status
+                    elif current_status == "failed":
+                        raise Exception(f"Training failed: {status.get('error', 'Unknown')}")
+                    elif current_status == "idle" and waited > 60:
+                        print(f"[AIRFLOW] Training idle after {waited}s, assuming completed")
+                        return status
+            except Exception as e:
+                print(f"[AIRFLOW] Status check error: {e}")
+            
+            time.sleep(30)
+            waited += 30
         
-        if status.get('status') == 'failed':
-            raise Exception(f"Training failed: {status.get('error', 'Unknown error')}")
-        
-        return status
+        raise Exception(f"Training timeout after {max_wait}s")
 
     def check_accuracy(**context):
         model_id = context['dag_run'].conf.get('model_id')
@@ -73,12 +95,24 @@ with DAG(
         
         if needs_retraining:
             print(f"[AIRFLOW] Triggering retraining for model {model_id}")
-            resp = requests.post(f"{GO_API_URL}/api/train/multi", 
-                json={"file_ids": file_ids, "model_name": f"retrain_{model_id[:8]}"},
-                headers={"X-User-ID": user_id},
-                timeout=30
-            )
-            print(f"[AIRFLOW] Retraining triggered: {resp.json()}")
+            try:
+                resp = requests.post(
+                    f"{GO_API_URL}/api/train/multi",
+                    json={
+                        "file_ids": file_ids,
+                        "model_name": f"retrain_{model_id[:8]}",
+                        "epochs": 0,
+                        "batch_size": 0
+                    },
+                    headers={"X-User-ID": user_id, "Content-Type": "application/json"},
+                    timeout=30
+                )
+                if resp.status_code == 200:
+                    print(f"[AIRFLOW] Retraining triggered: {resp.json()}")
+                else:
+                    print(f"[AIRFLOW] Retraining failed: {resp.status_code} {resp.text}")
+            except Exception as e:
+                print(f"[AIRFLOW] Retraining error: {e}")
         else:
             print(f"[AIRFLOW] No retraining needed for model {model_id}")
 
@@ -121,12 +155,127 @@ with DAG(
 ) as dag2:
 
     def sync_connections(**context):
-        resp = requests.get(f"{GO_API_URL}/api/scheduler/status", timeout=30)
-        print(f"Scheduler status: {resp.json()}")
+        # Scheduler status
+        try:
+            resp = requests.get(f"{GO_API_URL}/api/scheduler/status", timeout=30)
+            if resp.status_code == 200 and resp.text:
+                data = resp.json()
+                print(f"Scheduler status: {data}")
+            else:
+                print(f"Scheduler status: {resp.status_code}")
+        except Exception as e:
+            print(f"Scheduler status check failed (non-critical): {e}")
         
         # Trigger sync for all real-time models
-        resp2 = requests.post(f"{GO_API_URL}/api/scheduler/sync", timeout=60)
-        print(f"Sync triggered: {resp2.json()}")
+        try:
+            resp2 = requests.post(f"{GO_API_URL}/api/scheduler/sync", timeout=60)
+            if resp2.status_code == 200 and resp2.text:
+                result = resp2.json()
+                print(f"Sync triggered: {result}")
+                # Sync bittikten sonra training_monitor DAG'ını tetikle
+                synced_models = result.get("synced_models", [])
+                for model in synced_models:
+                    try:
+                        airflow_resp = requests.post(
+                            "http://localhost:8080/api/v1/dags/training_monitor/dagRuns",
+                            json={"conf": {
+                                "model_id": model.get("id", ""),
+                                "query_id": model.get("id", ""),
+                                "user_id": model.get("user_id", ""),
+                                "file_ids": model.get("file_ids", [])
+                            }},
+                            auth=(os.getenv("AIRFLOW_ADMIN_USER", "admin"), os.getenv("AIRFLOW_ADMIN_PASSWORD", "")),
+                            timeout=10
+                        )
+                        print(f"[AIRFLOW] training_monitor triggered for {model.get('id')}: {airflow_resp.status_code}")
+                    except Exception as te:
+                        print(f"[AIRFLOW] Trigger failed: {te}")
+            else:
+                print(f"Sync triggered: {resp2.status_code}")
+        except Exception as e:
+            print(f"Sync failed (non-critical): {e}")
 
     t_sync = PythonOperator(task_id='sync_connections', python_callable=sync_connections)
     t_sync
+
+# DAG 3: Incremental learning pipeline
+with DAG(
+    'incremental_learning',
+    default_args=default_args,
+    description='Spark merge new data + retraining',
+    schedule_interval=None,  # Event triggered
+    start_date=datetime(2026, 1, 1),
+    catchup=False,
+    tags=['training', 'incremental'],
+) as dag3:
+
+    def merge_and_retrain(**context):
+        model_id = context['dag_run'].conf.get('model_id')
+        user_id = context['dag_run'].conf.get('user_id', '')
+        new_file_ids = context['dag_run'].conf.get('new_file_ids', [])
+        existing_file_ids = context['dag_run'].conf.get('existing_file_ids', [])
+        
+        all_file_ids = existing_file_ids + new_file_ids
+        print(f"[INCREMENTAL] Model: {model_id}, files: {len(all_file_ids)} total ({len(new_file_ids)} new)")
+        
+        if not all_file_ids:
+            print("[INCREMENTAL] No files, skipping")
+            return
+        
+        # Go API üzerinden retraining tetikle
+        try:
+            resp = requests.post(
+                f"{GO_API_URL}/api/train/multi",
+                json={
+                    "file_ids": all_file_ids,
+                    "model_name": f"incremental_{model_id[:8]}",
+                    "epochs": 0,
+                    "batch_size": 0
+                },
+                headers={"X-User-ID": user_id, "Content-Type": "application/json"},
+                timeout=30
+            )
+            if resp.status_code == 200:
+                result = resp.json()
+                print(f"[INCREMENTAL] Retraining triggered: {result.get('query_id')}")
+                context['task_instance'].xcom_push(key='query_id', value=result.get('query_id'))
+            else:
+                raise Exception(f"Retraining failed: {resp.status_code} {resp.text}")
+        except Exception as e:
+            raise Exception(f"Incremental learning failed: {e}")
+
+    def wait_and_verify(**context):
+        import time
+        query_id = context['task_instance'].xcom_pull(task_ids='merge_and_retrain', key='query_id')
+        model_id = context['dag_run'].conf.get('model_id')
+        
+        if not query_id:
+            print("[INCREMENTAL] No query_id, skipping")
+            return
+        
+        # Training tamamlanana kadar bekle
+        max_wait = 3600
+        waited = 0
+        while waited < max_wait:
+            try:
+                resp = requests.get(f"{GO_API_URL}/api/train/progress?query_id={query_id}", timeout=10)
+                if resp.status_code == 200 and resp.text:
+                    status = resp.json()
+                    current = status.get("status", "unknown")
+                    print(f"[INCREMENTAL] Status: {current} epoch={status.get('epoch',0)}/{status.get('epochs',0)}")
+                    if current == "completed":
+                        accuracy = status.get("accuracy", 0)
+                        print(f"[INCREMENTAL] Done! accuracy={accuracy:.1f}%")
+                        return
+                    elif current == "failed":
+                        raise Exception(f"Training failed: {status.get('error')}")
+            except Exception as e:
+                print(f"[INCREMENTAL] Check error: {e}")
+            time.sleep(30)
+            waited += 30
+        
+        raise Exception(f"Incremental learning timeout")
+
+    t_merge = PythonOperator(task_id='merge_and_retrain', python_callable=merge_and_retrain)
+    t_verify = PythonOperator(task_id='wait_and_verify', python_callable=wait_and_verify)
+    t_merge >> t_verify
