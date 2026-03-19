@@ -217,6 +217,12 @@ GRAFANA=$(sudo docker ps -q -f name=schemalabs-grafana 2>/dev/null)
 if [ -z "$GRAFANA" ]; then
   sudo docker compose up -d grafana prometheus node-exporter 2>/dev/null || true
 fi
+
+# Connect all containers to schemalabs-network
+for c in schemalabs-postgres schemalabs-go schemalabs-flask schemalabs-frontend schemalabs-redis schemalabs-prometheus schemalabs-grafana schemalabs-node-exporter; do
+  sudo docker network connect schemalabs-network $c 2>/dev/null || true
+done
+echo "[OK] Network connected"
 echo "[OK] Containers started"
 
 step 9 "Health Checks"

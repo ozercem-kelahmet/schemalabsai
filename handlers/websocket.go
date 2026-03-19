@@ -72,7 +72,7 @@ func SSEHandler(w http.ResponseWriter, r *http.Request) {
 		userID: userID,
 	}
 
-	key := userID + ":" + queryID
+	key := queryID  // sadece queryID ile key
 	sseClientsMu.Lock()
 	sseClients[key] = client
 	sseClientsMu.Unlock()
@@ -117,7 +117,7 @@ func InitSSEKafkaCallback() {
 
 // BroadcastTrainingProgress - training progress'i SSE client'larına gönder
 func BroadcastTrainingProgress(userID, queryID string, data map[string]interface{}) {
-	key := userID + ":" + queryID
+	key := queryID  // sadece queryID
 	sseClientsMu.RLock()
 	client, ok := sseClients[key]
 	sseClientsMu.RUnlock()
