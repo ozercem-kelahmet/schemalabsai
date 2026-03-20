@@ -207,6 +207,7 @@ trainingProgressMu.Lock()
 trainingProgress.Status = "completed"
 trainingProgress.Accuracy = accuracy
 trainingProgressMu.Unlock()
+
 	} else {
 		log.Printf("⚠️  No accuracy in Flask response or type mismatch")
 	}
@@ -2850,6 +2851,7 @@ log.Printf("[AIRFLOW] training_monitor triggered: status=%d", resp.StatusCode)
 		}
 	}()
 
+CloseSSEClient(req.QueryID)
 log.Printf("Training goroutine completed for model %s", dbModelID)
 }()
 }

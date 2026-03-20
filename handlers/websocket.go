@@ -68,7 +68,7 @@ func SSEHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := &SSEClient{
-		ch:     make(chan string, 10),
+		ch:     make(chan string, 50),
 		userID: userID,
 	}
 
@@ -113,6 +113,18 @@ func InitSSEKafkaCallback() {
 	services.OnTrainingProgress = func(userID, queryID string, data map[string]interface{}) {
 		BroadcastTrainingProgress(userID, queryID, data)
 	}
+}
+
+// CloseSSEClient - training tamamlandığında SSE client'ı kapat
+func CloseSSEClient(queryID string) {
+	sseClientsMu.Lock()
+	client, ok := sseClients[queryID]
+	if ok {
+		delete(sseClients, queryID)
+		close(client.ch)
+		log.Printf("[SSE] Client closed after training complete: %s", queryID)
+	}
+	sseClientsMu.Unlock()
 }
 
 // BroadcastTrainingProgress - training progress'i SSE client'larına gönder
