@@ -64,6 +64,8 @@ export function BuildWizard() {
           const data = JSON.parse(e.data)
           if (data.epoch !== undefined && data.epoch > 0) {
             // Kafka'dan direkt veri - Redis'e gitme
+            trainingStartedRef.current = true
+            setTrainingStatus("training")
             if (pollingRef.current) {
               clearInterval(pollingRef.current)
               pollingRef.current = setInterval(pollProgress, 15000) // 15s fallback only
