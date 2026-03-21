@@ -62,8 +62,9 @@ export function BuildWizard() {
       sse.onmessage = (e) => {
         try {
           const data = JSON.parse(e.data)
-          if (data.epoch !== undefined && data.epoch > 0) {
-            // Kafka'dan direkt veri
+          if (data.epoch !== undefined && data.epoch > 0 && 
+              (!data.query_id || data.query_id === trainingQueryIdRef.current)) {
+            // Kafka'dan direkt veri - sadece bu training'e ait
             trainingStartedRef.current = true
             setTrainingStatus("training")
             const epoch = data.epoch
@@ -178,7 +179,7 @@ export function BuildWizard() {
             try { setCurrentMetrics(JSON.parse(savedM)) } catch(e) {}
           }
           const savedTE = localStorage.getItem("trainingTotalEpochs")
-          if (savedTE) { const te = parseInt(savedTE); if (te > 0) setTotalEpochs(te) }
+          // totalEpochs localStorage restore disabled - causes 0 of 5 issue
           const savedST = localStorage.getItem("trainingStartTime")
           if (savedST) {
             const el = Math.floor((Date.now() - parseInt(savedST)) / 1000)
