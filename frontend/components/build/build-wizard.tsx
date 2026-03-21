@@ -63,13 +63,9 @@ export function BuildWizard() {
         try {
           const data = JSON.parse(e.data)
           if (data.epoch !== undefined && data.epoch > 0) {
-            // Kafka'dan direkt veri - Redis'e gitme
+            // Kafka'dan direkt veri
             trainingStartedRef.current = true
             setTrainingStatus("training")
-            if (pollingRef.current) {
-              clearInterval(pollingRef.current)
-              pollingRef.current = setInterval(pollProgress, 15000) // 15s fallback only
-            }
             const epoch = data.epoch
             const epochs = data.epochs || epoch
             const accuracy = data.accuracy > 1 ? data.accuracy / 100 : data.accuracy
@@ -79,6 +75,11 @@ export function BuildWizard() {
             if (status === "completed") {
               pollProgress() // Tamamlandığında Redis'ten tam veriyi al
               return
+            }
+
+            // İlk SSE event'inde polling'i de bir kez tetikle (UI state sync için)
+            if (epoch <= 2) {
+              pollProgress()
             }
 
             setTotalEpochs(prev => Math.max(prev, epochs))

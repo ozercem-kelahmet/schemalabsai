@@ -102,7 +102,7 @@ export function TrainingStep({
                   {status === "training" ? "Training in Progress" : status}
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  Epoch {currentMetrics?.epoch || 0} of {currentMetrics?.epoch ? (currentMetrics.epoch + 1) : 0}
+                  Epoch {currentMetrics?.epoch || 0} of {currentMetrics?.totalEpochs || 0}
                 </p>
               </div>
             </div>
