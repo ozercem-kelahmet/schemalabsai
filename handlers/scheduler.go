@@ -230,7 +230,37 @@ func (s *Scheduler) ExecuteJob(job *ScheduledJob) {
 }
 
 func triggerRetrain(job *ScheduledJob) error {
+	// Try Airflow incremental_learning DAG first
+	airflowURL := os.Getenv("AIRFLOW_URL")
+	if airflowURL == "" { airflowURL = "http://airflow:8080" }
+	airflowUser := os.Getenv("AIRFLOW_ADMIN_USER"); if airflowUser == "" { airflowUser = "admin" }
+	airflowPass := os.Getenv("AIRFLOW_ADMIN_PASSWORD")
+
+	fileIDsJSON := "["
+	for i, fid := range job.FileIDs {
+		if i > 0 { fileIDsJSON += "," }
+		fileIDsJSON += `"` + strings.TrimSpace(fid) + `"`
+	}
+	fileIDsJSON += "]"
+
+	payload := fmt.Sprintf(`{"conf":{"model_id":"%s","user_id":"%s","file_ids":%s,"existing_file_ids":%s,"new_file_ids":[]}}`,
+		job.ModelID, job.UserID, fileIDsJSON, fileIDsJSON)
+
+	airflowReq, _ := http.NewRequest("POST", airflowURL+"/api/v1/dags/incremental_learning/dagRuns", strings.NewReader(payload))
+	airflowReq.Header.Set("Content-Type", "application/json")
+	airflowReq.SetBasicAuth(airflowUser, airflowPass)
+	httpCl := &http.Client{Timeout: 10 * time.Second}
+	airflowResp, aerr := httpCl.Do(airflowReq)
+	if aerr == nil && airflowResp.StatusCode < 300 {
+		airflowResp.Body.Close()
+		log.Printf("[SCHEDULER] Airflow incremental_learning triggered for model %s", job.ModelID)
+		return nil
+	}
+	if airflowResp != nil { airflowResp.Body.Close() }
+	log.Printf("[SCHEDULER] Airflow failed (%v), falling back to direct Flask", aerr)
+
 	flaskURL := GetFlaskURL()
+
 
 	// Collect file paths
 	var filePaths []string
