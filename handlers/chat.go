@@ -1072,8 +1072,18 @@ result := DB.Model(&Message{}).Where("query_id = ? AND role = ?", sessionID, "as
 
 		flusher, ok := w.(http.Flusher)
 		if !ok {
-			http.Error(w, "Streaming not supported", http.StatusInternalServerError)
-			return
+			type unwrapper interface { Unwrap() http.ResponseWriter }
+			rw := w
+			for !ok {
+				if uw, isUW := rw.(unwrapper); isUW {
+					rw = uw.Unwrap()
+					flusher, ok = rw.(http.Flusher)
+				} else { break }
+			}
+			if !ok {
+				http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+				return
+			}
 		}
 
 		openAIReq := OpenAIRequest{
