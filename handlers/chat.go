@@ -1061,6 +1061,8 @@ result := DB.Model(&Message{}).Where("query_id = ? AND role = ?", sessionID, "as
 	messages := []ChatMessage{{Role: "system", Content: systemPrompt}}
 	messages = append(messages, history...)
 
+	fmt.Printf("DEBUG: Entering OpenAI path, model=%s, stream=%v\n", openAIModel, req.Stream)
+
 	// STREAMING
 	if req.Stream {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -1089,17 +1091,21 @@ result := DB.Model(&Message{}).Where("query_id = ? AND role = ?", sessionID, "as
 		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 
 		resp, err := client.Do(httpReq)
-		if resp.StatusCode != 200 {
-			errBody, _ := io.ReadAll(resp.Body)
-			fmt.Printf("DEBUG OpenAI Error: %s\n", string(errBody))
-			return
-		}
 		if err != nil {
-			fmt.Fprintf(w, "data: {\"error\":\"API failed\"}\n\n")
+			fmt.Printf("DEBUG OpenAI request error: %v\n", err)
+			fmt.Fprintf(w, "data: {\"error\":\"OpenAI API request failed: %s\"}\n\n", err.Error())
 			flusher.Flush()
 			return
 		}
 		defer resp.Body.Close()
+		fmt.Printf("DEBUG OpenAI response status: %d\n", resp.StatusCode)
+		if resp.StatusCode != 200 {
+			errBody, _ := io.ReadAll(resp.Body)
+			fmt.Printf("DEBUG OpenAI Error: %s\n", string(errBody))
+			fmt.Fprintf(w, "data: {\"error\":\"OpenAI API error: %d\"}\n\n", resp.StatusCode)
+			flusher.Flush()
+			return
+		}
 
 		var fullResponse strings.Builder
 		reader := bufio.NewReader(resp.Body)
@@ -1161,13 +1167,17 @@ result := DB.Model(&Message{}).Where("query_id = ? AND role = ?", sessionID, "as
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 
 	resp, err := client.Do(httpReq)
+	if err != nil {
+		fmt.Printf("DEBUG OpenAI non-stream request error: %v\n", err)
+		http.Error(w, "Failed to call OpenAI: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+	fmt.Printf("DEBUG OpenAI non-stream response status: %d\n", resp.StatusCode)
 	if resp.StatusCode != 200 {
 		errBody, _ := io.ReadAll(resp.Body)
 		fmt.Printf("DEBUG OpenAI Error: %s\n", string(errBody))
-		return
-	}
-	if err != nil {
-		http.Error(w, "Failed to call OpenAI", http.StatusInternalServerError)
+		http.Error(w, "OpenAI API error", resp.StatusCode)
 		return
 	}
 	defer resp.Body.Close()
