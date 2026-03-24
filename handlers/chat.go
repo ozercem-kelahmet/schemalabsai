@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"bufio"
 	"bytes"
 	"encoding/json"
@@ -647,7 +648,13 @@ func callClaudeAPI(messages []ChatMessage, systemPrompt, model string, stream bo
 	httpReq.Header.Set("x-api-key", apiKey)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 
+	fmt.Printf("DEBUG OpenAI reqBody: %s\n", string(reqBody[:min(500, len(reqBody))]))
 	resp, err := client.Do(httpReq)
+	fmt.Printf("DEBUG DO err=%v\n", err)
+	if resp != nil { fmt.Printf("DEBUG DO status=%d\n", resp.StatusCode) }
+	body2, _ := io.ReadAll(resp.Body)
+	fmt.Printf("DEBUG BODY[:500]=%s\n", string(body2[:min(500,len(body2))]))
+	resp.Body = io.NopCloser(bytes.NewBuffer(body2))
 	if resp.StatusCode != 200 {
 		errBody, _ := io.ReadAll(resp.Body)
 		fmt.Printf("DEBUG OpenAI Error: %s\n", string(errBody))
@@ -1062,6 +1069,8 @@ result := DB.Model(&Message{}).Where("query_id = ? AND role = ?", sessionID, "as
 	messages = append(messages, history...)
 
 	fmt.Printf("DEBUG: Entering OpenAI path, model=%s, stream=%v\n", openAIModel, req.Stream)
+	fmt.Printf("DEBUG: w type=%T\n", w)
+	defer func() { if r := recover(); r != nil { fmt.Printf("PANIC in OpenAI path: %v\n", r) } }()
 
 	// STREAMING
 	if req.Stream {
@@ -1070,21 +1079,18 @@ result := DB.Model(&Message{}).Where("query_id = ? AND role = ?", sessionID, "as
 		w.Header().Set("Connection", "keep-alive")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			type unwrapper interface { Unwrap() http.ResponseWriter }
-			rw := w
-			for !ok {
-				if uw, isUW := rw.(unwrapper); isUW {
-					rw = uw.Unwrap()
-					flusher, ok = rw.(http.Flusher)
-				} else { break }
-			}
-			if !ok {
-				http.Error(w, "Streaming not supported", http.StatusInternalServerError)
-				return
-			}
+		type unwrapper interface { Unwrap() http.ResponseWriter }
+		var flusher http.Flusher
+		var rw http.ResponseWriter = w
+		for i := 0; i < 10; i++ {
+			if f, ok := rw.(http.Flusher); ok { flusher = f; break }
+			if uw, ok := rw.(unwrapper); ok { rw = uw.Unwrap() } else { break }
 		}
+		if flusher == nil {
+			http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+			return
+		}
+		fmt.Printf("DEBUG: flusher ready, calling OpenAI\n")
 
 		openAIReq := OpenAIRequest{
 			Model:       openAIModel,
@@ -1095,12 +1101,16 @@ result := DB.Model(&Message{}).Where("query_id = ? AND role = ?", sessionID, "as
 		}
 		reqBody, _ := json.Marshal(openAIReq)
 
-		client := &http.Client{}
-		httpReq, _ := http.NewRequest("POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(reqBody))
+		client := &http.Client{Timeout: 120 * time.Second}
+		ctx120, cancel120 := context.WithTimeout(context.Background(), 120*time.Second)
+		defer cancel120()
+		httpReq, _ := http.NewRequestWithContext(ctx120, "POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(reqBody))
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 
 		resp, err := client.Do(httpReq)
+		fmt.Printf("DEBUG OpenAI response: err=%v\n", err)
+		if resp != nil { fmt.Printf("DEBUG OpenAI status: %d\n", resp.StatusCode) }
 		if err != nil {
 			fmt.Printf("DEBUG OpenAI request error: %v\n", err)
 			fmt.Fprintf(w, "data: {\"error\":\"OpenAI API request failed: %s\"}\n\n", err.Error())

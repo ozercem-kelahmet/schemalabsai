@@ -728,6 +728,14 @@ func CallOpenAIWithFunctions(messages []ChatMessage, model, userID, verticalID, 
 
 		// If no tool calls, return text response
 		if len(choice.Message.ToolCalls) == 0 || choice.FinishReason == "stop" {
+			if w != nil {
+				if flusher, ok := w.(http.Flusher); ok {
+					escaped, _ := json.Marshal(choice.Message.Content)
+					fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%s}}]}\\n\\n", string(escaped))
+					fmt.Fprintf(w, "data: [DONE]\\n\\n")
+					flusher.Flush()
+				}
+			}
 			return choice.Message.Content, openAIResp.Usage.TotalTokens, allFunctionCalls, nil
 		}
 
