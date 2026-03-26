@@ -178,7 +178,7 @@ export function ConfigStep({
                 if (parentIdx >= 0) updated.splice(parentIdx, 1)
                 const src = (conns[i].sub_type === "postgresql" ? "postgresql" : conns[i].sub_type === "mongodb" ? "mongodb" : conns[i].sub_type || "api") as any
                 for (const t of tables) {
-                  if ((t.rows || 0) === 0) continue
+                  if ((t.rows || 0) === 0 && (t.columns || 0) === 0) continue
                   const tid = conns[i].id + "::" + t.name
                   if (!updated.find(d => d.id === tid)) {
                     updated.push({

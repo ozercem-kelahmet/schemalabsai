@@ -514,10 +514,13 @@ export function DatasetGrid() {
               // Upload files sequentially to avoid connection issues
               const total = files.length
               uploadToastId = toast.custom(() => (
-                <div style={{background:"#1a1a2e",border:"1px solid #2a2a3e",borderRadius:8,padding:"12px 16px",minWidth:280}}>
-                  <div style={{color:"#f0f0f5",fontSize:13,marginBottom:8}}>Uploading files... <span id="upload-count-text">0 / {total}</span></div>
-                  <div style={{background:"#2a2a3e",borderRadius:4,height:6,overflow:"hidden"}}>
-                    <div id="upload-progress-bar" style={{background:"#4d8eff",height:"100%",width:"0%",transition:"width 0.3s ease",borderRadius:4}}/>
+                <div style={{background:"var(--card, #12121f)",border:"1px solid var(--border, #2a2a3e)",borderRadius:10,padding:"14px 18px",minWidth:300,boxShadow:"0 4px 24px rgba(0,0,0,0.4)"}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+                    <span style={{color:"var(--foreground,#f0f0f5)",fontSize:13,fontWeight:500}}>Uploading files...</span>
+                    <span id="upload-count-text" style={{color:"var(--muted-foreground,#8888a0)",fontSize:12}}>0 / {total}</span>
+                  </div>
+                  <div style={{background:"var(--muted,#2a2a3e)",borderRadius:6,height:8,overflow:"hidden"}}>
+                    <div id="upload-progress-bar" style={{background:"#4d8eff",height:"100%",width:"0%",transition:"width 0.25s ease",borderRadius:6}}/>
                   </div>
                 </div>
               ), { duration: Infinity, id: "upload-progress" })
@@ -657,7 +660,7 @@ export function DatasetGrid() {
 
       {/* Table Selection Modal */}
       <Dialog open={isTableSelectOpen} onOpenChange={setIsTableSelectOpen}>
-        <DialogContent className="border-border bg-card sm:max-w-[550px]">
+        <DialogContent className="border-border bg-card sm:max-w-[750px]">
           <DialogHeader>
             <DialogTitle className="text-foreground">Select Tables</DialogTitle>
             <DialogDescription className="text-muted-foreground">
@@ -682,7 +685,7 @@ export function DatasetGrid() {
                     onChange={() => setSelectedTables(prev => prev.includes(table.name) ? prev.filter(t => t !== table.name) : [...prev, table.name])}
                     className="h-4 w-4 rounded border-border accent-primary"
                   />
-                  <span className="text-sm font-medium truncate flex-1">{table.name}</span>
+                  <span className="text-sm font-medium truncate flex-1" title={table.name}>{table.name}</span>
                   <div className="flex gap-2 text-xs text-muted-foreground shrink-0">
                     {table.rows > 0 && <span>{table.rows.toLocaleString()} rows</span>}
                     {table.columns > 0 && <span>{table.columns} cols</span>}
