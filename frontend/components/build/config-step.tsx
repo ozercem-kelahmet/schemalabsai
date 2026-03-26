@@ -386,7 +386,7 @@ export function ConfigStep({
                                 className="pointer-events-none shrink-0 border-border data-[state=checked]:bg-[#0052CC] data-[state=checked]:border-[#0052CC]"
                               />
                               <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium text-foreground truncate max-w-[250px] sm:max-w-none">{ds.name}</p>
+                                <p className="text-sm font-medium text-foreground truncate max-w-[300px]" title={ds.name}>{ds.name}</p>
                                 <div className="flex items-center gap-3 mt-0.5 text-[11px] text-muted-foreground">
                                   {ds.vertical && <span className="capitalize">{ds.vertical}</span>}
                                   <span>{ds.rows.toLocaleString()} rows</span>

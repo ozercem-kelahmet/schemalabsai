@@ -512,7 +512,16 @@ export function DatasetGrid() {
               }
               
               // Upload files sequentially to avoid connection issues
-              uploadToastId = toast.loading("Uploading " + files.length + " files...")
+              const total = files.length
+              uploadToastId = toast.custom(() => (
+                <div style={{background:"#1a1a2e",border:"1px solid #2a2a3e",borderRadius:8,padding:"12px 16px",minWidth:280}}>
+                  <div style={{color:"#f0f0f5",fontSize:13,marginBottom:8}}>Uploading files... <span id="upload-count-text">0 / {total}</span></div>
+                  <div style={{background:"#2a2a3e",borderRadius:4,height:6,overflow:"hidden"}}>
+                    <div id="upload-progress-bar" style={{background:"#4d8eff",height:"100%",width:"0%",transition:"width 0.3s ease",borderRadius:4}}/>
+                  </div>
+                </div>
+              ), { duration: Infinity, id: "upload-progress" })
+              uploadToastId = "upload-progress"
               let uploaded = 0
               const failedFiles: string[] = []
               const allSheets: {name: string, rows: number, columns: number, file_id: string}[] = []
@@ -523,8 +532,6 @@ export function DatasetGrid() {
                   result = await api.upload(file, undefined)
                   if (result?.error) {
                     failedFiles.push(file.name + ": " + result.error)
-                    toast.dismiss(uploadToastId)
-                    toast.loading("Uploaded " + uploaded + "/" + files.length + " files...", { id: uploadToastId })
                     continue
                   }
                   if (result?.warning) {
@@ -534,8 +541,11 @@ export function DatasetGrid() {
                 } catch (e: any) {
                   failedFiles.push(file.name + ": " + (e?.message || "Unknown error"))
                 }
-                toast.dismiss(uploadToastId)
-                toast.loading("Uploaded " + uploaded + "/" + files.length + " files...", { id: uploadToastId })
+                const pct = Math.round(((uploaded + failedFiles.length) / total) * 100)
+                const bar = document.getElementById("upload-progress-bar")
+                const txt = document.getElementById("upload-count-text")
+                if (bar) bar.style.width = pct + "%"
+                if (txt) txt.textContent = `${uploaded} / ${total}`
                 // Check for Excel multi-sheet files
                 if (result?.sheets && result.sheets.length > 0) {
                   mainFileId = result.file_id
@@ -559,6 +569,7 @@ export function DatasetGrid() {
                 // First id is main xlsx (to delete), rest are sheets
                 setPendingConnectionId("excel_sheets:" + allSheets.map(s => s.file_id).join(","))
                 setIsTableSelectOpen(true)
+                toast.dismiss(uploadToastId)
                 toast.success("Select which sheets to keep.")
                 return // Don't loadData yet, wait for sheet selection
               } else {
