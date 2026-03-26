@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Powered Analyst</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   RESET & BASE
+   ============================================================ */
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body {
+  height:100%; overflow:hidden;
+  background:#0A0A14; color:#F0F0F5;
+  font-family:'Inter',system-ui,sans-serif;
+}
+
+/* ============================================================
+   COLOR TOKENS
+   ============================================================ */
+:root {
+  --bg:#0A0A14;
+  --surface:#12121F;
+  --surface-hover:#1A1A2E;
+  --border:#2A2A3E;
+  --border-dashed:#3A3A4E;
+  --text:#F0F0F5;
+  --text-sec:#8888A0;
+  --text-muted:#55556A;
+  --green:#00C48C;
+  --amber:#FFB020;
+  --red:#FF4D4D;
+  --blue:#4D8EFF;
+}
+
+/* ============================================================
+   LAYOUT SHELL
+   ============================================================ */
+.shell { height:100vh; display:flex; flex-direction:column; }
+
+/* ============================================================
+   TOP BAR
+   ============================================================ */
+.topbar {
+  height:56px; background:var(--bg); border-bottom:1px solid var(--border);
+  display:flex; align-items:center; justify-content:space-between; padding:0 24px; flex-shrink:0;
+}
+.topbar-name { font-size:18px; font-weight:600; letter-spacing:-0.3px; color:var(--text); }
+.topbar-status { display:flex; align-items:center; gap:8px; }
+.topbar-status .dot { width:8px; height:8px; border-radius:50%; }
+.topbar-status .dot.off { background:var(--text-muted); }
+.topbar-status .dot.on { background:var(--green); }
+.topbar-status .label { font-size:13px; }
+.topbar-status .label.off { color:var(--text-muted); }
+.topbar-status .label.on { color:var(--text-sec); }
+.topbar-right { display:flex; align-items:center; gap:16px; }
+.topbar-powered { color:var(--text-muted); font-size:11px; }
+.topbar-powered span { font-weight:600; }
+.gear-btn {
+  background:none; border:none; cursor:pointer; color:var(--text-sec);
+  display:flex; align-items:center; transition:color 0.15s;
+}
+.gear-btn:hover { color:var(--text); }
+
+/* ============================================================
+   INTELLIGENCE CARDS
+   ============================================================ */
+.cards { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; padding:20px 24px; flex-shrink:0; }
+.card {
+  background:var(--surface); border-radius:6px; padding:20px; min-height:120px;
+  display:flex; flex-direction:column; justify-content:space-between;
+  transition:all 0.25s ease;
+}
+.card.disconnected { border:1px dashed var(--border-dashed); }
+.card.connected { border:1px solid var(--border); border-left:3px solid; }
+.card.accent-amber { border-left-color:var(--amber); }
+.card.accent-red { border-left-color:var(--red); }
+.card.accent-green { border-left-color:var(--green); }
+.card-title {
+  font-size:11px; font-weight:500; letter-spacing:0.08em;
+  color:var(--text-sec); text-transform:uppercase;
+}
+.card-value { font-size:32px; font-weight:700; margin-top:8px; line-height:1.1; }
+.card-value.off { color:var(--text-muted); }
+.card-value.on { color:var(--text); }
+.card-sub { font-size:13px; margin-top:6px; min-height:18px; }
+.card-sub.off { color:var(--text-muted); }
+.card-sub.on { color:var(--text-sec); }
+
+@keyframes fade-up {
+  from { opacity:0; transform:translateY(6px); }
+  to { opacity:1; transform:translateY(0); }
+}
+.fade-up { animation:fade-up 0.25s ease-out forwards; }
+
+/* ============================================================
+   QUERY BAR
+   ============================================================ */
+.querybar { padding:0 24px 16px; flex-shrink:0; }
+.querybar-inner {
+  display:flex; align-items:center; background:var(--surface);
+  border-radius:8px; transition:border-color 0.2s, opacity 0.2s;
+}
+.querybar-inner.off { border:1px solid var(--border-dashed); opacity:0.5; }
+.querybar-inner.on { border:1px solid var(--border); opacity:1; }
+.querybar-inner.on:focus-within { border-color:var(--blue); }
+.query-input {
+  flex:1; background:transparent; border:none; padding:16px 20px;
+  font-size:18px; color:var(--text); font-family:'Inter',sans-serif; outline:none;
+}
+.query-input::placeholder { color:var(--text-muted); }
+.query-input:disabled { cursor:not-allowed; }
+.send-btn {
+  margin-right:12px; padding:8px; background:none; border:none;
+  color:var(--text-sec); cursor:pointer; display:flex; transition:color 0.15s;
+}
+.send-btn:hover { color:var(--blue); }
+
+/* ============================================================
+   RESPONSE AREA
+   ============================================================ */
+.response-area {
+  flex:1; overflow-y:auto; padding:8px 24px;
+}
+.response-area::-webkit-scrollbar { width:6px; }
+.response-area::-webkit-scrollbar-track { background:transparent; }
+.response-area::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+
+.response-block {
+  border-bottom:1px solid rgba(42,42,62,0.5);
+  padding-bottom:20px; margin-bottom:20px;
+  animation:fade-up 0.25s ease-out forwards;
+}
+.response-block:last-child { border-bottom:none; }
+.resp-question { font-size:13px; color:var(--text-sec); font-style:italic; margin-bottom:12px; }
+.resp-answer { font-size:15px; color:var(--text); line-height:1.65; }
+.resp-answer p { margin:8px 0; }
+.resp-answer strong, .resp-answer b { font-weight:600; color:var(--text); }
+.resp-answer table { width:100%; border-collapse:collapse; margin:12px 0; font-size:14px; }
+.resp-answer th {
+  text-align:left; padding:8px 12px; border-bottom:1px solid var(--border);
+  color:var(--text-sec); font-weight:600; font-size:13px;
+}
+.resp-answer td { padding:6px 12px; border-bottom:1px solid var(--surface-hover); color:var(--text); }
+.resp-answer tr:nth-child(even) { background:var(--surface); }
+.resp-answer tr:nth-child(odd) { background:#0E0E1A; }
+.resp-answer th:last-child, .resp-answer td:last-child { text-align:right; }
+.resp-answer ul, .resp-answer ol { padding-left:20px; margin:8px 0; }
+.resp-answer li { margin:4px 0; line-height:1.5; }
+.resp-answer code {
+  background:var(--surface-hover); padding:2px 6px; border-radius:3px;
+  font-family:'JetBrains Mono',monospace; font-size:13px;
+}
+.resp-answer .risk-callout {
+  border-left:2px solid var(--amber); padding-left:16px; margin:8px 0;
+}
+
+/* Loading dots */
+.loading-dots { display:flex; align-items:center; gap:6px; padding:12px 0; }
+.loading-dots .dot {
+  width:6px; height:6px; border-radius:50%; background:var(--text-muted);
+  animation:pulse-dot 1.5s ease-in-out infinite;
+}
+.loading-dots .dot:nth-child(2) { animation-delay:0.3s; }
+.loading-dots .dot:nth-child(3) { animation-delay:0.6s; }
+@keyframes pulse-dot {
+  0%,100% { opacity:0.3; }
+  50% { opacity:0.8; }
+}
+
+/* ============================================================
+   DATA SOURCES BAR
+   ============================================================ */
+.dsbar {
+  height:36px; background:var(--bg); border-top:1px solid var(--border);
+  display:flex; align-items:center; justify-content:center; gap:40px; flex-shrink:0;
+}
+.ds { display:flex; align-items:center; gap:8px; }
+.ds-name { font-size:12px; color:var(--text-sec); font-family:'JetBrains Mono',monospace; }
+.ds-rows { font-size:11px; color:var(--text-muted); }
+.ds-dot { width:6px; height:6px; border-radius:50%; transition:background 0.3s; }
+.ds-dot.off { background:var(--text-muted); }
+.ds-dot.on { background:var(--green); }
+.ds-status { font-size:11px; transition:color 0.3s; }
+.ds-status.off { color:var(--text-muted); }
+.ds-status.on { color:var(--green); }
+
+/* ============================================================
+   SETTINGS PANEL
+   ============================================================ */
+.backdrop {
+  position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:40;
+  opacity:0; pointer-events:none; transition:opacity 0.2s;
+}
+.backdrop.open { opacity:1; pointer-events:all; }
+
+.panel {
+  position:fixed; top:0; right:0; height:100%; width:420px;
+  background:var(--surface); border-left:1px solid var(--border); z-index:50;
+  transform:translateX(100%); transition:transform 0.25s ease-in-out;
+}
+.panel.open { transform:translateX(0); }
+.panel-header {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:24px; border-bottom:1px solid var(--border);
+}
+.panel-header h2 { font-size:16px; font-weight:600; color:var(--text); }
+.panel-close {
+  background:none; border:none; color:var(--text-sec); cursor:pointer;
+  display:flex; transition:color 0.15s;
+}
+.panel-close:hover { color:var(--text); }
+.panel-body { padding:24px; }
+.panel-label { font-size:13px; font-weight:500; color:var(--text-sec); margin-bottom:8px; display:block; }
+.panel-input {
+  width:100%; background:var(--bg); border:1px solid var(--border);
+  border-radius:6px; padding:12px 16px; font-size:15px;
+  font-family:'JetBrains Mono',monospace; color:var(--text); outline:none;
+  transition:border-color 0.15s;
+}
+.panel-input:focus { border-color:var(--blue); }
+.panel-input::placeholder { color:var(--text-muted); }
+.panel-error { color:var(--red); font-size:13px; margin-top:8px; display:none; }
+.panel-error.show { display:block; }
+.panel-btn {
+  width:100%; margin-top:16px; background:rgba(77,142,255,0.1);
+  border:1px solid rgba(77,142,255,0.3); color:var(--blue);
+  border-radius:6px; padding:12px; font-size:15px; font-weight:500;
+  cursor:pointer; font-family:'Inter',sans-serif; transition:background 0.15s;
+}
+.panel-btn:hover { background:rgba(77,142,255,0.2); }
+
+.panel-hint {
+  margin-top:24px; padding-top:24px; border-top:1px solid var(--border);
+}
+.panel-hint .panel-label { margin-bottom:4px; }
+.panel-hint-text { font-size:12px; color:var(--text-muted); line-height:1.5; margin-bottom:12px; }
+
+/* Format selector */
+.format-row { display:flex; gap:8px; margin-top:8px; }
+.format-btn {
+  flex:1; padding:8px 12px; border-radius:6px; font-size:13px;
+  font-family:'Inter',sans-serif; cursor:pointer; transition:all 0.15s;
+  background:var(--bg); border:1px solid var(--border); color:var(--text-sec);
+}
+.format-btn.active { border-color:var(--blue); color:var(--blue); background:rgba(77,142,255,0.08); }
+.format-btn:hover { border-color:var(--text-sec); }
+
+/* Language selector */
+.lang-select {
+  background:var(--bg); border:1px solid var(--border); border-radius:4px;
+  color:var(--text-sec); font-size:12px; font-family:'Inter',sans-serif;
+  padding:4px 8px; cursor:pointer; outline:none; transition:border-color 0.15s;
+  -webkit-appearance:none; appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%238888A0' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat; background-position:right 6px center; padding-right:22px;
+}
+.lang-select:hover { border-color:var(--text-sec); }
+.lang-select:focus { border-color:var(--blue); }
+.lang-select option { background:var(--surface); color:var(--text); }
+
+/* SVG icons inline */
+svg { display:inline-block; vertical-align:middle; }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <!-- ========== TOP BAR ========== -->
+  <div class="topbar">
+    <div class="topbar-name">AI Powered Analyst</div>
+    <div class="topbar-status">
+      <div class="dot off" id="status-dot"></div>
+      <span class="label off" id="status-label">Nessun modello connesso</span>
+    </div>
+    <div class="topbar-right">
+      <span class="topbar-powered" style="display:flex;align-items:center;gap:6px;">Powered by <svg width="18" height="18" viewBox="0 0 88 88" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M27.2857 5H5V83H27.2857" stroke="#FAFAFA" stroke-width="10"/><path d="M60.7144 83H83.0001V5H60.7144" stroke="#FAFAFA" stroke-width="10"/><path d="M56 31H31V56H56V31Z" fill="#FAFAFA"/></svg></span>
+      <select class="lang-select" id="lang-select" onchange="setLang(this.value)">
+        <option value="it">ITA</option>
+        <option value="en">ENG</option>
+      </select>
+      <button class="gear-btn" onclick="togglePanel(true)">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- ========== CARDS ========== -->
+  <div class="cards" id="cards">
+    <div class="card disconnected" id="card-0">
+      <div class="card-title">DISTANZA TOTALE PERCORSA</div>
+      <div><div class="card-value off">--</div><div class="card-sub off">&nbsp;</div></div>
+    </div>
+    <div class="card disconnected" id="card-1">
+      <div class="card-title">CORSE AD ALTA VELOCIT&Agrave; (>19.8 KM/H)</div>
+      <div><div class="card-value off">--</div><div class="card-sub off">&nbsp;</div></div>
+    </div>
+    <div class="card disconnected" id="card-2">
+      <div class="card-title">DIFFERENZIALE xG</div>
+      <div><div class="card-value off">--</div><div class="card-sub off">&nbsp;</div></div>
+    </div>
+    <div class="card disconnected" id="card-3">
+      <div class="card-title">INTENSIT&Agrave; DI PRESSING (PPDA)</div>
+      <div><div class="card-value off">--</div><div class="card-sub off">&nbsp;</div></div>
+    </div>
+  </div>
+
+  <!-- ========== QUERY BAR ========== -->
+  <div class="querybar">
+    <div class="querybar-inner off" id="querybar">
+      <input class="query-input" id="query-input" type="text"
+        placeholder="Connetti un modello per iniziare..." disabled>
+      <button class="send-btn" id="send-btn" style="display:none" onclick="submitQuery()">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- ========== RESPONSE AREA ========== -->
+  <div class="response-area" id="response-area"></div>
+
+  <!-- ========== MODEL BAR ========== -->
+  <div class="dsbar">
+    <div class="ds" id="model-bar">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+      <span class="ds-dot off" id="model-dot"></span>
+      <span class="ds-status off" id="model-status">Nessun modello connesso</span>
+    </div>
+  </div>
+</div>
+
+<!-- ========== SETTINGS PANEL ========== -->
+<div class="backdrop" id="backdrop" onclick="togglePanel(false)"></div>
+<div class="panel" id="panel">
+  <div class="panel-header">
+    <h2>Impostazioni</h2>
+    <button class="panel-close" onclick="togglePanel(false)">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  </div>
+  <div class="panel-body">
+    <input class="panel-input" id="url-input" type="text" style="display:none">
+    <input class="panel-input" id="key-input" type="password" style="display:none">
+
+    <label class="panel-label">Endpoint URL</label>
+    <input class="panel-input" id="schema-url-input" type="text" placeholder="" autocomplete="off">
+
+    <label class="panel-label" style="margin-top:16px">API Key</label>
+    <input class="panel-input" id="schema-key-input" type="password" placeholder="" autocomplete="new-password">
+
+    <input id="anthropic-key-input" type="hidden" value="REMOVED">
+
+    <div class="panel-error" id="panel-error"></div>
+    <button class="panel-btn" onclick="handleConnect()">Connetti</button>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// STATE
+// ============================================================
+let state = {
+  connected: false,
+  endpointUrl: '',
+  apiKey: '',
+  format: 'schema',
+  schemaEndpoint: '',
+  schemaKey: '',
+  anthropicKey: 'REMOVED',
+  lang: 'it',
+};
+
+// ============================================================
+// TRANSLATIONS
+// ============================================================
+const i18n = {
+  it: {
+    statusOff: 'Nessun modello connesso',
+    statusOn: 'Connesso',
+    placeholderOff: 'Connetti un modello per iniziare...',
+    placeholderOn: 'Chiedi di carico giocatori, xG, pressing, rendimento...',
+    settings: 'Impostazioni',
+    endpointLabel: 'Endpoint URL',
+    apiKeyLabel: 'API Key',
+    connect: 'Connetti',
+    errNoUrl: 'Inserisci un URL endpoint Schema',
+    errBadUrl: 'L\'URL deve iniziare con http:// o https://',
+    errCors: 'Connessione bloccata (CORS). Questa API non permette richieste dal browser. Usa il formato Anthropic o Schema, oppure passa per un proxy.',
+    err401: 'API key non valida. Controlla la chiave nelle Impostazioni.',
+    err403: 'Accesso negato. Verifica i permessi della tua API key.',
+    err429: 'Limite richieste raggiunto. Attendi un momento e riprova.',
+    cardTitles: [
+      'DISTANZA TOTALE PERCORSA',
+      'CORSE AD ALTA VELOCIT\u00c0 (>19.8 KM/H)',
+      'DIFFERENZIALE xG',
+      'INTENSIT\u00c0 DI PRESSING (PPDA)',
+    ],
+    cardSubs: [
+      '22 giocatori, ultima partita',
+      '8.7 km sopra soglia velocit\u00e0',
+      '2.41 xG creati vs 1.17 subiti',
+      'Top 15% pressing in campionato',
+    ],
+  },
+  en: {
+    statusOff: 'No model connected',
+    statusOn: 'Connected',
+    placeholderOff: 'Connect a model to start querying...',
+    placeholderOn: 'Ask about player workload, xG, pressing, match performance...',
+    settings: 'Settings',
+    endpointLabel: 'Endpoint URL',
+    apiKeyLabel: 'API Key',
+    connect: 'Connect',
+    errNoUrl: 'Enter a Schema endpoint URL',
+    errBadUrl: 'URL must start with http:// or https://',
+    errCors: 'Connection blocked (CORS). This API does not allow browser requests. Use Anthropic or Schema format, or route through a proxy.',
+    err401: 'Invalid API key. Check your key in Settings.',
+    err403: 'Access denied. Check your API key permissions.',
+    err429: 'Rate limited. Wait a moment and try again.',
+    cardTitles: [
+      'TOTAL DISTANCE COVERED',
+      'HIGH-SPEED RUNS (>19.8 KM/H)',
+      'xG DIFFERENTIAL',
+      'PRESSING INTENSITY (PPDA)',
+    ],
+    cardSubs: [
+      'Across 22 players, last match',
+      '8.7 km above speed threshold',
+      '2.41 xG created vs 1.17 conceded',
+      'Top 15% league pressing intensity',
+    ],
+  },
+};
+
+function t(key) { return i18n[state.lang][key]; }
+
+function setLang(lang) {
+  state.lang = lang;
+  // Card titles
+  t('cardTitles').forEach((title, i) => {
+    const card = document.getElementById('card-' + i);
+    if (card) card.querySelector('.card-title').textContent = title;
+  });
+  // Card subtitles (only if connected)
+  if (state.connected) {
+    t('cardSubs').forEach((sub, i) => {
+      const card = document.getElementById('card-' + i);
+      if (card) card.querySelector('.card-sub').textContent = sub;
+    });
+  }
+  // Status
+  const label = document.getElementById('status-label');
+  label.textContent = state.connected ? t('statusOn') : t('statusOff');
+  // Model bar
+  const modelStatus = document.getElementById('model-status');
+  if (!state.connected) modelStatus.textContent = t('statusOff');
+  // Query input
+  const qinput = document.getElementById('query-input');
+  qinput.placeholder = state.connected ? t('placeholderOn') : t('placeholderOff');
+  // Settings panel
+  document.querySelector('.panel-header h2').textContent = t('settings');
+  document.querySelectorAll('.panel-label')[0].textContent = t('endpointLabel');
+  document.querySelectorAll('.panel-label')[1].textContent = t('apiKeyLabel');
+  document.querySelector('.panel-btn').textContent = t('connect');
+}
+
+// ============================================================
+// MOCK CARD DATA (populates instantly on connect)
+// ============================================================
+const MOCK_CARDS = [
+  { value:'112.4 km', accent:'green' },
+  { value:'284', accent:'amber' },
+  { value:'+1.24', accent:'green' },
+  { value:'8.6', accent:'amber' },
+];
+
+// ============================================================
+// FORMAT SELECTOR
+// ============================================================
+function setFormat(fmt) {
+  state.format = fmt;
+  document.querySelectorAll('.format-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('fmt-' + fmt).classList.add('active');
+
+  const urlInput = document.getElementById('url-input');
+  if (fmt === 'anthropic') urlInput.value = 'https://api.anthropic.com/v1/messages';
+  else if (fmt === 'openai') urlInput.value = 'https://api.openai.com/v1/chat/completions';
+  else if (fmt === 'schema') urlInput.value = '';
+}
+
+// ============================================================
+// SETTINGS PANEL
+// ============================================================
+function togglePanel(open) {
+  document.getElementById('backdrop').classList.toggle('open', open);
+  document.getElementById('panel').classList.toggle('open', open);
+  if (open) {
+    if (state.schemaKey) document.getElementById('schema-key-input').value = state.schemaKey;
+    setTimeout(() => { document.getElementById('schema-url-input').focus(); }, 100);
+  }
+  document.getElementById('panel-error').classList.remove('show');
+}
+
+// Schema format default
+window.addEventListener('load', () => {
+  state.format = 'schema';
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') togglePanel(false);
+});
+
+document.getElementById('url-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') handleConnect();
+});
+
+// ============================================================
+// CONNECT
+// ============================================================
+function handleConnect() {
+  const url = document.getElementById('url-input').value.trim();
+  const key = document.getElementById('key-input').value.trim();
+  const errEl = document.getElementById('panel-error');
+
+  const schemaUrl = document.getElementById('schema-url-input').value.trim();
+  if (!schemaUrl) {
+    errEl.textContent = t('errNoUrl');
+    errEl.classList.add('show');
+    return;
+  }
+  if (!schemaUrl.startsWith('http://') && !schemaUrl.startsWith('https://')) {
+    errEl.textContent = t('errBadUrl');
+    errEl.classList.add('show');
+    return;
+  }
+
+  state.schemaEndpoint = document.getElementById('schema-url-input').value.trim();
+  state.schemaKey = document.getElementById('schema-key-input').value.trim();
+  state.anthropicKey = document.getElementById('anthropic-key-input').value.trim();
+  state.endpointUrl = state.schemaEndpoint;
+  state.apiKey = state.schemaKey;
+  state.format = 'schema';
+  state.connected = true;
+
+  togglePanel(false);
+  activateUI();
+}
+
+// ============================================================
+// ACTIVATE UI (connected state)
+// ============================================================
+function activateUI() {
+  // Status
+  const dot = document.getElementById('status-dot');
+  const label = document.getElementById('status-label');
+  dot.className = 'dot on';
+  label.className = 'label on';
+  label.textContent = t('statusOn');
+
+  // Cards - populate with mock data, staggered
+  MOCK_CARDS.forEach((data, i) => {
+    setTimeout(() => {
+      const card = document.getElementById('card-' + i);
+      card.className = 'card connected accent-' + data.accent;
+      const valueEl = card.querySelector('.card-value');
+      const subEl = card.querySelector('.card-sub');
+      valueEl.className = 'card-value on fade-up';
+      valueEl.textContent = data.value;
+      subEl.className = 'card-sub on fade-up';
+      subEl.textContent = t('cardSubs')[i];
+    }, 150 + i * 120);
+  });
+
+  // Query bar
+  const qbar = document.getElementById('querybar');
+  const qinput = document.getElementById('query-input');
+  qbar.className = 'querybar-inner on';
+  qinput.disabled = false;
+  qinput.placeholder = t('placeholderOn');
+  document.getElementById('send-btn').style.display = 'flex';
+
+  // Model bar
+  setTimeout(() => {
+    document.getElementById('model-dot').className = 'ds-dot on';
+    const statusEl = document.getElementById('model-status');
+    statusEl.className = 'ds-status on';
+    // Show a clean model name derived from the endpoint URL
+    try {
+      const u = new URL(state.endpointUrl);
+      const host = u.hostname.replace('www.','').replace('api.','');
+      const path = u.pathname.split('/').filter(s => s).pop() || '';
+      const modelName = path ? host + ' / ' + path : host;
+      statusEl.textContent = modelName;
+    } catch(e) {
+      statusEl.textContent = t('statusOn');
+    }
+  }, 400);
+
+  // Focus query bar
+  setTimeout(() => qinput.focus(), 800);
+}
+
+// ============================================================
+// QUERY SUBMISSION
+// ============================================================
+document.getElementById('query-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') submitQuery();
+});
+
+async function submitQuery() {
+  const input = document.getElementById('query-input');
+  const question = input.value.trim();
+  if (!question || !state.connected) return;
+
+  input.value = '';
+
+  // Show loading
+  const area = document.getElementById('response-area');
+  const loadingId = 'loading-' + Date.now();
+  area.insertAdjacentHTML('afterbegin', `
+    <div class="response-block" id="${loadingId}">
+      <div class="resp-question">${escapeHtml(question)}</div>
+      <div class="loading-dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+    </div>
+  `);
+
+  try {
+    const answer = await callAPI(question);
+    const loadingEl = document.getElementById(loadingId);
+    if (loadingEl) {
+      loadingEl.innerHTML = `
+        <div class="resp-question">${escapeHtml(question)}</div>
+        <div class="resp-answer">${renderMarkdown(answer)}</div>
+      `;
+    }
+  } catch (err) {
+    const loadingEl = document.getElementById(loadingId);
+    if (loadingEl) {
+      let msg = err.message;
+      if (msg === 'Failed to fetch') {
+        msg = t('errCors');
+      } else if (msg.includes('401')) {
+        msg = t('err401');
+      } else if (msg.includes('403')) {
+        msg = t('err403');
+      } else if (msg.includes('429')) {
+        msg = t('err429');
+      }
+      loadingEl.innerHTML = `
+        <div class="resp-question">${escapeHtml(question)}</div>
+        <div class="resp-answer" style="color:var(--red)">${escapeHtml(msg)}</div>
+      `;
+    }
+  }
+
+  setTimeout(() => input.focus(), 50);
+}
+
+// ============================================================
+// API CALL - supports Anthropic, OpenAI, and Schema formats
+// ============================================================
+async function callAPI(question) {
+  let url = state.endpointUrl;
+  let headers = { 'Content-Type': 'application/json' };
+  let body;
+
+  if (state.format === 'anthropic') {
+    headers['x-api-key'] = state.apiKey;
+    headers['anthropic-version'] = '2023-06-01';
+    headers['anthropic-dangerous-direct-browser-access'] = 'true';
+    body = JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1024,
+      system: 'You are a football performance analyst AI analyzing data from three sources: WIMU GPS tracking data (distance, speed zones, sprints, accelerations, player load), StatsBomb event data (xG, passes, pressures, carries, tackles, shots), and SkillCorner broadcast tracking data (off-ball movement, pressing intensity, PPDA, intelligent runs). Give precise, data-driven answers. Use markdown tables when comparing players or matches. Be concise and professional.',
+      messages: [{ role: 'user', content: question }],
+    });
+
+  } else if (state.format === 'openai') {
+    headers['Authorization'] = 'Bearer ' + state.apiKey;
+    body = JSON.stringify({
+      model: 'gpt-4o',
+      messages: [
+        { role: 'system', content: 'You are a football performance analyst AI analyzing data from three sources: WIMU GPS tracking data (distance, speed zones, sprints, accelerations, player load), StatsBomb event data (xG, passes, pressures, carries, tackles, shots), and SkillCorner broadcast tracking data (off-ball movement, pressing intensity, PPDA, intelligent runs). Give precise, data-driven answers. Use markdown tables when comparing players or matches. Be concise and professional.' },
+        { role: 'user', content: question },
+      ],
+    });
+
+  } else {
+    // Schema format - SchemaLabs endpoint + optional Anthropic formatting
+    const schemaHeaders = { 'Content-Type': 'application/json' };
+    if (state.schemaKey) schemaHeaders['Authorization'] = 'Bearer ' + state.schemaKey;
+    
+    const schemaRes = await fetch(state.schemaEndpoint, {
+      method: 'POST', headers: schemaHeaders,
+      body: JSON.stringify({ query: question })
+    });
+    if (!schemaRes.ok) {
+      if (schemaRes.status === 401) throw new Error('401');
+      if (schemaRes.status === 403) throw new Error('403');
+      throw new Error('HTTP ' + schemaRes.status);
+    }
+    const schemaData = await schemaRes.json();
+    const rawAnswer = extractAnswer(schemaData);
+
+    // Format with Anthropic if key provided
+    if (state.anthropicKey) {
+      try {
+        const fmtRes = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': state.anthropicKey,
+            'anthropic-version': '2023-06-01',
+            'anthropic-dangerous-direct-browser-access': 'true',
+          },
+          body: JSON.stringify({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 1024,
+            system: `You are a football performance analysis AI. Format responses professionally using markdown:
+- Use **bold** for key metrics and numbers
+- Use markdown tables for player comparisons and match stats
+- Use bullet points for findings
+- Start with a 1-2 sentence performance summary
+- Group insights into sections with ### headers
+- Keep tone professional and data-driven
+- Never use emojis
+- Never show raw JSON or technical field names`,
+            messages: [{ role: 'user', content: 'Question: ' + question + '\n\nRaw analysis:\n' + rawAnswer }],
+          })
+        });
+        if (fmtRes.ok) {
+          const fmtData = await fmtRes.json();
+          return fmtData.content?.[0]?.text || rawAnswer;
+        }
+      } catch(e) {}
+    }
+    return rawAnswer;
+  }
+
+  const res = await fetch(url, { method: 'POST', headers, body });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    if (res.status === 401) throw new Error('401');
+    if (res.status === 403) throw new Error('403');
+    if (res.status === 429) throw new Error('429');
+    throw new Error(`HTTP ${res.status}`);
+  }
+
+  const data = await res.json();
+  return extractAnswer(data);
+}
+
+// ============================================================
+// RESPONSE PARSER - extracts the answer text from any format
+// ============================================================
+function extractAnswer(data) {
+  // Anthropic: { content: [{ type:'text', text:'...' }] }
+  if (data.content && Array.isArray(data.content)) {
+    const texts = data.content.filter(b => b.type === 'text').map(b => b.text);
+    if (texts.length) return texts.join('\n\n');
+  }
+
+  // OpenAI: { choices: [{ message: { content:'...' } }] }
+  if (data.choices && data.choices[0]?.message?.content) {
+    return data.choices[0].message.content;
+  }
+
+  // Generic: check common field names
+  const fields = ['response','answer','text','content','message','result','output'];
+  for (const f of fields) {
+    if (typeof data[f] === 'string') return data[f];
+  }
+
+  // Nested: { data: { response:'...' } }
+  if (data.data && typeof data.data === 'object') {
+    for (const f of fields) {
+      if (typeof data.data[f] === 'string') return data.data[f];
+    }
+  }
+
+  return JSON.stringify(data, null, 2);
+}
+
+// ============================================================
+// MARKDOWN RENDERER (lightweight, no dependencies)
+// ============================================================
+function renderMarkdown(text) {
+  if (!text) return '';
+
+  // Escape HTML first
+  let html = escapeHtml(text);
+
+  // Tables (GFM pipe tables)
+  html = html.replace(/^(\|.+\|)\n(\|[\s:|-]+\|)\n((?:\|.+\|\n?)*)/gm, (match, header, sep, body) => {
+    const headers = header.split('|').filter(c => c.trim()).map(c => c.trim());
+    const rows = body.trim().split('\n').map(row =>
+      row.split('|').filter(c => c.trim()).map(c => c.trim())
+    );
+    let t = '<table><thead><tr>';
+    headers.forEach(h => { t += '<th>' + inlineFormat(h) + '</th>'; });
+    t += '</tr></thead><tbody>';
+    rows.forEach(r => {
+      t += '<tr>';
+      r.forEach(c => { t += '<td>' + inlineFormat(c) + '</td>'; });
+      t += '</tr>';
+    });
+    t += '</tbody></table>';
+    return t;
+  });
+
+  // Bold
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+  // Italic
+  html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+
+  // Inline code
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+  // Bullet lists
+  html = html.replace(/^[-*] (.+)$/gm, '<li>$1</li>');
+  html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>');
+
+  // Numbered lists
+  html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+
+  // Headers
+  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+  html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+
+  // Paragraphs (double newline)
+  html = html.replace(/\n\n/g, '</p><p>');
+  html = '<p>' + html + '</p>';
+
+  // Clean up empty paragraphs around block elements
+  html = html.replace(/<p>\s*(<table|<ul|<ol|<h[1-3])/g, '$1');
+  html = html.replace(/(<\/table>|<\/ul>|<\/ol>|<\/h[1-3]>)\s*<\/p>/g, '$1');
+  html = html.replace(/<p>\s*<\/p>/g, '');
+
+  // Risk callout detection
+  if (/\b(injury|fatigue|overload|decline|risk|flag|warning|critical|strain|threshold|recovery)\b/i.test(text)) {
+    const firstP = html.match(/^<p>.*?<\/p>/);
+    if (firstP) {
+      html = html.replace(firstP[0], '<div class="risk-callout">' + firstP[0] + '</div>');
+    }
+  }
+
+  return html;
+}
+
+function inlineFormat(text) {
+  return text
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>');
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+</script>
+</body>
+</html>
