@@ -2700,6 +2700,7 @@ def finetune(bypass_queue=False):
                 else:
                     print("[SPARK] Skipping smart_data_cleaning - already preprocessed by Spark")
                 merged_file_id = None
+                merged_filename = os.path.basename(spark_merged_path) if spark_merged_path else None
                 # Training'e direkt git
                 goto_training = True
             except Exception as e:
@@ -3166,7 +3167,10 @@ def finetune(bypass_queue=False):
         ft_path = f'../checkpoints/model_finetuned_{timestamp}.pt'
         
         # Get merged filename for source_file_id
-        merged_filename_for_ckpt = merged_filename if 'merged_filename' in locals() and merged_filename else None
+        try:
+            merged_filename_for_ckpt = merged_filename
+        except NameError:
+            merged_filename_for_ckpt = None
         
         torch.save({
             'model_state_dict': ft_model.state_dict(),

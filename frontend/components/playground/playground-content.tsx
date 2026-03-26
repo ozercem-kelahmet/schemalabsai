@@ -1475,13 +1475,13 @@ api.getMessages(sessionId)
                       <span>{allSources.length} source{allSources.length !== 1 ? "s" : ""}</span>
                     </button>
                   </TooltipTrigger>
-                  <TooltipContent side="bottom" className="max-w-xs p-3 bg-popover border border-border">
+                  <TooltipContent side="bottom" className="p-3 bg-popover border border-border" style={{minWidth:280,maxWidth:360}}>
                     <p className="text-xs font-medium mb-2 text-foreground">Connected Data Sources</p>
-                    <div className="space-y-1.5">
+                    <div className="space-y-1.5 overflow-y-auto" style={{maxHeight:200}}>
                       {allSources.map((ds: any) => (
                         <div key={ds.datasetId} className="flex items-center gap-2 text-xs">
-                          <Database className="h-3 w-3 text-muted-foreground" />
-                          <span className="text-foreground">{ds.datasetName}</span>
+                          <Database className="h-3 w-3 shrink-0 text-muted-foreground" />
+                          <span className="text-foreground truncate" title={ds.datasetName}>{ds.datasetName}</span>
                         </div>
                       ))}
                     </div>

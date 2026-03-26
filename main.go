@@ -21,7 +21,7 @@ func enableCORS(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin"); if origin == "" { origin = getEnv("CORS_ORIGIN", "http://localhost:8080") }; w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 
 		if r.Method == "OPTIONS" {
@@ -176,6 +176,7 @@ services.InitSpark()
 	http.HandleFunc("/api/auth/upload-avatar", enableCORS(handlers.AuthMiddleware(handlers.UploadAvatarHandler)))
 	http.HandleFunc("/api/auth/sessions", enableCORS(handlers.AuthMiddleware(handlers.GetSessionsHandler)))
 	http.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir("./uploads"))))
+	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./static"))))
 
 	// Protected API routes
 	http.HandleFunc("/api/upload", enableCORS(handlers.AuthMiddleware(handlers.UploadHandler)))
