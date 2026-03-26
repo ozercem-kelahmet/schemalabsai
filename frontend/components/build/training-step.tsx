@@ -129,9 +129,10 @@ export function TrainingStep({
                 {currentMetrics ? `${(currentMetrics.accuracy * 100).toFixed(1)}%` : "—"}
               </p>
             </div>
+            
             <div className="rounded-lg bg-muted/50 p-3">
               <p className="text-xs text-muted-foreground">Learning Rate</p>
-              <p className="mt-1 font-mono text-lg text-foreground">{currentMetrics?.learningRate.toFixed(6) || "—"}</p>
+              <p className="mt-1 font-mono text-lg text-foreground">{currentMetrics?.learningRate ? Number(currentMetrics.learningRate.toFixed(6)).toString() : "—"}</p>
             </div>
             <div className="rounded-lg bg-muted/50 p-3">
               <p className="text-xs text-muted-foreground">Elapsed Time</p>
