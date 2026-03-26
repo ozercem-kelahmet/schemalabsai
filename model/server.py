@@ -1963,7 +1963,7 @@ def analyze():
                 if os.path.exists(ft_path):
                     ft_ckpt = torch.load(ft_path, map_location='cpu', weights_only=False)
                     source_file_id = ft_ckpt.get('source_file_id', '')
-                    if source_file_id and '_merged_' in source_file_id:
+                    if source_file_id and 'merged' in source_file_id:
                         # Use merged file directly
                         merged_path = os.path.join(uploads_dir, source_file_id)
                         if os.path.exists(merged_path):
@@ -1972,7 +1972,7 @@ def analyze():
                         else:
                             # Try to find by prefix
                             for f in os.listdir(uploads_dir):
-                                if source_file_id[:8] in f and '_merged_' in f:
+                                if source_file_id[:8] in f and 'merged' in f:
                                     file_path = os.path.join(uploads_dir, f)
                                     print(f"Found merged file: {file_path}")
                                     break
@@ -2005,28 +2005,53 @@ def analyze():
                                     file_path = os.path.join(uploads_dir, fname)
                                     print(f"[FILE SEARCH] Method 1b: DB source_name partial: {file_path}")
                                     break
-                    # Try uploaded_files table with source_file_id
+                    # Try uploaded_files table with source_file_id (may be comma-separated list)
                     if not file_path and src_file_id:
-                        cur.execute("SELECT filename, path FROM uploaded_files WHERE id=%s", (src_file_id,))
-                        frow = cur.fetchone()
-                        if frow:
-                            uf_filename, uf_path = frow[0], frow[1]
-                            # Try path from DB
-                            for try_path in [
-                                os.path.join('..', uf_path) if uf_path else None,
-                                os.path.join(uploads_dir, uf_filename) if uf_filename else None,
-                            ]:
-                                if try_path and os.path.exists(try_path):
-                                    file_path = try_path
-                                    print(f"[FILE SEARCH] Method 2: uploaded_files table: {file_path}")
-                                    break
-                            # Partial filename match
-                            if not file_path and uf_filename:
-                                for fname in os.listdir(uploads_dir):
-                                    if uf_filename in fname or fname in uf_filename:
-                                        file_path = os.path.join(uploads_dir, fname)
-                                        print(f"[FILE SEARCH] Method 2b: uploaded_files partial: {file_path}")
+                        file_ids = [x.strip() for x in src_file_id.split(",") if x.strip()]
+                        if len(file_ids) > 1:
+                            # Multiple files - load all and merge
+                            multi_dfs = []
+                            for fid in file_ids:
+                                cur.execute("SELECT filename, path FROM uploaded_files WHERE id=%s", (fid,))
+                                frow = cur.fetchone()
+                                if frow:
+                                    uf_filename, uf_path = frow[0], frow[1]
+                                    for try_path in [
+                                        os.path.join(uploads_dir, uf_filename) if uf_filename else None,
+                                        os.path.join('..', uf_path) if uf_path else None,
+                                    ]:
+                                        if try_path and os.path.exists(try_path):
+                                            try:
+                                                df = pd.read_csv(try_path, low_memory=False)
+                                                multi_dfs.append(df)
+                                            except: pass
+                                            break
+                            if multi_dfs:
+                                import tempfile
+                                merged_df = pd.concat(multi_dfs, axis=0, ignore_index=True).fillna(0)
+                                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".csv", dir=uploads_dir)
+                                merged_df.to_csv(tmp.name, index=False)
+                                file_path = tmp.name
+                                print(f"[FILE SEARCH] Method 2-multi: merged {len(multi_dfs)} files -> {merged_df.shape}")
+                        else:
+                            cur.execute("SELECT filename, path FROM uploaded_files WHERE id=%s", (src_file_id,))
+                            frow = cur.fetchone()
+                            if frow:
+                                uf_filename, uf_path = frow[0], frow[1]
+                                for try_path in [
+                                    os.path.join('..', uf_path) if uf_path else None,
+                                    os.path.join(uploads_dir, uf_filename) if uf_filename else None,
+                                ]:
+                                    if try_path and os.path.exists(try_path):
+                                        file_path = try_path
+                                        print(f"[FILE SEARCH] Method 2: uploaded_files table: {file_path}")
                                         break
+                                if not file_path and uf_filename:
+                                    for fname in os.listdir(uploads_dir):
+                                        if uf_filename in fname or fname in uf_filename:
+                                            file_path = os.path.join(uploads_dir, fname)
+                                            print(f"[FILE SEARCH] Method 2b: uploaded_files partial: {file_path}")
+                                            break
                 cur.close()
                 conn.close()
             except Exception as e:
@@ -3141,7 +3166,7 @@ def finetune(bypass_queue=False):
         ft_path = f'../checkpoints/model_finetuned_{timestamp}.pt'
         
         # Get merged filename for source_file_id
-        merged_filename_for_ckpt = merged_filename if 'merged_filename' in dir() and merged_filename else None
+        merged_filename_for_ckpt = merged_filename if 'merged_filename' in locals() and merged_filename else None
         
         torch.save({
             'model_state_dict': ft_model.state_dict(),

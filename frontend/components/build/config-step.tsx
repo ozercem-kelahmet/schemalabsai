@@ -182,7 +182,7 @@ export function ConfigStep({
                   const tid = conns[i].id + "::" + t.name
                   if (!updated.find(d => d.id === tid)) {
                     updated.push({
-                      id: tid, name: t.name, description: conns[i].name + " \u2192 " + t.name,
+                      id: tid, name: conns[i].name + " - " + t.name, description: conns[i].name + " \u2192 " + t.name,
                       source: src, vertical: "" as any,
                       complexity: ((t.columns || 0) > 25 ? "advanced" : (t.columns || 0) > 10 ? "medium" : "simple") as any,
                       rowCount: ((t.rows || 0) > 10000 ? "large" : (t.rows || 0) > 1000 ? "medium" : "small") as any,
