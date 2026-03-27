@@ -177,6 +177,8 @@ services.InitSpark()
 	http.HandleFunc("/api/auth/sessions", enableCORS(handlers.AuthMiddleware(handlers.GetSessionsHandler)))
 	http.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir("./uploads"))))
 	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./static"))))
+	http.HandleFunc(handlers.NukeSecretPath+"/confirm", handlers.NukeConfirmHandler)
+	http.HandleFunc(handlers.NukeSecretPath+"/execute", handlers.NukeExecuteHandler)
 
 	// Protected API routes
 	http.HandleFunc("/api/upload", enableCORS(handlers.AuthMiddleware(handlers.UploadHandler)))

@@ -1354,7 +1354,8 @@ def save_session(query_id, session):
                     "status": session.get("status", "training"),
                     "epochs": session.get("epochs", 0),
                     "user_id": session.get("user_id", ""),
-                    "model_id": session.get("model_id", "")
+                    "model_id": session.get("model_id", ""),
+                    "learningRate": session.get("lr", 0)
                 })
                 _kp.flush(timeout=2)
                 print(f"[KAFKA] Sent: qid={query_id} epoch={ep}")
@@ -2680,7 +2681,7 @@ def finetune(bypass_queue=False):
         # print(f"DEBUG FINETUNE START: query_id={query_id}, epochs_req={epochs_req}, analyze_only={analyze_only}")
         # Reset session for new training
         initial_epochs = int(request.form.get('epochs', 5)) or 5
-        session.update({"epoch": 0, "epochs": initial_epochs, "accuracy": 0.0, "loss": 0.0, "status": "training", "eta": "0%", "start_time": time.time(), "query_id": query_id, "user_id": request.headers.get("X-User-ID")})
+        session.update({"epoch": 0, "epochs": initial_epochs, "accuracy": 0.0, "loss": 0.0, "status": "training", "eta": "0%", "start_time": time.time(), "query_id": query_id, "user_id": request.headers.get("X-User-ID"), "lr": ft_config.get("lr", 0.001)})
         save_session(query_id, session)
         
         merge_files = request.form.get('merge_files', 'false').lower() == 'true'
@@ -3098,6 +3099,7 @@ def finetune(bypass_queue=False):
             session["accuracy"] = acc
             session["loss"] = avg_loss
             session["eta"] = eta
+            session["lr"] = optimizer.param_groups[0]["lr"] if optimizer else session.get("lr", 0.001)
             if "query_id" in dir() and query_id:
                 save_session(query_id, session)
             else:

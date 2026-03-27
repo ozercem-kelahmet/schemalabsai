@@ -4,6 +4,8 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"log"
+	"io"
 	"math"
 	"math/rand"
 	"net/http"
@@ -16,6 +18,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"schemalabsai/services"
 )
 
 type GenerateRequest struct {
@@ -100,12 +103,27 @@ return
 	if fi != nil { size = fi.Size() }
 	rowCount, colNames := csvStats(destPath)
 
+	// Upload to cloud storage
+	storageKey := filename
+	if userID != "" {
+		storageKey = services.UserKey(userID, "uploads", filename)
+	}
+	if sf, soerr := os.Open(destPath); soerr == nil {
+		if suerr := services.DefaultStorage.Upload(storageKey, sf); suerr != nil {
+			log.Printf("[STORAGE] Generate upload failed: %s: %v", storageKey, suerr)
+		} else {
+			log.Printf("[STORAGE] Generate uploaded: %s (%d bytes)", storageKey, size)
+os.Remove(destPath)
+		}
+		sf.Close()
+	}
+
 	creditCost = math.Round((0.50+float64(req.Rows)/1000.0*0.10+float64(req.Columns)/10.0*0.05)*100) / 100
 	if creditCost < 0.50 { creditCost = 0.50 }
 	if creditCost > 10.0 { creditCost = 10.0 }
 
 	if DB != nil {
-		DB.Create(&UploadedFile{ID: fileID, Filename: filename, Path: destPath, Size: size, UserID: userID, CreatedAt: time.Now(), Columns: colNames, RowCount: rowCount, Vertical: req.Vertical, Source: "generated"})
+		DB.Create(&UploadedFile{ID: fileID, Filename: filename, Path: storageKey, Size: size, UserID: userID, CreatedAt: time.Now(), Columns: colNames, RowCount: rowCount, Vertical: req.Vertical, Source: "generated"})
 		var q UserQuota
 		if DB.Where("user_id = ?", userID).First(&q).Error == nil { q.CreditsUsed += creditCost; DB.Save(&q) }
 		genTokens := rowCount * len(strings.Split(colNames, ",")) * 3
@@ -428,12 +446,22 @@ func DownloadFileHandler(w http.ResponseWriter, r *http.Request) {
 	if fileID == "" { http.Error(w, "File ID required", http.StatusBadRequest); return }
 	var file UploadedFile
 	if err := DB.Where("id = ? AND user_id = ?", fileID, userID).First(&file).Error; err != nil { http.Error(w, "File not found", http.StatusNotFound); return }
-	f, err := os.Open(file.Path)
-	if err != nil { http.Error(w, "File not found on disk", http.StatusNotFound); return }
+	// Try cloud storage first, fallback to local
+	var f io.ReadCloser
+	f, err := services.DefaultStorage.Download(file.Path)
+	if err != nil {
+		// Fallback: try local file
+		f, err = os.Open(file.Path)
+		if err != nil { http.Error(w, "File not found", http.StatusNotFound); return }
+	}
 	defer f.Close()
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, file.Filename))
-	w.Header().Set("Content-Type", "text/csv")
-	fi, _ := f.Stat()
-	if fi != nil { w.Header().Set("Content-Length", strconv.FormatInt(fi.Size(), 10)) }
-	http.ServeContent(w, r, file.Filename, file.CreatedAt, f)
+	ext := strings.ToLower(filepath.Ext(file.Filename))
+	ctype := "application/octet-stream"
+	if ext == ".csv" { ctype = "text/csv" }
+	if ext == ".json" || ext == ".jsonl" { ctype = "application/json" }
+	if ext == ".xlsx" { ctype = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }
+	w.Header().Set("Content-Type", ctype)
+	if file.Size > 0 { w.Header().Set("Content-Length", strconv.FormatInt(file.Size, 10)) }
+	io.Copy(w, f)
 }

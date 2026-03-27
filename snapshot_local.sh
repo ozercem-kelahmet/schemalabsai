@@ -26,6 +26,9 @@ LATEST_RDB=$(ssh $SERVER "ls -t /opt/schemalabsai/backups/redis_*.rdb 2>/dev/nul
 [ -n "$LATEST_PG" ] && scp $SERVER:$LATEST_PG $LOCAL_DIR/ && echo "PG: $(basename $LATEST_PG)"
 [ -n "$LATEST_RDB" ] && scp $SERVER:$LATEST_RDB $LOCAL_DIR/ && echo "Redis: $(basename $LATEST_RDB)"
 
+LATEST_NGINX=$(ssh $SERVER "ls -t /opt/schemalabsai/backups/nginx_*.conf 2>/dev/null | head -1")
+[ -n "$LATEST_NGINX" ] && scp $SERVER:$LATEST_NGINX $LOCAL_DIR/ && echo "Nginx: $(basename $LATEST_NGINX)" 
+
 find $LOCAL_DIR -name 'postgres_*.sql.gz' -mtime +3 -delete
 find $LOCAL_DIR -name 'redis_*.rdb' -mtime +3 -delete
 

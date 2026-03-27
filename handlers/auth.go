@@ -17,6 +17,7 @@ import (
 	"strconv"
 "strings"
 	"time"
+	"schemalabsai/services"
 
 	"sync"
 
@@ -2385,6 +2386,7 @@ func ExportTableHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		csvWriter.Flush()
+uploadToStorage(filepath, conn.UserID, "uploads")
 
 		fileInfo, _ := os.Stat(filepath)
 		fileSize := fileInfo.Size()
@@ -2451,6 +2453,7 @@ log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if re
 			}
 			csvWriter.Flush()
 			file.Close()
+uploadToStorage(filepath, conn.UserID, "uploads")
 			fileInfo, _ := os.Stat(filepath)
 			uploadedFile := UploadedFile{ID: fileID, Filename: filename, Path: filepath, Size: fileInfo.Size(), UserID: session.UserID, CreatedAt: time.Now()}
 			DB.Create(&uploadedFile)
@@ -2509,6 +2512,7 @@ log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if re
 			}
 			csvWriter.Flush()
 			file.Close()
+uploadToStorage(filepath, conn.UserID, "uploads")
 			fileInfo, _ := os.Stat(filepath)
 			uploadedFile := UploadedFile{ID: fileID, Filename: filename, Path: filepath, Size: fileInfo.Size(), UserID: session.UserID, CreatedAt: time.Now()}
 			DB.Create(&uploadedFile)
@@ -2537,8 +2541,10 @@ log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if re
 			filename := fmt.Sprintf("weaviate_%s.json", sanitizeTableName(input.TableName))
 			filepath := fmt.Sprintf("./uploads/%s_%s", fileID, filename)
 			os.WriteFile(filepath, bodyBytes, 0644)
+			uploadToStorage(filepath, session.UserID, "uploads")
 			fileInfo, _ := os.Stat(filepath)
-			uploadedFile := UploadedFile{ID: fileID, Filename: filename, Path: filepath, Size: fileInfo.Size(), UserID: session.UserID, CreatedAt: time.Now()}
+			storageKey := services.UserKey(session.UserID, "uploads", fileID+"_"+filename)
+			uploadedFile := UploadedFile{ID: fileID, Filename: filename, Path: storageKey, Size: fileInfo.Size(), UserID: session.UserID, CreatedAt: time.Now()}
 			DB.Create(&uploadedFile)
 			json.NewEncoder(w).Encode(map[string]interface{}{"file_id": fileID, "filename": filename, "rows": 0, "columns": 0, "size": fileInfo.Size()})
 			return
@@ -2622,6 +2628,8 @@ log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if re
 			}
 			csvWriter.Flush()
 			file.Close()
+			uploadToStorage(filepath, session.UserID, "uploads")
+uploadToStorage(filepath, conn.UserID, "uploads")
 			fileInfo, _ := os.Stat(filepath)
 			uploadedFile := UploadedFile{ID: fileID, Filename: filename, Path: filepath, Size: fileInfo.Size(), UserID: session.UserID, CreatedAt: time.Now()}
 			DB.Create(&uploadedFile)
@@ -2650,8 +2658,10 @@ log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if re
 			filename := fmt.Sprintf("lancedb_%s.json", sanitizeTableName(input.TableName))
 			filepath := fmt.Sprintf("./uploads/%s_%s", fileID, filename)
 			os.WriteFile(filepath, bodyBytes, 0644)
+			uploadToStorage(filepath, session.UserID, "uploads")
 			fileInfo, _ := os.Stat(filepath)
-			uploadedFile := UploadedFile{ID: fileID, Filename: filename, Path: filepath, Size: fileInfo.Size(), UserID: session.UserID, CreatedAt: time.Now()}
+			storageKey := services.UserKey(session.UserID, "uploads", fileID+"_"+filename)
+			uploadedFile := UploadedFile{ID: fileID, Filename: filename, Path: storageKey, Size: fileInfo.Size(), UserID: session.UserID, CreatedAt: time.Now()}
 			DB.Create(&uploadedFile)
 			json.NewEncoder(w).Encode(map[string]interface{}{"file_id": fileID, "filename": filename, "rows": 0, "columns": 0, "size": fileInfo.Size()})
 			return
@@ -2693,6 +2703,8 @@ log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if re
 				}
 				csvWriter.Flush()
 				file.Close()
+				uploadToStorage(filepath, session.UserID, "uploads")
+uploadToStorage(filepath, conn.UserID, "uploads")
 				fileInfo, _ := os.Stat(filepath)
 				uploadedFile := UploadedFile{ID: fileID, Filename: filename, Path: filepath, Size: fileInfo.Size(), UserID: session.UserID, CreatedAt: time.Now()}
 				DB.Create(&uploadedFile)
@@ -2728,6 +2740,7 @@ log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if re
 							}
 							csvWriter.Flush()
 							file.Close()
+uploadToStorage(filepath, conn.UserID, "uploads")
 							fileInfo, _ := os.Stat(filepath)
 							uploadedFile := UploadedFile{ID: fileID, Filename: filename, Path: filepath, Size: fileInfo.Size(), UserID: session.UserID, CreatedAt: time.Now()}
 							DB.Create(&uploadedFile)
@@ -2762,8 +2775,10 @@ log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if re
 			filename := fmt.Sprintf("graphql_%s.json", sanitizeTableName(input.TableName))
 			filepath := fmt.Sprintf("./uploads/%s_%s", fileID, filename)
 			os.WriteFile(filepath, bodyBytes, 0644)
+			uploadToStorage(filepath, session.UserID, "uploads")
 			fileInfo, _ := os.Stat(filepath)
-			uploadedFile := UploadedFile{ID: fileID, Filename: filename, Path: filepath, Size: fileInfo.Size(), UserID: session.UserID, CreatedAt: time.Now()}
+			storageKey := services.UserKey(session.UserID, "uploads", fileID+"_"+filename)
+			uploadedFile := UploadedFile{ID: fileID, Filename: filename, Path: storageKey, Size: fileInfo.Size(), UserID: session.UserID, CreatedAt: time.Now()}
 			DB.Create(&uploadedFile)
 			json.NewEncoder(w).Encode(map[string]interface{}{"file_id": fileID, "filename": filename, "rows": 0, "columns": 0, "size": fileInfo.Size()})
 			return
@@ -2792,6 +2807,7 @@ log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if re
 			rowCount := strings.Count(string(bodyBytes), "\n")
 			uploadedFile := UploadedFile{ID: fileID, Filename: filename, Path: filepath, Size: fileInfo.Size(), UserID: session.UserID, CreatedAt: time.Now()}
 			DB.Create(&uploadedFile)
+			uploadToStorage(filepath, session.UserID, "uploads")
 			json.NewEncoder(w).Encode(map[string]interface{}{"file_id": fileID, "filename": filename, "rows": rowCount, "columns": 0, "size": fileInfo.Size()})
 			return
 		}
@@ -2821,6 +2837,7 @@ log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if re
 			rowCount := strings.Count(string(bodyBytes), "\n")
 			uploadedFile := UploadedFile{ID: fileID, Filename: filename, Path: filepath, Size: fileInfo.Size(), UserID: session.UserID, CreatedAt: time.Now()}
 			DB.Create(&uploadedFile)
+			uploadToStorage(filepath, session.UserID, "uploads")
 			json.NewEncoder(w).Encode(map[string]interface{}{"file_id": fileID, "filename": filename, "rows": rowCount, "columns": 0, "size": fileInfo.Size()})
 			return
 		}
@@ -2847,6 +2864,7 @@ log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if re
 			rowCount := strings.Count(string(bodyBytes), "\n")
 			uploadedFile := UploadedFile{ID: fileID, Filename: filename, Path: filepath, Size: fileInfo.Size(), UserID: session.UserID, CreatedAt: time.Now()}
 			DB.Create(&uploadedFile)
+			uploadToStorage(filepath, session.UserID, "uploads")
 			json.NewEncoder(w).Encode(map[string]interface{}{"file_id": fileID, "filename": filename, "rows": rowCount, "columns": 0, "size": fileInfo.Size()})
 			return
 		}
@@ -2874,6 +2892,7 @@ log.Printf("🔍 Chroma response: err=%v statusCode=%d", err, func() int { if re
 
 	writer := csv.NewWriter(file)
 	defer writer.Flush()
+	uploadToStorage(filepath, session.UserID, "uploads")
 
 	// Write header
 	writer.Write(columns)
@@ -4069,6 +4088,8 @@ func UploadAvatarHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Upload avatar to GCS
+	uploadToStorage(filepath, userID, "avatars")
 	avatarURL := fmt.Sprintf("/uploads/avatars/%s", filename)
 	DB.Model(&User{}).Where("id = ?", userID).Update("avatar_url", avatarURL)
 

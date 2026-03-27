@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"schemalabsai/services"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
@@ -268,11 +269,38 @@ func triggerRetrain(job *ScheduledJob) error {
 		fileID = strings.TrimSpace(fileID)
 		if fileID == "" { continue }
 		matches, _ := filepath.Glob("./uploads/" + fileID + "_*")
+// Try storage if local not found
+if len(matches) == 0 {
+var dbFile UploadedFile
+if DB != nil && DB.Where("id = ?", fileID).First(&dbFile).Error == nil && dbFile.Path != "" {
+if sr, serr := services.DefaultStorage.Download(dbFile.Path); serr == nil {
+tmpPath := "./uploads/tmp_sched_" + fileID
+tf, _ := os.Create(tmpPath)
+io.Copy(tf, sr)
+tf.Close()
+sr.Close()
+matches = []string{tmpPath}
+}
+}
+}
 		if len(matches) > 0 {
 			filePaths = append(filePaths, matches[0])
 		} else {
 			// Try exact path
 			matches2, _ := filepath.Glob("./uploads/" + fileID + "*")
+			if len(matches2) == 0 {
+				var dbFile2 UploadedFile
+				if DB != nil && DB.Where("id = ?", fileID).First(&dbFile2).Error == nil && dbFile2.Path != "" {
+					if sr2, serr2 := services.DefaultStorage.Download(dbFile2.Path); serr2 == nil {
+						tmpPath2 := "./uploads/tmp_sched2_" + fileID
+						tf2, _ := os.Create(tmpPath2)
+						io.Copy(tf2, sr2)
+						tf2.Close()
+						sr2.Close()
+						matches2 = []string{tmpPath2}
+					}
+				}
+			}
 			if len(matches2) > 0 {
 				filePaths = append(filePaths, matches2[0])
 			}
@@ -862,6 +890,7 @@ if gdSelMap != nil && !gdSelMap[f.Name] { continue }
 			file, _ := os.Create(fpath)
 			written, _ := io.Copy(file, dlResp.Body)
 			file.Close()
+uploadToStorage(fpath, conn.UserID, "uploads")
 			dlResp.Body.Close()
 			if written > 0 {
 				DB.Create(&UploadedFile{ID: fileID, Filename: filename, Path: fpath, Size: written, UserID: userID, CreatedAt: time.Now()})

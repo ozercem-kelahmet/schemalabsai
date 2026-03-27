@@ -30,6 +30,24 @@ sf "github.com/snowflakedb/gosnowflake"
 )
 
 // sanitizeFileID - Path traversal önlemek için file ID sanitize et
+// uploadToStorage uploads a local file to cloud storage and returns the storage key
+func uploadToStorage(localPath, userID, category string) string {
+storageKey := localPath
+if userID != "" {
+storageKey = services.UserKey(userID, category, filepath.Base(localPath))
+}
+if f, err := os.Open(localPath); err == nil {
+if uerr := services.DefaultStorage.Upload(storageKey, f); uerr != nil {
+log.Printf("[STORAGE] Upload failed %s: %v", storageKey, uerr)
+} else {
+log.Printf("[STORAGE] Uploaded: %s", storageKey)
+os.Remove(localPath)
+}
+f.Close()
+}
+return storageKey
+}
+
 func sanitizeFileID(id string) string {
 	cleaned := ""
 	for _, c := range id {
@@ -103,7 +121,8 @@ return
 		req.BatchSize = 64
 	}
 
-	pattern := "./uploads/" + sanitizeFileID(req.FileID) + "_*"
+	// Find training file — try local first, then download from storage
+pattern := "./uploads/" + sanitizeFileID(req.FileID) + "_*"
 	matches, err := filepath.Glob(pattern)
 
 	if err != nil || len(matches) == 0 {
@@ -112,6 +131,24 @@ return
 	}
 
 	file, err := os.Open(matches[0])
+if err != nil {
+// Try cloud storage: download to local temp
+var dbFile UploadedFile
+if DB != nil && DB.Where("id = ?", req.FileID).First(&dbFile).Error == nil && dbFile.Path != "" {
+sr, serr := services.DefaultStorage.Download(dbFile.Path)
+if serr == nil {
+tmpPath := "./uploads/tmp_" + sanitizeFileID(req.FileID)
+tf, terr := os.Create(tmpPath)
+if terr == nil {
+io.Copy(tf, sr)
+tf.Close()
+sr.Close()
+file, err = os.Open(tmpPath)
+log.Printf("[STORAGE] Training file downloaded from storage: %s", dbFile.Path)
+}
+}
+}
+}
 	if err != nil {
 		http.Error(w, "Failed to read file", http.StatusInternalServerError)
 		return
@@ -421,7 +458,15 @@ SelectedTables string   `json:"selected_tables"`
 
 // convertJSONToCSV converts a JSON or JSONL file to CSV format
 func convertJSONToCSV(filePath string) (string, error) {
-	data, err := os.ReadFile(filePath)
+	// Try cloud storage first, fallback to local
+	var data []byte
+	var err error
+	if sr, serr := services.DefaultStorage.Download(filePath); serr == nil {
+		data, err = io.ReadAll(sr)
+		sr.Close()
+	} else {
+		data, err = os.ReadFile(filePath)
+	}
 	if err != nil { return "", err }
 
 	var records []map[string]interface{}
@@ -530,21 +575,21 @@ func exportConnectionToCSV(conn Connection, connID string) ([]string, error) {
 		if conn.SSL { sslmode = "require" }
 		dsn := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=%s&connect_timeout=15",
 			conn.Username, conn.Password, connHost, conn.Port, conn.Database, sslmode)
-		paths, err := exportSQLToCSV(dsn, "postgres", connID, "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'", true, conn.SelectedTables)
+		paths, err := exportSQLToCSV(dsn, "postgres", connID, "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'", true, conn.SelectedTables, conn.UserID)
 		if err != nil { return nil, err }
 		filePaths = append(filePaths, paths...)
 
 	case "mysql":
 		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true",
 			conn.Username, conn.Password, conn.Host, conn.Port, conn.Database)
-		paths, err := exportSQLToCSV(dsn, "mysql", connID, fmt.Sprintf("SELECT table_name FROM information_schema.tables WHERE table_schema = '%s'", conn.Database), false, conn.SelectedTables)
+		paths, err := exportSQLToCSV(dsn, "mysql", connID, fmt.Sprintf("SELECT table_name FROM information_schema.tables WHERE table_schema = '%s'", conn.Database), false, conn.SelectedTables, conn.UserID)
 		if err != nil { return nil, err }
 		filePaths = append(filePaths, paths...)
 
 	case "snowflake":
 		dsn := fmt.Sprintf("postgresql://%s:%s@%s/%s",
 			conn.Username, conn.Password, conn.Host, conn.Database)
-		paths, err := exportSQLToCSV(dsn, "snowflake", connID, "SELECT table_name FROM information_schema.tables WHERE table_schema = 'PUBLIC'", true, conn.SelectedTables)
+		paths, err := exportSQLToCSV(dsn, "snowflake", connID, "SELECT table_name FROM information_schema.tables WHERE table_schema = 'PUBLIC'", true, conn.SelectedTables, conn.UserID)
 		if err != nil { return nil, err }
 		filePaths = append(filePaths, paths...)
 
@@ -577,7 +622,7 @@ if mongoSelMap != nil && !mongoSelMap[collName] { continue }
 	case "databricks":
 		dsn := fmt.Sprintf("postgresql://%s:%s@%s/%s",
 			conn.Username, conn.Password, conn.Host, conn.Database)
-		paths, err := exportSQLToCSV(dsn, "databricks", connID, "SHOW TABLES", false, conn.SelectedTables)
+		paths, err := exportSQLToCSV(dsn, "databricks", connID, "SHOW TABLES", false, conn.SelectedTables, conn.UserID)
 		if err != nil { log.Printf("Databricks export failed: %v", err) }
 		if len(paths) > 0 { filePaths = append(filePaths, paths...) }
 
@@ -623,6 +668,7 @@ if mongoSelMap != nil && !mongoSelMap[collName] { continue }
 				}
 				csvWriter.Flush()
 				csvFile.Close()
+uploadToStorage(csvPath, conn.UserID, "uploads")
 				filePaths = append(filePaths, csvPath)
 				log.Printf("Exported Pinecone %d vectors to %s", len(result.Vectors), csvPath)
 			}
@@ -645,6 +691,7 @@ if mongoSelMap != nil && !mongoSelMap[collName] { continue }
 			csvWriter.Write([]string{string(bodyBytes)})
 			csvWriter.Flush()
 			csvFile.Close()
+uploadToStorage(csvPath, conn.UserID, "uploads")
 			filePaths = append(filePaths, csvPath)
 			log.Printf("Exported Weaviate schema to %s", csvPath)
 		}
@@ -692,6 +739,7 @@ if mongoSelMap != nil && !mongoSelMap[collName] { continue }
 				}
 				csvWriter.Flush()
 				csvFile.Close()
+uploadToStorage(csvPath, conn.UserID, "uploads")
 				filePaths = append(filePaths, csvPath)
 				log.Printf("Exported Chroma collection %s (%d docs) to %s", coll.Name, len(getResult.IDs), csvPath)
 			}
@@ -714,6 +762,7 @@ if mongoSelMap != nil && !mongoSelMap[collName] { continue }
 			csvWriter.Write([]string{string(bodyBytes)})
 			csvWriter.Flush()
 			csvFile.Close()
+uploadToStorage(csvPath, conn.UserID, "uploads")
 			filePaths = append(filePaths, csvPath)
 			log.Printf("Exported LanceDB to %s", csvPath)
 		}
@@ -747,6 +796,7 @@ if mongoSelMap != nil && !mongoSelMap[collName] { continue }
 			}
 			io.Copy(csvFile, io.LimitReader(expResp.Body, limitBytes))
 			csvFile.Close()
+uploadToStorage(csvPath, conn.UserID, "uploads")
 			expResp.Body.Close()
 				filePaths = append(filePaths, csvPath)
 				log.Printf("Exported Google Drive file %s to %s", f.Name, csvPath)
@@ -801,6 +851,7 @@ if mongoSelMap != nil && !mongoSelMap[collName] { continue }
 					}
 					io.Copy(csvFile, io.LimitReader(objResp.Body, limitBytes))
 					csvFile.Close()
+uploadToStorage(csvPath, conn.UserID, "uploads")
 					objResp.Body.Close()
 					filePaths = append(filePaths, csvPath)
 					log.Printf("Exported S3 object %s to %s", objName, csvPath)
@@ -837,6 +888,7 @@ if mongoSelMap != nil && !mongoSelMap[collName] { continue }
 					}
 					io.Copy(csvFile, io.LimitReader(objResp.Body, limitBytes))
 					csvFile.Close()
+uploadToStorage(csvPath, conn.UserID, "uploads")
 					objResp.Body.Close()
 					filePaths = append(filePaths, csvPath)
 					log.Printf("Exported GCS object %s to %s", item.Name, csvPath)
@@ -872,7 +924,7 @@ if mongoSelMap != nil && !mongoSelMap[collName] { continue }
 }
 
 // exportSQLToCSV handles PostgreSQL, MySQL, Snowflake - any SQL-based DB
-func exportSQLToCSV(dsn, driver, connID, listTablesQuery string, quoteTable bool, selectedTables string) ([]string, error) {
+func exportSQLToCSV(dsn, driver, connID, listTablesQuery string, quoteTable bool, selectedTables, userID string) ([]string, error) {
 	var filePaths []string
 	var tempGorm *gorm.DB
 	var err error
@@ -933,7 +985,7 @@ if selectedMap != nil && !selectedMap[tableName] { continue }
 		if quoteTable { q = fmt.Sprintf(`SELECT * FROM "%s"`, tableName) }
 		dataRows, err := sqlDB.Query(q)
 		if err != nil { log.Printf("Failed to query table %s: %v", tableName, err); continue }
-		paths := writeRowsToCSV(dataRows, connID, tableName)
+		paths := writeRowsToCSV(dataRows, connID, tableName, userID)
 		filePaths = append(filePaths, paths)
 		dataRows.Close()
 	}
@@ -993,6 +1045,7 @@ func exportAPIToCSV(conn Connection, connID string) ([]string, error) {
 	}
 	csvWriter.Flush()
 	csvFile.Close()
+uploadToStorage(csvPath, conn.UserID, "uploads")
 	filePaths = append(filePaths, csvPath)
 	log.Printf("Exported API data to %s (%d records)", csvPath, len(records))
 	return filePaths, nil
@@ -1009,6 +1062,7 @@ func exportVectorDBToCSV(conn Connection, connID string) ([]string, error) {
 	csvWriter.Write([]string{connID, conn.Name, conn.SubType, "connected"})
 	csvWriter.Flush()
 	csvFile.Close()
+uploadToStorage(csvPath, conn.UserID, "uploads")
 	log.Printf("Vector DB metadata exported to %s", csvPath)
 	return []string{csvPath}, nil
 }
@@ -1219,6 +1273,7 @@ func exportGraphQLToCSV(conn Connection, connID string) ([]string, error) {
 				}
 				csvWriter.Flush()
 				csvFile.Close()
+uploadToStorage(csvPath, conn.UserID, "uploads")
 				filePaths = append(filePaths, csvPath)
 				log.Printf("📡 Exported %s to %s (%d rows, %d cols)", fieldName, csvPath, len(arr), len(scalarFields))
 			}
@@ -1230,7 +1285,7 @@ func exportGraphQLToCSV(conn Connection, connID string) ([]string, error) {
 
 
 // writeRowsToCSV writes sql.Rows to a CSV file
-func writeRowsToCSV(dataRows *sql.Rows, connID, tableName string) string {
+func writeRowsToCSV(dataRows *sql.Rows, connID, tableName, userID string) string {
 	cols, _ := dataRows.Columns()
 	csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, tableName)
 	csvFile, _ := os.Create(csvPath)
@@ -1260,6 +1315,7 @@ func writeRowsToCSV(dataRows *sql.Rows, connID, tableName string) string {
 	}
 	csvWriter.Flush()
 	csvFile.Close()
+uploadToStorage(csvPath, userID, "uploads")
 	log.Printf("Exported table %s to %s (%d rows)", tableName, csvPath, rowCount)
 	return csvPath
 }
@@ -1439,6 +1495,7 @@ if req.ConnectionIDs != "" {
 				}
 				csvWriter.Flush()
 				csvFile.Close()
+uploadToStorage(csvPath, conn.UserID, "uploads")
 				filePaths = append(filePaths, csvPath)
 				log.Printf("Exported REST API connection %s to %s (%d rows)", connID, csvPath, len(jsonArray))
 			}
@@ -1543,6 +1600,7 @@ if req.ConnectionIDs != "" {
 					cursor.Close(context.Background())
 					csvWriter.Flush()
 					csvFile.Close()
+uploadToStorage(csvPath, conn.UserID, "uploads")
 					if rowCount > 0 {
 						filePaths = append(filePaths, csvPath)
 						log.Printf("Exported MongoDB %s.%s to %s (%d rows)", connID, collName, csvPath, rowCount)
@@ -1666,6 +1724,7 @@ if req.ConnectionIDs != "" {
 				}
 				csvWriter.Flush()
 				csvFile.Close()
+uploadToStorage(csvPath, conn.UserID, "uploads")
 				dataRows.Close()
 				filePaths = append(filePaths, csvPath)
 				log.Printf("Exported Snowflake %s.%s to %s (%d rows)", connID, tableName, csvPath, rowCount)
@@ -1814,6 +1873,7 @@ if req.ConnectionIDs != "" {
 					for _, row := range sqlResult.Result.DataArray { csvWriter.Write(row) }
 					csvWriter.Flush()
 					csvFile.Close()
+uploadToStorage(csvPath, conn.UserID, "uploads")
 					filePaths = append(filePaths, csvPath)
 					log.Printf("Exported Databricks %s.%s to %s (%d rows)", connID, tableFull, csvPath, len(sqlResult.Result.DataArray))
 				}
@@ -1885,6 +1945,7 @@ if req.ConnectionIDs != "" {
 				}
 				csvWriter.Flush()
 				csvFile.Close()
+uploadToStorage(csvPath, conn.UserID, "uploads")
 				dataRows.Close()
 				filePaths = append(filePaths, csvPath)
 				log.Printf("Exported MySQL %s.%s to %s (%d rows)", connID, tableName, csvPath, rowCount)
@@ -1970,6 +2031,7 @@ csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, sanitizeFilename(pine
 				}
 				csvWriter.Flush()
 				csvFile.Close()
+uploadToStorage(csvPath, conn.UserID, "uploads")
 				filePaths = append(filePaths, csvPath)
 				log.Printf("Exported Pinecone %s to %s (%d rows)", connID, csvPath, len(result.Matches))
 			}
@@ -2031,6 +2093,7 @@ csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, sanitizeFilename(pine
 					}
 					csvWriter.Flush()
 					csvFile.Close()
+uploadToStorage(csvPath, conn.UserID, "uploads")
 					filePaths = append(filePaths, csvPath)
 					log.Printf("Exported Chroma %s.%s to %s (%d rows)", connID, coll.Name, csvPath, rowCount)
 				}
@@ -2073,6 +2136,7 @@ csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, sanitizeFilename(pine
 					csvFile, _ := os.Create(csvPath)
 					io.Copy(csvFile, exportResp.Body)
 					csvFile.Close()
+uploadToStorage(csvPath, conn.UserID, "uploads")
 					exportResp.Body.Close()
 					filePaths = append(filePaths, csvPath)
 					log.Printf("Exported Google Drive %s to %s", f.Name, csvPath)
@@ -2127,6 +2191,7 @@ csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, sanitizeFilename(pine
 						csvFile, _ := os.Create(csvPath)
 						io.Copy(csvFile, objResp.Body)
 						csvFile.Close()
+uploadToStorage(csvPath, conn.UserID, "uploads")
 						filePaths = append(filePaths, csvPath)
 						log.Printf("Exported S3 %s to %s", objName, csvPath)
 					}
@@ -2163,6 +2228,7 @@ csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, sanitizeFilename(pine
 						csvFile, _ := os.Create(csvPath)
 						io.Copy(csvFile, dlResp.Body)
 						csvFile.Close()
+uploadToStorage(csvPath, conn.UserID, "uploads")
 						filePaths = append(filePaths, csvPath)
 						log.Printf("Exported GCS %s to %s", item.Name, csvPath)
 					}
@@ -2276,6 +2342,7 @@ if pgSelMap != nil && !pgSelMap[tableName] { continue }
 			}
 			csvWriter.Flush()
 			csvFile.Close()
+uploadToStorage(csvPath, conn.UserID, "uploads")
 			dataRows.Close()
 			filePaths = append(filePaths, csvPath)
 			log.Printf("Exported connection %s table %s to %s", connID, tableName, csvPath)
@@ -2431,6 +2498,7 @@ filePaths = convertedPaths
 			result, werr := services.DefaultSpark.WaitForJob(resp.JobID, 30*60*1000000000)
 			if werr == nil && result.Status == "completed" {
 				sparkMergedPath = mergeOutputPath
+				uploadToStorage(mergeOutputPath, userID, "uploads")
 				filePaths = []string{mergeOutputPath}
 				log.Printf("[SPARK] Merge completed: %d rows → %s", result.RowCount, mergeOutputPath)
 			}
@@ -2477,9 +2545,14 @@ if services.DefaultSpark != nil && services.DefaultSpark.IsAvailable() {
 	writer := multipart.NewWriter(body)
 
 	for _, filePath := range filePaths {
-		file, err := os.Open(filePath)
+		// Try cloud storage first, fallback to local
+		var file io.ReadCloser
+		file, err := services.DefaultStorage.Download(filePath)
 		if err != nil {
-			continue
+			file, err = os.Open(filePath)
+			if err != nil {
+				continue
+			}
 		}
 		fieldName := "file"
 		part, _ := writer.CreateFormFile(fieldName, filepath.Base(filePath))
@@ -2930,9 +3003,14 @@ func AnalyzeFilesHandler(w http.ResponseWriter, r *http.Request) {
 	writer := multipart.NewWriter(body)
 
 	for _, filePath := range filePaths {
-		file, err := os.Open(filePath)
+		// Try cloud storage first, fallback to local
+		var file io.ReadCloser
+		file, err := services.DefaultStorage.Download(filePath)
 		if err != nil {
-			continue
+			file, err = os.Open(filePath)
+			if err != nil {
+				continue
+			}
 		}
 		fieldName := "file"
 		part, _ := writer.CreateFormFile(fieldName, filepath.Base(filePath))
@@ -3419,31 +3497,41 @@ func DownloadModelHandler(w http.ResponseWriter, r *http.Request) {
 	// Try multiple paths for the checkpoint file
 	possiblePaths := []string{
 		model.ModelPath,
-		"./checkpoints/" + model.ModelPath,
-		"./checkpoints/" + model.ModelPath + ".pt",
-		"./model/checkpoints/" + model.ModelPath,
-		"./model/checkpoints/" + model.ModelPath + ".pt",
+		services.UserKey(userID, "checkpoints", model.ModelPath),
+		services.UserKey(userID, "checkpoints", model.ModelPath + ".pt"),
+		services.SharedKey("base-models", model.ModelPath),
+		services.SharedKey("base-models", model.ModelPath + ".pt"),
 	}
 
-	var filePath string
+	// Try storage first, then local
+	var reader io.ReadCloser
+	var foundPath string
 	for _, p := range possiblePaths {
-		if _, err := os.Stat(p); err == nil {
-			filePath = p
+		if sr, serr := services.DefaultStorage.Download(p); serr == nil {
+			reader = sr
+			foundPath = p
 			break
+		}
+		if _, err := os.Stat(p); err == nil {
+			if f, ferr := os.Open(p); ferr == nil {
+				reader = f
+				foundPath = p
+				break
+			}
 		}
 	}
 
-	if filePath == "" {
-		http.Error(w, "Model file not found on disk", http.StatusNotFound)
+	if reader == nil {
+		http.Error(w, "Model file not found", http.StatusNotFound)
 		return
 	}
+	defer reader.Close()
+	log.Printf("[STORAGE] Model download: %s", foundPath)
 
-	// Set headers for file download
 	fileName := model.Name + ".pt"
 	w.Header().Set("Content-Disposition", "attachment; filename="+fileName)
 	w.Header().Set("Content-Type", "application/octet-stream")
-
-	http.ServeFile(w, r, filePath)
+	io.Copy(w, reader)
 }
 
 

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"io"
 	"net/http"
 	"os"
@@ -649,7 +650,20 @@ func callClaudeAPI(messages []ChatMessage, systemPrompt, model string, stream bo
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 
 	fmt.Printf("DEBUG OpenAI reqBody: %s\n", string(reqBody[:min(500, len(reqBody))]))
-	resp, err := client.Do(httpReq)
+	var resp *http.Response
+	var err error
+	for retryCount := 0; retryCount < 3; retryCount++ {
+		if retryCount > 0 {
+			httpReq.Body = io.NopCloser(bytes.NewBuffer(reqBody))
+			time.Sleep(time.Duration(retryCount*2) * time.Second)
+			log.Printf("[RETRY] Attempt %d/3 for Claude API", retryCount+1)
+		}
+		resp, err = client.Do(httpReq)
+		if err != nil { break }
+		if resp.StatusCode != 429 && resp.StatusCode != 529 { break }
+		log.Printf("[RETRY] Got %d, retrying...", resp.StatusCode)
+		resp.Body.Close()
+	}
 	fmt.Printf("DEBUG DO err=%v\n", err)
 	if resp != nil { fmt.Printf("DEBUG DO status=%d\n", resp.StatusCode) }
 	body2, _ := io.ReadAll(resp.Body)

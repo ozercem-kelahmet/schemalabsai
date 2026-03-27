@@ -513,7 +513,7 @@ export function DatasetGrid() {
               
               // Upload files sequentially to avoid connection issues
               const total = files.length
-              uploadToastId = toast.custom(() => (
+              if (total > 1) uploadToastId = toast.custom(() => (
                 <div style={{background:"var(--card, #12121f)",border:"1px solid var(--border, #2a2a3e)",borderRadius:10,padding:"14px 18px",minWidth:300,boxShadow:"0 4px 24px rgba(0,0,0,0.4)"}}>
                   <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
                     <span style={{color:"var(--foreground,#f0f0f5)",fontSize:13,fontWeight:500}}>Uploading files...</span>
@@ -544,11 +544,13 @@ export function DatasetGrid() {
                 } catch (e: any) {
                   failedFiles.push(file.name + ": " + (e?.message || "Unknown error"))
                 }
+                if (total > 1) {
                 const pct = Math.round(((uploaded + failedFiles.length) / total) * 100)
                 const bar = document.getElementById("upload-progress-bar")
                 const txt = document.getElementById("upload-count-text")
                 if (bar) bar.style.width = pct + "%"
                 if (txt) txt.textContent = `${uploaded} / ${total}`
+                }
                 // Check for Excel multi-sheet files
                 if (result?.sheets && result.sheets.length > 0) {
                   mainFileId = result.file_id

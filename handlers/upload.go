@@ -260,21 +260,27 @@ json.NewEncoder(w).Encode(map[string]string{"error": "File type not supported. S
 		sanitized = sanitized[:200-len(ext)] + ext
 	}
 	destFilename := fileID + "_" + sanitized
-	destPath := filepath.Join(uploadDir, destFilename)
+	// Storage key: user-scoped if userID exists
+	storageKey := destFilename
+	if userID != "" {
+		storageKey = services.UserKey(userID, "uploads", destFilename)
+	}
 
+	// Write to local temp first (needed for CSV/Excel parsing)
+	destPath := filepath.Join(uploadDir, destFilename)
 	dest, err := os.Create(destPath)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
-w.WriteHeader(http.StatusInternalServerError)
-json.NewEncoder(w).Encode(map[string]string{"error": "Failed to save file"})
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to save file"})
 		return
 	}
 
 	size, err := io.Copy(dest, file)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
-w.WriteHeader(http.StatusInternalServerError)
-json.NewEncoder(w).Encode(map[string]string{"error": "Failed to write file"})
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to write file"})
 		return
 	}
 	dest.Sync()
@@ -285,6 +291,16 @@ json.NewEncoder(w).Encode(map[string]string{"error": "Failed to write file"})
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": "File write failed - 0 bytes written. Please try again."})
 		return
+	}
+
+	// Upload to cloud storage (GCS/S3) from local temp file
+	if tempFile, oerr := os.Open(destPath); oerr == nil {
+		if uerr := services.DefaultStorage.Upload(storageKey, tempFile); uerr != nil {
+			log.Printf("[STORAGE] Upload failed for %s: %v (keeping local copy)", storageKey, uerr)
+		} else {
+			log.Printf("[STORAGE] Uploaded: %s (%d bytes)", storageKey, size)
+		}
+		tempFile.Close()
 	}
 
 // Verify file written correctly
@@ -446,6 +462,20 @@ sheetWriter.Write(row)
 }
 sheetWriter.Flush()
 sheetFile.Close()
+// Upload sheet CSV to cloud storage
+sheetStorageKey := sheetPath
+if userID != "" {
+sheetStorageKey = services.UserKey(userID, "uploads", sheetFileID+".csv")
+}
+if sf, soerr := os.Open(sheetPath); soerr == nil {
+if suerr := services.DefaultStorage.Upload(sheetStorageKey, sf); suerr != nil {
+log.Printf("[STORAGE] Sheet upload failed: %s: %v", sheetStorageKey, suerr)
+} else {
+log.Printf("[STORAGE] Sheet uploaded: %s", sheetStorageKey)
+os.Remove(sheetPath)
+}
+sf.Close()
+}
 sheetSize := int64(0)
 if sheetInfo, statErr := os.Stat(sheetPath); statErr == nil {
 	sheetSize = sheetInfo.Size()
@@ -455,7 +485,7 @@ sheetRowCount := len(sheetRows) - 1
 sheetColCount := 0
 if len(sheetRows) > 0 { sheetCols = strings.Join(sheetRows[0], ","); sheetColCount = len(sheetRows[0]) }
 DB.Create(&UploadedFile{
-ID: sheetFileID, Filename: sheetFilename, Path: sheetPath,
+ID: sheetFileID, Filename: sheetFilename, Path: sheetStorageKey,
 Size: sheetSize, UserID: userID, CreatedAt: time.Now(),
 Columns: sheetCols, RowCount: sheetRowCount, Source: "connection",
 })
@@ -577,7 +607,7 @@ if strings.HasSuffix(strings.ToLower(finalFilename), ".json") || strings.HasSuff
 		uploadedFile := UploadedFile{
 			ID:           fileID,
 			Filename:     finalFilename,
-			Path:         destPath,
+			Path:         storageKey,
 			Size:         size,
 			UserID:       userID,
 			CreatedAt:    time.Now(),
@@ -627,6 +657,9 @@ CreditsUsed: storageCost, CreatedAt: time.Now(),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	// Clean up local temp file
+	os.Remove(destPath)
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"file_id":   fileID,
 		"filename":  finalFilename,
@@ -685,7 +718,26 @@ func GetUploadedFilesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fallback: read from uploads directory
+	// Fallback: try storage backend first, then local
+if userID != "" {
+prefix := services.UserKey(userID, "uploads", "")
+keys, lerr := services.DefaultStorage.List(prefix)
+if lerr == nil && len(keys) > 0 {
+var sfiles []map[string]interface{}
+for _, key := range keys {
+sz, _ := services.DefaultStorage.Size(key)
+parts := strings.Split(filepath.Base(key), "_")
+fid := parts[0]
+fname := filepath.Base(key)
+if len(parts) > 1 { fname = strings.Join(parts[1:], "_") }
+sfiles = append(sfiles, map[string]interface{}{"file_id": fid, "filename": fname, "path": key, "size": sz})
+}
+w.Header().Set("Content-Type", "application/json")
+json.NewEncoder(w).Encode(map[string]interface{}{"files": sfiles})
+return
+}
+}
+// Local fallback: read from uploads directory
 	uploadDir := "./uploads"
 	entries, err := os.ReadDir(uploadDir)
 	if err != nil {
@@ -712,7 +764,7 @@ func GetUploadedFilesHandler(w http.ResponseWriter, r *http.Request) {
 			"filename":   filename,
 			"path":       filepath.Join(uploadDir, entry.Name()),
 			"size":       info.Size(),
-			"created_at": info.ModTime(),
+"created_at": info.ModTime(),
 		})
 	}
 
@@ -739,11 +791,23 @@ func DeleteFileHandler(w http.ResponseWriter, r *http.Request) {
 		DB.Where("source_file_id = ? AND user_id = ?", fileID, userID).Delete(&FineTunedModel{})
 	}
 
-	pattern := "./uploads/" + sanitizeFilename(fileID) + "_*"
-	matches, _ := filepath.Glob(pattern)
-	for _, match := range matches {
-		os.Remove(match)
-	}
+// Delete from cloud storage
+var delFile UploadedFile
+if DB != nil {
+if DB.Where("id = ? AND user_id = ?", fileID, userID).First(&delFile).Error == nil && delFile.Path != "" {
+if derr := services.DefaultStorage.Delete(delFile.Path); derr != nil {
+log.Printf("[STORAGE] Delete failed %s: %v", delFile.Path, derr)
+} else {
+log.Printf("[STORAGE] Deleted: %s", delFile.Path)
+}
+}
+}
+// Local fallback cleanup
+pattern := "./uploads/" + sanitizeFilename(fileID) + "_*"
+matches, _ := filepath.Glob(pattern)
+for _, match := range matches {
+os.Remove(match)
+}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
