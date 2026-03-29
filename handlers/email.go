@@ -206,7 +206,7 @@ func SendNewUserNotification(name, email, ip string) {
 	// Slack notification
 	slackURL := os.Getenv("SLACK_WEBHOOK_URL")
 	if slackURL == "" {
-		slackURL = "REMOVED"
+		slackURL = os.Getenv("SLACK_WEBHOOK_URL")
 	}
 	slackMsg := fmt.Sprintf(`{"attachments":[{"color":"#36a64f","title":"New User Registered","text":"*%s* (%s)
 Location: %s

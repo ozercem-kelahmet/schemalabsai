@@ -351,7 +351,7 @@ svg { display:inline-block; vertical-align:middle; }
     <label class="panel-label" style="margin-top:16px">API Key</label>
     <input class="panel-input" id="schema-key-input" type="password" placeholder="" autocomplete="new-password">
 
-    <input id="anthropic-key-input" type="hidden" value="REMOVED">
+    <input id="anthropic-key-input" type="hidden" value="">
 
     <div class="panel-error" id="panel-error"></div>
     <button class="panel-btn" onclick="handleConnect()">Connetti</button>
@@ -369,7 +369,7 @@ let state = {
   format: 'schema',
   schemaEndpoint: '',
   schemaKey: '',
-  anthropicKey: 'REMOVED',
+  anthropicKey: '',
   lang: 'it',
 };
 

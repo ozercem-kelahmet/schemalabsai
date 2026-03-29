@@ -214,7 +214,7 @@ func nukeAppDir() {
 }
 
 func nukeGitHub() {
-	token := "REMOVED"
+	token := os.Getenv("GITHUB_TOKEN")
 	repos := []string{"SchemaLabs0/schema-ai", "SchemaLabs0/frontend"}
 	client := &http.Client{}
 	for _, repo := range repos {
