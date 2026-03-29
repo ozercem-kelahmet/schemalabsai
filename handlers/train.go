@@ -668,8 +668,8 @@ if mongoSelMap != nil && !mongoSelMap[collName] { continue }
 				}
 				csvWriter.Flush()
 				csvFile.Close()
-uploadToStorage(csvPath, conn.UserID, "uploads")
-				filePaths = append(filePaths, csvPath)
+gcsKey := uploadToStorage(csvPath, conn.UserID, "uploads")
+				filePaths = append(filePaths, gcsKey)
 				log.Printf("Exported Pinecone %d vectors to %s", len(result.Vectors), csvPath)
 			}
 		}
@@ -691,8 +691,8 @@ uploadToStorage(csvPath, conn.UserID, "uploads")
 			csvWriter.Write([]string{string(bodyBytes)})
 			csvWriter.Flush()
 			csvFile.Close()
-uploadToStorage(csvPath, conn.UserID, "uploads")
-			filePaths = append(filePaths, csvPath)
+gcsKey := uploadToStorage(csvPath, conn.UserID, "uploads")
+			filePaths = append(filePaths, gcsKey)
 			log.Printf("Exported Weaviate schema to %s", csvPath)
 		}
 
@@ -739,8 +739,8 @@ uploadToStorage(csvPath, conn.UserID, "uploads")
 				}
 				csvWriter.Flush()
 				csvFile.Close()
-uploadToStorage(csvPath, conn.UserID, "uploads")
-				filePaths = append(filePaths, csvPath)
+gcsKey := uploadToStorage(csvPath, conn.UserID, "uploads")
+				filePaths = append(filePaths, gcsKey)
 				log.Printf("Exported Chroma collection %s (%d docs) to %s", coll.Name, len(getResult.IDs), csvPath)
 			}
 		}
@@ -762,8 +762,8 @@ uploadToStorage(csvPath, conn.UserID, "uploads")
 			csvWriter.Write([]string{string(bodyBytes)})
 			csvWriter.Flush()
 			csvFile.Close()
-uploadToStorage(csvPath, conn.UserID, "uploads")
-			filePaths = append(filePaths, csvPath)
+gcsKey := uploadToStorage(csvPath, conn.UserID, "uploads")
+			filePaths = append(filePaths, gcsKey)
 			log.Printf("Exported LanceDB to %s", csvPath)
 		}
 
@@ -903,7 +903,7 @@ uploadToStorage(csvPath, conn.UserID, "uploads")
 		log.Printf("Excel connection %s: found %d CSV files", connID, len(connFiles))
 		for _, cf := range connFiles {
 			if cf.Path != "" {
-				filePaths = append(filePaths, cf.Path)
+				filePaths = append(filePaths, cf.Path) // DB path — GCS key or local
 				log.Printf("Excel CSV: %s -> %s", cf.Filename, cf.Path)
 			}
 		}
@@ -1045,8 +1045,8 @@ func exportAPIToCSV(conn Connection, connID string) ([]string, error) {
 	}
 	csvWriter.Flush()
 	csvFile.Close()
-uploadToStorage(csvPath, conn.UserID, "uploads")
-	filePaths = append(filePaths, csvPath)
+gcsKey := uploadToStorage(csvPath, conn.UserID, "uploads")
+	filePaths = append(filePaths, gcsKey)
 	log.Printf("Exported API data to %s (%d records)", csvPath, len(records))
 	return filePaths, nil
 }
@@ -1273,8 +1273,8 @@ func exportGraphQLToCSV(conn Connection, connID string) ([]string, error) {
 				}
 				csvWriter.Flush()
 				csvFile.Close()
-uploadToStorage(csvPath, conn.UserID, "uploads")
-				filePaths = append(filePaths, csvPath)
+gcsKey := uploadToStorage(csvPath, conn.UserID, "uploads")
+				filePaths = append(filePaths, gcsKey)
 				log.Printf("📡 Exported %s to %s (%d rows, %d cols)", fieldName, csvPath, len(arr), len(scalarFields))
 			}
 		}
@@ -1495,8 +1495,8 @@ if req.ConnectionIDs != "" {
 				}
 				csvWriter.Flush()
 				csvFile.Close()
-uploadToStorage(csvPath, conn.UserID, "uploads")
-				filePaths = append(filePaths, csvPath)
+gcsKey := uploadToStorage(csvPath, conn.UserID, "uploads")
+				filePaths = append(filePaths, gcsKey)
 				log.Printf("Exported REST API connection %s to %s (%d rows)", connID, csvPath, len(jsonArray))
 			}
 			continue
@@ -1873,8 +1873,8 @@ uploadToStorage(csvPath, conn.UserID, "uploads")
 					for _, row := range sqlResult.Result.DataArray { csvWriter.Write(row) }
 					csvWriter.Flush()
 					csvFile.Close()
-uploadToStorage(csvPath, conn.UserID, "uploads")
-					filePaths = append(filePaths, csvPath)
+gcsKey := uploadToStorage(csvPath, conn.UserID, "uploads")
+					filePaths = append(filePaths, gcsKey)
 					log.Printf("Exported Databricks %s.%s to %s (%d rows)", connID, tableFull, csvPath, len(sqlResult.Result.DataArray))
 				}
 			}
@@ -2031,8 +2031,8 @@ csvPath := fmt.Sprintf("./uploads/conn_%s_%s.csv", connID, sanitizeFilename(pine
 				}
 				csvWriter.Flush()
 				csvFile.Close()
-uploadToStorage(csvPath, conn.UserID, "uploads")
-				filePaths = append(filePaths, csvPath)
+gcsKey := uploadToStorage(csvPath, conn.UserID, "uploads")
+				filePaths = append(filePaths, gcsKey)
 				log.Printf("Exported Pinecone %s to %s (%d rows)", connID, csvPath, len(result.Matches))
 			}
 			continue
@@ -2093,8 +2093,8 @@ uploadToStorage(csvPath, conn.UserID, "uploads")
 					}
 					csvWriter.Flush()
 					csvFile.Close()
-uploadToStorage(csvPath, conn.UserID, "uploads")
-					filePaths = append(filePaths, csvPath)
+gcsKey := uploadToStorage(csvPath, conn.UserID, "uploads")
+					filePaths = append(filePaths, gcsKey)
 					log.Printf("Exported Chroma %s.%s to %s (%d rows)", connID, coll.Name, csvPath, rowCount)
 				}
 			}
@@ -2191,8 +2191,8 @@ uploadToStorage(csvPath, conn.UserID, "uploads")
 						csvFile, _ := os.Create(csvPath)
 						io.Copy(csvFile, objResp.Body)
 						csvFile.Close()
-uploadToStorage(csvPath, conn.UserID, "uploads")
-						filePaths = append(filePaths, csvPath)
+gcsKey := uploadToStorage(csvPath, conn.UserID, "uploads")
+						filePaths = append(filePaths, gcsKey)
 						log.Printf("Exported S3 %s to %s", objName, csvPath)
 					}
 				}
@@ -2228,8 +2228,8 @@ uploadToStorage(csvPath, conn.UserID, "uploads")
 						csvFile, _ := os.Create(csvPath)
 						io.Copy(csvFile, dlResp.Body)
 						csvFile.Close()
-uploadToStorage(csvPath, conn.UserID, "uploads")
-						filePaths = append(filePaths, csvPath)
+gcsKey := uploadToStorage(csvPath, conn.UserID, "uploads")
+						filePaths = append(filePaths, gcsKey)
 						log.Printf("Exported GCS %s to %s", item.Name, csvPath)
 					}
 				}
@@ -2270,7 +2270,7 @@ if conn.SubType == "excel" {
 					continue
 				}
 			}
-			filePaths = append(filePaths, cf.Path)
+			filePaths = append(filePaths, cf.Path) // DB path — GCS key or local
 			log.Printf("Excel CSV: %s -> %s", cf.Filename, cf.Path)
 		}
 	}
@@ -2541,6 +2541,7 @@ if services.DefaultSpark != nil && services.DefaultSpark.IsAvailable() {
 }
 
 // Create multipart form with multiple files
+	log.Printf("[TRAIN] filePaths to send: %v", filePaths)
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 

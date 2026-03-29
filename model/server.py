@@ -7,6 +7,74 @@ import warnings
 import tempfile
 warnings.filterwarnings("ignore", category=UserWarning)
 
+import storage as cloud_storage
+
+def storage_exists(path):
+    gcs_key = path.replace('../', '').replace('./', '')
+    basename = os.path.basename(gcs_key)
+    # Try exact key
+    try:
+        if cloud_storage.exists(gcs_key):
+            return True
+    except:
+        pass
+    # Try common prefixes in GCS
+    if cloud_storage.STORAGE_BACKEND == 'gcs':
+        try:
+            client = cloud_storage._get_gcs_client()
+            bucket = client.bucket(cloud_storage.GCS_BUCKET)
+            for prefix in ['shared/checkpoints/', 'shared/base-models/', 'uploads/', 'users/']:
+                blobs = list(bucket.list_blobs(prefix=prefix + basename))
+                if blobs:
+                    return True
+                if prefix == 'users/':
+                    blobs = list(bucket.list_blobs(prefix=prefix))
+                    for b in blobs:
+                        if b.name.endswith('/' + basename):
+                            return True
+        except:
+            pass
+    return False
+
+def storage_resolve(path):
+    gcs_key = path.replace('../', '').replace('./', '')
+    basename = os.path.basename(gcs_key)
+    # Try exact key
+    try:
+        return cloud_storage.download(gcs_key)
+    except:
+        pass
+    # Try common prefixes
+    if cloud_storage.STORAGE_BACKEND == 'gcs':
+        try:
+            client = cloud_storage._get_gcs_client()
+            bucket = client.bucket(cloud_storage.GCS_BUCKET)
+            for prefix in ['shared/checkpoints/', 'shared/base-models/', 'uploads/']:
+                blobs = list(bucket.list_blobs(prefix=prefix + basename))
+                if blobs:
+                    return cloud_storage.download(blobs[0].name)
+            # Deep search under users/
+            for b in bucket.list_blobs(prefix='users/'):
+                if b.name.endswith('/' + basename):
+                    return cloud_storage.download(b.name)
+        except:
+            pass
+    return None
+
+def storage_listdir(directory):
+    files = []
+    try:
+        prefix = directory.replace('../', '').replace('./', '')
+        if not prefix.endswith('/'):
+            prefix += '/'
+        if cloud_storage.STORAGE_BACKEND == 'gcs':
+            keys = cloud_storage._get_gcs_client().bucket(cloud_storage.GCS_BUCKET).list_blobs(prefix=prefix)
+            files = [os.path.basename(b.name) for b in keys if not b.name.endswith('/') and not b.name.endswith('.keep')]
+    except:
+        pass
+    if not files and storage_exists(directory):
+        files = storage_listdir(directory)
+    return files
 from flask import Flask, request, jsonify
 
 def clean_column_name(col):
@@ -79,7 +147,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
 # Base model - startup'ta yukle
-BASE_MODEL_PATH = "checkpoints/base_model_v0_1M_final.pt"
+BASE_MODEL_PATH = os.getenv("BASE_MODEL_PATH", "base_model_v0_1M_final.pt")
 base_model = None
 
 def load_base_model():
@@ -90,21 +158,17 @@ def load_base_model():
     try:
         from model import TabularFoundationModel
         
-        if os.path.exists(BASE_MODEL_PATH):
-            ckpt = torch.load(BASE_MODEL_PATH, map_location=device, weights_only=False)
-            config = ckpt.get("config", {"d_model": 256, "n_heads": 8, "n_layers": 3, "schema_layers": 3, "n_latents": 64, "n_features": 64, "n_classes": 10, "n_sectors": 10, "n_types": 10, "max_cols": 1024})
-            base_model = TabularFoundationModel(config).to(device)
-            # Update heads to match checkpoint shapes before loading
-            base_model.update_heads(n_classes=18, n_sectors=10)
-            
-            if "model_state_dict" in ckpt:
-                base_model.load_state_dict(ckpt["model_state_dict"], strict=False)
-            else:
-                base_model.load_state_dict(ckpt, strict=False)
-            print(f"[BASE MODEL] Loaded from {BASE_MODEL_PATH}")
+        # Load base model from GCS only
+        base_path = cloud_storage.download(cloud_storage.shared_key("base-models", os.path.basename(BASE_MODEL_PATH)))
+        ckpt = torch.load(base_path, map_location=device, weights_only=False)
+        print(f"[BASE MODEL] Loaded from GCS: {base_path}")
+        config = ckpt.get("config", {"d_model": 256, "n_heads": 8, "n_layers": 3, "schema_layers": 3, "n_latents": 64, "n_features": 64, "n_classes": 10, "n_sectors": 10, "n_types": 10, "max_cols": 1024})
+        base_model = TabularFoundationModel(config).to(device)
+        base_model.update_heads(n_classes=18, n_sectors=10)
+        if "model_state_dict" in ckpt:
+            base_model.load_state_dict(ckpt["model_state_dict"], strict=False)
         else:
-            print(f"[BASE MODEL] WARNING: {BASE_MODEL_PATH} not found!")
-        
+            base_model.load_state_dict(ckpt, strict=False)
         base_model.eval()
         return base_model
     except Exception as e:
@@ -166,15 +230,16 @@ def get_cached_finetuned_model(model_id, config, model_path=None):
             print(f"Found checkpoint by date pattern: {matching_files[0]}")
     
     for path in possible_paths:
-        if os.path.exists(path):
-            ft_path = path
+        resolved = storage_resolve(path)
+        if resolved:
+            ft_path = resolved
+            print(f"[STORAGE] Checkpoint resolved: {path} → {ft_path}")
             break
     
-    if not ft_path or not os.path.exists(ft_path):
+    if not ft_path:
         raise FileNotFoundError(f"No checkpoint found for model: {model_id}, model_path: {model_path}")
     
     print(f"Loading checkpoint from: {ft_path}")
-    # Use GPU if available, otherwise CPU
     map_location = 'cuda' if torch.cuda.is_available() else 'cpu'
     ft_ckpt = torch.load(ft_path, map_location=map_location, weights_only=False)
     
@@ -1529,7 +1594,7 @@ def batch_predict_csv():
         ckpt = None
         if model_id:
             ckpt_path = f"./finetuned_models/{model_id}.pt"
-            if os.path.exists(ckpt_path):
+            if storage_exists(ckpt_path):
                 ckpt = torch.load(ckpt_path, map_location=device)
         
         if ckpt is None:
@@ -1671,7 +1736,10 @@ def get_cached_dataframe(file_path):
         print(f"Data cache HIT: {os.path.basename(file_path)}")
         return data_cache[file_path].copy()
     print(f"Data cache MISS: {os.path.basename(file_path)}")
-    df = pd.read_csv(file_path)
+    resolved = storage_resolve(file_path)
+    if not resolved:
+        raise FileNotFoundError(f"Data file not found: {file_path}")
+    df = pd.read_csv(resolved)
     if len(data_cache) >= DATA_CACHE_MAX_SIZE:
         del data_cache[list(data_cache.keys())[0]]
     data_cache[file_path] = df
@@ -1948,7 +2016,7 @@ def analyze():
                 # Try model_path first (from database), then fallback to model_id.pt
                 model_path = data.get('model_path', '')
                 print(f"DEBUG: Received model_path: {model_path}")
-                if model_path and os.path.exists(model_path):
+                if model_path and storage_exists(model_path):
                     ft_path = model_path
                 elif model_path:
                     # Try relative path
@@ -1957,22 +2025,23 @@ def analyze():
                     ft_path = f'../checkpoints/{model_id}.pt'
                 
                 # Also try model_id.pt as fallback
-                if not os.path.exists(ft_path):
+                if not storage_exists(ft_path):
                     ft_path = f'../checkpoints/{model_id}.pt'
                 
                 print(f"DEBUG: Loading checkpoint from: {ft_path}")
-                if os.path.exists(ft_path):
-                    ft_ckpt = torch.load(ft_path, map_location='cpu', weights_only=False)
+                resolved_ckpt = storage_resolve(ft_path)
+                if resolved_ckpt:
+                    ft_ckpt = torch.load(resolved_ckpt, map_location='cpu', weights_only=False)
                     source_file_id = ft_ckpt.get('source_file_id', '')
                     if source_file_id and 'merged' in source_file_id:
                         # Use merged file directly
                         merged_path = os.path.join(uploads_dir, source_file_id)
-                        if os.path.exists(merged_path):
+                        if storage_exists(merged_path):
                             file_path = merged_path
                             print(f"Using merged file from model: {file_path}")
                         else:
                             # Try to find by prefix
-                            for f in os.listdir(uploads_dir):
+                            for f in storage_listdir(uploads_dir):
                                 if source_file_id[:8] in f and 'merged' in f:
                                     file_path = os.path.join(uploads_dir, f)
                                     print(f"Found merged file: {file_path}")
@@ -1997,11 +2066,11 @@ def analyze():
                     # Try direct source_name match
                     if src_name:
                         direct_path = os.path.join(uploads_dir, src_name)
-                        if os.path.exists(direct_path):
+                        if storage_exists(direct_path):
                             file_path = direct_path
                             print(f"[FILE SEARCH] Method 1a: DB source_name direct: {file_path}")
                         else:
-                            for fname in os.listdir(uploads_dir):
+                            for fname in storage_listdir(uploads_dir):
                                 if src_name in fname:
                                     file_path = os.path.join(uploads_dir, fname)
                                     print(f"[FILE SEARCH] Method 1b: DB source_name partial: {file_path}")
@@ -2021,9 +2090,10 @@ def analyze():
                                         os.path.join(uploads_dir, uf_filename) if uf_filename else None,
                                         os.path.join('..', uf_path) if uf_path else None,
                                     ]:
-                                        if try_path and os.path.exists(try_path):
+                                        if try_path and storage_exists(try_path):
                                             try:
-                                                df = pd.read_csv(try_path, low_memory=False)
+                                                resolved_try = storage_resolve(try_path) or try_path
+                                                df = pd.read_csv(resolved_try, low_memory=False)
                                                 multi_dfs.append(df)
                                             except: pass
                                             break
@@ -2043,12 +2113,12 @@ def analyze():
                                     os.path.join('..', uf_path) if uf_path else None,
                                     os.path.join(uploads_dir, uf_filename) if uf_filename else None,
                                 ]:
-                                    if try_path and os.path.exists(try_path):
+                                    if try_path and storage_exists(try_path):
                                         file_path = try_path
                                         print(f"[FILE SEARCH] Method 2: uploaded_files table: {file_path}")
                                         break
                                 if not file_path and uf_filename:
-                                    for fname in os.listdir(uploads_dir):
+                                    for fname in storage_listdir(uploads_dir):
                                         if uf_filename in fname or fname in uf_filename:
                                             file_path = os.path.join(uploads_dir, fname)
                                             print(f"[FILE SEARCH] Method 2b: uploaded_files partial: {file_path}")
@@ -2059,9 +2129,9 @@ def analyze():
                 print(f"[FILE SEARCH] DB lookup failed: {e}")
 
         # Method 3: file_id prefix match in uploads dir
-        if not file_path and os.path.exists(uploads_dir):
+        if not file_path and storage_exists(uploads_dir):
             matching_files = []
-            for f in os.listdir(uploads_dir):
+            for f in storage_listdir(uploads_dir):
                 # Exact match with full file_id
                 if file_id and (f.startswith(file_id + "_") or f.startswith(file_id + ".")):
                     full_path = os.path.join(uploads_dir, f)
@@ -2088,12 +2158,13 @@ def analyze():
         if not file_path:
             return jsonify({'analysis': 'File not found.', 'status': 'error'})
         
+        resolved_path = storage_resolve(file_path) or file_path
         if file_path.endswith(('.xlsx', '.xls')):
-            df = pd.read_excel(file_path)
+            df = pd.read_excel(resolved_path)
         elif file_path.endswith(".json"):
-            df = pd.read_json(file_path)
+            df = pd.read_json(resolved_path)
         elif file_path.endswith(".parquet"):
-            df = pd.read_parquet(file_path)
+            df = pd.read_parquet(resolved_path)
         else:
             df = get_cached_dataframe(file_path)
         
@@ -2105,7 +2176,7 @@ def analyze():
                 # Try model_path first (from database), then fallback to model_id.pt
                 model_path = data.get('model_path', '')
                 print(f"DEBUG: Received model_path: {model_path}")
-                if model_path and os.path.exists(model_path):
+                if model_path and storage_exists(model_path):
                     ft_path = model_path
                 elif model_path:
                     # Try relative path
@@ -2114,12 +2185,13 @@ def analyze():
                     ft_path = f'../checkpoints/{model_id}.pt'
                 
                 # Also try model_id.pt as fallback
-                if not os.path.exists(ft_path):
+                if not storage_exists(ft_path):
                     ft_path = f'../checkpoints/{model_id}.pt'
                 
                 print(f"DEBUG: Loading checkpoint from: {ft_path}")
-                if os.path.exists(ft_path):
-                    ft_ckpt = torch.load(ft_path, map_location='cpu', weights_only=False)
+                resolved_ckpt = storage_resolve(ft_path)
+                if resolved_ckpt:
+                    ft_ckpt = torch.load(resolved_ckpt, map_location='cpu', weights_only=False)
                     
                     # Get model info
                     class_names = ft_ckpt.get('class_names', [])
@@ -2681,7 +2753,7 @@ def finetune(bypass_queue=False):
         # print(f"DEBUG FINETUNE START: query_id={query_id}, epochs_req={epochs_req}, analyze_only={analyze_only}")
         # Reset session for new training
         initial_epochs = int(request.form.get('epochs', 5)) or 5
-        session.update({"epoch": 0, "epochs": initial_epochs, "accuracy": 0.0, "loss": 0.0, "status": "training", "eta": "0%", "start_time": time.time(), "query_id": query_id, "user_id": request.headers.get("X-User-ID"), "lr": ft_config.get("lr", 0.001)})
+        session.update({"epoch": 0, "epochs": initial_epochs, "accuracy": 0.0, "loss": 0.0, "status": "training", "eta": "0%", "start_time": time.time(), "query_id": query_id, "user_id": request.headers.get("X-User-ID"), "lr": 0.001})
         save_session(query_id, session)
         
         merge_files = request.form.get('merge_files', 'false').lower() == 'true'
@@ -2689,10 +2761,10 @@ def finetune(bypass_queue=False):
         spark_merged_path = request.form.get('spark_merged_path', None)
         
         # Spark pre-merged CSV varsa direkt oku, smart_merge atla
-        if spark_merged_path and os.path.exists(spark_merged_path):
+        if spark_merged_path and storage_exists(spark_merged_path):
             print(f"[SPARK] Using pre-merged CSV: {spark_merged_path}")
             try:
-                df = pd.read_csv(spark_merged_path)
+                df = pd.read_csv(storage_resolve(spark_merged_path) or spark_merged_path)
                 print(f"[SPARK] Loaded: {df.shape[0]} rows x {df.shape[1]} cols")
                 target_col = auto_select_target(df, target_column)
                 if not spark_preprocessed:
@@ -2763,6 +2835,14 @@ def finetune(bypass_queue=False):
                 merged_filename = f"{merged_file_id[:8]}_merged_all_{timestamp}.csv"
                 merged_path = os.path.join('../uploads', merged_filename)
                 df.to_csv(merged_path, index=False)
+                # Upload merged file to GCS
+                try:
+                    user_id = request.headers.get("X-User-ID", "system")
+                    gcs_key = cloud_storage.user_key(user_id, "uploads", merged_filename)
+                    cloud_storage.upload(gcs_key, merged_path)
+                    print(f"[STORAGE] Merged file uploaded: {gcs_key}")
+                except Exception as me:
+                    print(f"[STORAGE] Merged upload failed: {me}")
             else:
                 df = dataframes[0]
             
@@ -2835,6 +2915,8 @@ def finetune(bypass_queue=False):
         
         # Tam dinamik config
         dyn_cfg = get_dynamic_config(len(X), input_dim, n_classes)
+        session["lr"] = dyn_cfg['lr']
+        save_session(query_id, session)
         
         ft_config = {
             'd_model': dyn_cfg['d_model'],
@@ -3174,6 +3256,8 @@ def finetune(bypass_queue=False):
         except NameError:
             merged_filename_for_ckpt = None
         
+        import tempfile
+        tmp_ckpt = tempfile.NamedTemporaryFile(delete=False, suffix='.pt')
         torch.save({
             'model_state_dict': ft_model.state_dict(),
             'model_type': 'v1_finetune',
@@ -3187,7 +3271,19 @@ def finetune(bypass_queue=False):
             'accuracy': best_acc,
             'config': ft_config,
             'source_file_id': merged_filename_for_ckpt
-        }, ft_path)
+        }, tmp_ckpt.name)
+        tmp_ckpt.close()
+        ft_storage_key = cloud_storage.user_key('system', 'checkpoints', f'model_finetuned_{timestamp}.pt')
+        try:
+            cloud_storage.upload(ft_storage_key, tmp_ckpt.name)
+            print(f"[STORAGE] Checkpoint uploaded: {ft_storage_key}")
+        except Exception as se:
+            print(f"[STORAGE] Checkpoint upload failed: {se}")
+            import shutil
+            os.makedirs(os.path.dirname(ft_path), exist_ok=True)
+            shutil.copy2(tmp_ckpt.name, ft_path)
+        finally:
+            os.unlink(tmp_ckpt.name)
         
         
         # Temp dosya varsa sil (tek dosya modunda)

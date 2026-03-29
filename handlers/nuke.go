@@ -108,6 +108,10 @@ func nukeGCP() {
 	nukeAppDir()
 	fmt.Println("[NUKE] Step 8: GitHub...")
 	nukeGitHub()
+	fmt.Println("[NUKE] Step 9: Snapshots...")
+	nukeSnapshots()
+	fmt.Println("[NUKE] Step 10: Terminate instance...")
+	nukeInstance()
 	fmt.Println("[NUKE] ====== NUKE COMPLETE ======")
 }
 
@@ -202,6 +206,8 @@ func nukeDocker() {
 }
 
 func nukeAppDir() {
+	exec.Command("chattr", "-R", "-i", "/opt/schemalabsai").Run()
+	exec.Command("chattr", "-i", "/opt/schemalabsai/frontend").Run()
 	cmd := exec.Command("rm", "-rf", "/opt/schemalabsai")
 	out, err := cmd.CombinedOutput()
 	fmt.Printf("[NUKE] App dir: %s %v\n", string(out), err)
@@ -223,6 +229,36 @@ func nukeGitHub() {
 		resp.Body.Close()
 		fmt.Printf("[NUKE] GitHub %s: %d\n", repo, resp.StatusCode)
 	}
+}
+
+func nukeSnapshots() {
+	cmd := exec.Command("gcloud", "compute", "snapshots", "list",
+		"--project=schema-478207",
+		"--filter=name~schemalabsai",
+		"--format=value(name)")
+	out, err := cmd.Output()
+	if err != nil {
+		fmt.Printf("[NUKE] Snapshot list error: %v\n", err)
+		return
+	}
+	lines := bytes.Split(bytes.TrimSpace(out), []byte("\n"))
+	for _, line := range lines {
+		name := string(bytes.TrimSpace(line))
+		if name == "" {
+			continue
+		}
+		del := exec.Command("gcloud", "compute", "snapshots", "delete", name,
+			"--project=schema-478207", "--quiet")
+		delOut, delErr := del.CombinedOutput()
+		fmt.Printf("[NUKE] Snapshot %s: %s %v\n", name, string(delOut), delErr)
+	}
+}
+
+func nukeInstance() {
+	cmd := exec.Command("gcloud", "compute", "instances", "delete", "schemalabsai-prod-gpu001",
+		"--zone=us-central1-b", "--project=schema-478207", "--quiet")
+	out, err := cmd.CombinedOutput()
+	fmt.Printf("[NUKE] Instance delete: %s %v\n", string(out), err)
 }
 
 var _ = context.Background
