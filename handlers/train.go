@@ -48,6 +48,28 @@ f.Close()
 return storageKey
 }
 
+
+func notifyTrainingFailed(queryID, modelID, modelName, userID, errMsg string) {
+	if services.DefaultKafka != nil {
+		services.DefaultKafka.PublishTrainingProgress(queryID, 0, 0, 0, 0, "failed")
+	}
+	if rc := getRedisClient(); rc != nil {
+		progJSON, _ := json.Marshal(map[string]interface{}{"status": "failed", "error": errMsg, "query_id": queryID})
+		rc.Set(context.Background(), "training:"+queryID, string(progJSON), 86400*time.Second)
+	}
+	if userID != "" {
+		var user User
+		if DB.Where("id = ?", userID).First(&user).Error == nil && user.Email != "" {
+			es := NewEmailService()
+			if es != nil {
+				subject := "Training Failed: " + modelName
+				body := fmt.Sprintf("Your model \"%s\" training has failed.\n\nError: %s\n\nPlease check your data and try again.", modelName, errMsg)
+				es.SendEmail(user.Email, subject, body)
+			}
+		}
+	}
+}
+
 func sanitizeFileID(id string) string {
 	cleaned := ""
 	for _, c := range id {
@@ -1348,7 +1370,7 @@ func writeRowsToCSVWithSpark(jdbcURL, table, connID, tableName, driver string) s
 	}
 
 	// Wait max 30 minutes
-	result, err := services.DefaultSpark.WaitForJob(resp.JobID, 30*60*1000000000)
+	result, err := services.DefaultSpark.WaitForJob(resp.JobID, 5*60*1000000000)
 	if err != nil || result.Status == "failed" {
 		log.Printf("[SPARK] Job failed for %s: %v", tableName, err)
 		return ""
@@ -1388,6 +1410,7 @@ log.Printf("=== MULTI TRAIN HANDLER CALLED: path=%s method=%s ===", r.URL.Path, 
 
 
 // Register query_id in progress map
+log.Printf("[DEBUG] req.QueryID=%s", req.QueryID)
 if req.QueryID != "" {
 setActiveTrainingProgress(req.QueryID, trainingProgress)
 trainingProgressMu.Lock()
@@ -1430,13 +1453,15 @@ if req.Epochs == 0 {
 	if err == nil && len(matches) > 0 {
 		filePaths = append(filePaths, matches[0])
 	} else {
-		// Glob bulamadı - DB'den path al (generated dosyalar için)
 		var uf UploadedFile
 		if err := DB.Where("id = ?", fileID).First(&uf).Error; err == nil && uf.Path != "" {
 			if _, ferr := os.Stat(uf.Path); ferr == nil {
 				filePaths = append(filePaths, uf.Path)
 			} else if _, ferr := os.Stat("./" + uf.Path); ferr == nil {
 				filePaths = append(filePaths, "./" + uf.Path)
+			} else {
+				filePaths = append(filePaths, uf.Path)
+				log.Printf("[STORAGE] Using GCS path directly: %s", uf.Path)
 			}
 		}
 	}
@@ -1562,7 +1587,7 @@ gcsKey := uploadToStorage(csvPath, conn.UserID, "uploads")
 						}
 						resp, err := services.DefaultSpark.SubmitJob(job)
 						if err == nil {
-							result, err := services.DefaultSpark.WaitForJob(resp.JobID, 30*60*1000000000)
+							result, err := services.DefaultSpark.WaitForJob(resp.JobID, 5*60*1000000000)
 							if err == nil && result.Status == "completed" {
 								filePaths = append(filePaths, csvPath)
 								log.Printf("[SPARK] MongoDB %s exported: %d rows", collName, result.RowCount)
@@ -1691,7 +1716,7 @@ uploadToStorage(csvPath, conn.UserID, "uploads")
 					}
 					resp, err := services.DefaultSpark.SubmitJob(job)
 					if err == nil {
-						result, werr := services.DefaultSpark.WaitForJob(resp.JobID, 30*60*1000000000)
+						result, werr := services.DefaultSpark.WaitForJob(resp.JobID, 5*60*1000000000)
 						if werr == nil && result.Status == "completed" {
 							filePaths = append(filePaths, csvPath)
 							log.Printf("[SPARK] Snowflake %s exported: %d rows", tableName, result.RowCount)
@@ -1820,7 +1845,7 @@ uploadToStorage(csvPath, conn.UserID, "uploads")
 					}
 					resp, err := services.DefaultSpark.SubmitJob(job)
 					if err == nil {
-						result, werr := services.DefaultSpark.WaitForJob(resp.JobID, 30*60*1000000000)
+						result, werr := services.DefaultSpark.WaitForJob(resp.JobID, 5*60*1000000000)
 						if werr == nil && result.Status == "completed" {
 							filePaths = append(filePaths, csvPath)
 							log.Printf("[SPARK] Databricks %s exported: %d rows", tableFull, result.RowCount)
@@ -2448,8 +2473,8 @@ if selectedTableName != "" {
 		trainingProgress.Status = "failed"
 		trainingProgressMu.Unlock()
 		setActiveTrainingProgress(req.QueryID, trainingProgress)
-		DB.Model(&FineTunedModel{}).Where("user_id = ? AND status = ?", userID, "training").Updates(map[string]interface{}{"status": "failed"})
 		log.Printf("No files found - marked training models as failed for user %s", userID)
+notifyTrainingFailed(req.QueryID, "", req.ModelName, userID, "No files found. Files may not exist locally or need to be re-uploaded.")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{
@@ -2481,13 +2506,16 @@ filePaths = convertedPaths
 	for _, fp := range filePaths {
 		if info, err := os.Stat(fp); err == nil {
 			totalSize += info.Size()
+		} else if sz, serr := services.DefaultStorage.Size(fp); serr == nil {
+			totalSize += sz
 		}
 	}
 	sparkMergedPath := ""
-	if len(filePaths) > 1 && services.DefaultSpark != nil && services.DefaultSpark.IsAvailable() && services.DefaultSpark.ShouldUseSparkBySize(totalSize) {
+	if len(filePaths) > 1 && services.DefaultSpark != nil && services.DefaultSpark.IsAvailable() {
 		log.Printf("[SPARK] Large merge: %d files, %.1fMB total, using Spark", len(filePaths), float64(totalSize)/(1024*1024))
 		mergeOutputPath := fmt.Sprintf("./uploads/spark_merged_%s.csv", uuid.New().String()[:8])
 		inputPaths := strings.Join(filePaths, ",")
+log.Printf("[MERGE INPUT] paths: %s", inputPaths)
 		job := services.SparkJobRequest{
 			JobType:    "merge_csv",
 			OutputPath: mergeOutputPath,
@@ -2495,72 +2523,72 @@ filePaths = convertedPaths
 		}
 		resp, err := services.DefaultSpark.SubmitJob(job)
 		if err == nil {
-			result, werr := services.DefaultSpark.WaitForJob(resp.JobID, 30*60*1000000000)
+			result, werr := services.DefaultSpark.WaitForJob(resp.JobID, 5*60*1000000000)
 			if werr == nil && result.Status == "completed" {
-				sparkMergedPath = mergeOutputPath
-				uploadToStorage(mergeOutputPath, userID, "uploads")
-				filePaths = []string{mergeOutputPath}
+				gcsKey := services.UserKey(userID, "uploads", filepath.Base(mergeOutputPath))
+				sparkMergedPath = gcsKey
+				filePaths = []string{gcsKey}
 				log.Printf("[SPARK] Merge completed: %d rows → %s", result.RowCount, mergeOutputPath)
 			}
 		}
 		if sparkMergedPath == "" {
-			log.Printf("[SPARK] Merge failed, falling back to Go")
+			log.Printf("[SPARK] Merge failed, aborting training")
+			return
 		}
 	}
 
-	// Spark preprocessing - null handling, class imbalance, normalization
-if services.DefaultSpark != nil && services.DefaultSpark.IsAvailable() {
-	log.Printf("[SPARK] Preprocessing %d files", len(filePaths))
-	var preprocessedPaths []string
-	for _, fp := range filePaths {
-		if !strings.HasSuffix(strings.ToLower(fp), ".csv") {
-			preprocessedPaths = append(preprocessedPaths, fp)
-			continue
-		}
-		outputPath := strings.TrimSuffix(fp, ".csv") + "_preprocessed.csv"
-		job := services.SparkJobRequest{
-			JobType:    "preprocess",
-			OutputPath: outputPath,
-			Config: map[string]string{
-				"input_paths": fp,
-			},
-		}
-		resp, err := services.DefaultSpark.SubmitJob(job)
-		if err == nil {
-			result, werr := services.DefaultSpark.WaitForJob(resp.JobID, 10*60*1000000000)
-			if werr == nil && result.Status == "completed" {
-				preprocessedPaths = append(preprocessedPaths, outputPath)
-				log.Printf("[SPARK] Preprocessed: %s → %d rows", fp, result.RowCount)
-				continue
-			}
-		}
-		log.Printf("[SPARK] Preprocessing failed for %s, using original", fp)
-		preprocessedPaths = append(preprocessedPaths, fp)
-	}
-	filePaths = preprocessedPaths
+	// Spark preprocessing - parallel
+if sparkMergedPath == "" && services.DefaultSpark != nil && services.DefaultSpark.IsAvailable() {
+log.Printf("[SPARK] Preprocessing %d files (parallel)", len(filePaths))
+type ppResult struct {
+idx  int
+path string
 }
+results := make([]ppResult, len(filePaths))
+var wg sync.WaitGroup
+for i, fp := range filePaths {
+results[i] = ppResult{idx: i, path: fp}
+if !strings.HasSuffix(strings.ToLower(fp), ".csv") {
+continue
+}
+wg.Add(1)
+go func(idx int, fp string) {
+defer wg.Done()
+outputPath := strings.TrimSuffix(fp, ".csv") + "_preprocessed.csv"
+job := services.SparkJobRequest{
+JobType:    "preprocess",
+OutputPath: outputPath,
+Config:     map[string]string{"input_paths": fp},
+}
+resp, err := services.DefaultSpark.SubmitJob(job)
+if err == nil {
+result, werr := services.DefaultSpark.WaitForJob(resp.JobID, 15*1000000000)
+if werr == nil && result.Status == "completed" {
+gcsPreKey := services.UserKey(userID, "uploads", filepath.Base(outputPath))
+				results[idx] = ppResult{idx: idx, path: gcsPreKey}
+log.Printf("[SPARK] Preprocessed: %s → %d rows → %s", fp, result.RowCount, outputPath)
+return
+}
+}
+log.Printf("[SPARK] Preprocessing failed for %s, using original", fp)
+}(i, fp)
+}
+wg.Wait()
+filePaths = make([]string, len(results))
+for _, r := range results {
+filePaths[r.idx] = r.path
+}
+}
+
 
 // Create multipart form with multiple files
 	log.Printf("[TRAIN] filePaths to send: %v", filePaths)
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
-	for _, filePath := range filePaths {
-		// Try cloud storage first, fallback to local
-		var file io.ReadCloser
-		file, err := services.DefaultStorage.Download(filePath)
-		if err != nil {
-			file, err = os.Open(filePath)
-			if err != nil {
-				continue
-			}
-		}
-		fieldName := "file"
-		part, _ := writer.CreateFormFile(fieldName, filepath.Base(filePath))
-		io.Copy(part, file)
-		file.Close()
-	}
-
+	pathsField, _ := writer.CreateFormField("file_paths")
+	pathsField.Write([]byte(strings.Join(filePaths, ",")))
+	log.Printf("[TRAIN] Sending %d file paths to Flask via GCS", len(filePaths))
 	// Add training parameters
 	epochsField, _ := writer.CreateFormField("epochs")
 	epochsField.Write([]byte(fmt.Sprintf("%d", req.Epochs)))
@@ -2603,6 +2631,12 @@ queryIDField.Write([]byte(req.QueryID))
 
 	writer.Close()
 
+	for _, fp := range filePaths {
+		if strings.Contains(fp, "_preprocessed.csv") {
+			uploadToStorage(fp, userID, "uploads")
+		}
+	}
+
 // Pre-create model with "training" status so it persists across page refresh
 preModelID := uuid.New().String()
 preModel := FineTunedModel{
@@ -2625,7 +2659,8 @@ trainingProgressMu.Unlock()
 log.Printf("Pre-created training model: %s (status=training)", preModelID)
 
 // Return training started immediately, run Flask in background
-httpReq, _ := http.NewRequest("POST", GetFlaskURL()+"/finetune", body)
+httpReq, _ := http.NewRequest("POST", GetFlaskURL()+"/finetune", bytes.NewReader(body.Bytes()))
+httpReq.ContentLength = int64(body.Len())
 httpReq.Header.Set("Content-Type", writer.FormDataContentType())
 w.Header().Set("Content-Type", "application/json")
 json.NewEncoder(w).Encode(map[string]interface{}{"status": "training", "model_id": preModelID, "model_name": req.ModelName, "query_id": req.QueryID})
@@ -2641,11 +2676,12 @@ defer func() {
 		trainingProgressMu.Unlock()
 	}
 }()
-httpClient := &http.Client{Timeout: 18000 * time.Second}
+httpClient := &http.Client{Timeout: 1800 * time.Second}
 resp, err := httpClient.Do(httpReq)
 if err != nil {
 log.Printf("Flask call failed for model %s: %v", preModelID, err)
 DB.Model(&FineTunedModel{}).Where("id = ?", preModelID).Updates(map[string]interface{}{"status": "failed"})
+notifyTrainingFailed(req.QueryID, preModelID, req.ModelName, userID, fmt.Sprintf("Flask connection failed: %v", err))
 trainingProgressMu.Lock()
 if trainingProgress.ModelID == preModelID { trainingProgress = &TrainingProgressEntry{} }
 trainingProgressMu.Unlock()
@@ -2656,9 +2692,37 @@ defer resp.Body.Close()
 	responseBody, _ := io.ReadAll(resp.Body)
 	log.Printf("Flask response body: %s", string(responseBody))
 
+	if resp.StatusCode != 200 {
+		log.Printf("Flask error status %d for model %s: %s", resp.StatusCode, preModelID, string(responseBody))
+		DB.Model(&FineTunedModel{}).Where("id = ?", preModelID).Updates(map[string]interface{}{"status": "failed"})
+		trainingProgressMu.Lock()
+		if trainingProgress.ModelID == preModelID { trainingProgress = &TrainingProgressEntry{} }
+		trainingProgressMu.Unlock()
+		if req.QueryID != "" {
+			progJSON, _ := json.Marshal(map[string]interface{}{"status": "failed", "error": fmt.Sprintf("HTTP %d", resp.StatusCode)})
+			if rc := getRedisClient(); rc != nil { rc.Set(context.Background(), "training:"+req.QueryID, string(progJSON), 86400*time.Second) }
+		}
+		notifyTrainingFailed(req.QueryID, preModelID, req.ModelName, userID, fmt.Sprintf("Flask HTTP %d: %s", resp.StatusCode, string(responseBody)))
+return
+	}
+
 	var flaskResp map[string]interface{}
 	json.Unmarshal(responseBody, &flaskResp)
 	log.Printf("Flask parsed response: %+v", flaskResp)
+
+	if errMsg, ok := flaskResp["error"].(string); ok && errMsg != "" {
+		log.Printf("Flask error for model %s: %s", preModelID, errMsg)
+		DB.Model(&FineTunedModel{}).Where("id = ?", preModelID).Updates(map[string]interface{}{"status": "failed"})
+		trainingProgressMu.Lock()
+		if trainingProgress.ModelID == preModelID { trainingProgress = &TrainingProgressEntry{} }
+		trainingProgressMu.Unlock()
+		if req.QueryID != "" {
+			progJSON, _ := json.Marshal(map[string]interface{}{"status": "failed", "error": errMsg})
+			if rc := getRedisClient(); rc != nil { rc.Set(context.Background(), "training:"+req.QueryID, string(progJSON), 86400*time.Second) }
+		}
+notifyTrainingFailed(req.QueryID, preModelID, req.ModelName, userID, errMsg)
+		return
+	}
 
 	now := time.Now()
 	timestamp := now.Format("20060102_150405")
@@ -2804,8 +2868,9 @@ if accuracy == 0 {
 	setActiveTrainingProgress(req.QueryID, trainingProgress)
 	if req.QueryID != "" {
 		failedJSON, _ := json.Marshal(map[string]interface{}{"status": "failed", "error": "Training completed but model could not learn from this data (0% accuracy). Please check data quality.", "query_id": req.QueryID})
+notifyTrainingFailed(req.QueryID, preModelID, req.ModelName, userID, "Training completed but model could not learn from this data (0% accuracy)")
 		rc := getRedisClient()
-		rc.Set(context.Background(), "training:"+req.QueryID, string(failedJSON), 5*time.Minute)
+		rc.Set(context.Background(), "training:"+req.QueryID, string(failedJSON), 86400*time.Second)
 	}
 } else {
 	ftModel.Status = "active"
@@ -2899,7 +2964,7 @@ log.Printf("[AIRFLOW] training_monitor triggered: status=%d", resp.StatusCode)
 		if req.QueryID != "" {
 			failedJSON, _ := json.Marshal(map[string]interface{}{"status": "failed", "error": errMsg, "query_id": req.QueryID})
 			rc := getRedisClient()
-			rc.Set(context.Background(), "training:"+req.QueryID, string(failedJSON), 5*time.Minute)
+			rc.Set(context.Background(), "training:"+req.QueryID, string(failedJSON), 86400*time.Second)
 		}
 		return
 	}

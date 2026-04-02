@@ -51,6 +51,10 @@ def get_spark():
                     .config("spark.driver.memory", SPARK_MEMORY) \
                     .config("spark.sql.shuffle.partitions", "8") \
                     .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
+                    .config("spark.jars", "/opt/gcs-connector-hadoop3-shaded.jar") \
+                    .config("spark.hadoop.fs.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem") \
+                    .config("spark.hadoop.fs.AbstractFileSystem.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS") \
+                    .config("spark.hadoop.google.cloud.auth.type", "COMPUTE_ENGINE") \
                     .getOrCreate()
                 _spark.sparkContext.setLogLevel("WARN")
                 log.info(f"Spark initialized: master={SPARK_MASTER}")
@@ -92,7 +96,7 @@ def get_job(job_id):
 
 def run_job(job_id, req):
     try:
-        job_type = req.get("job_type", "")
+        job_type = req.get("job_type", ""); log.info(f"[JOB] type={job_type} id={job_id}"); log.info(f"[JOB] type={job_type} id={job_id}")
         conn_type = req.get("conn_type", "")
         output_path = req.get("output_path", f"{UPLOAD_DIR}/{job_id}_output.csv")
         config = req.get("config", {})
@@ -161,7 +165,7 @@ def run_job(job_id, req):
         # CSV merge job
         elif job_type == "merge_csv":
             input_paths = config.get("input_paths", "").split(",")
-            input_paths = [resolve_path(p.strip()) for p in input_paths if p.strip()]
+            input_paths = [p.strip() for p in input_paths if p.strip()]
             row_count = merge_csvs_with_spark(spark, input_paths, output_path)
             jobs[job_id] = {
                 "status": "completed",
@@ -175,7 +179,12 @@ def run_job(job_id, req):
         elif job_type == "preprocess":
             input_paths = config.get("input_paths", config.get("input_path", ""))
             target_col = config.get("target_col", None)
-            paths = [resolve_path(p.strip()) for p in input_paths.split(",") if p.strip()]
+            from concurrent.futures import ThreadPoolExecutor
+            raw_paths = [p.strip() for p in input_paths.split(",") if p.strip()]
+            with ThreadPoolExecutor(max_workers=12) as pool:
+                paths = list(pool.map(resolve_path, raw_paths))
+            paths = [p for p in paths if p]
+            log.info(f"[PREPROCESS] Parallel downloaded {len(paths)} files")
             dfs = []
             for p in paths:
                 try:
@@ -190,7 +199,7 @@ def run_job(job_id, req):
                 return
             if len(dfs) > 1:
                 from functools import reduce
-                df = reduce(lambda a, b: a.unionByName(b, allowMissingColumns=True), dfs)
+                import pandas as pd; df = spark.createDataFrame(pd.concat([x.toPandas() for x in dfs], ignore_index=True))
             else:
                 df = dfs[0]
             df = preprocess_dataframe(df, target_col)
@@ -199,22 +208,13 @@ def run_job(job_id, req):
             jobs[job_id] = {"status": "failed", "error": f"Unknown job_type: {job_type}"}
             return
 
-        row_count = df.count()
+        row_count = -1
         
-        # CSV olarak yaz - tek dosya
-        local_tmp_dir = f"/tmp/spark_{job_id}_tmp"
-        df.coalesce(1).write \
-            .mode("overwrite") \
-            .option("header", "true") \
-            .csv(local_tmp_dir)
-        
-        # Spark parça dosyaları birleştir
-        import glob, shutil
-        parts = glob.glob(local_tmp_dir + "/part-*.csv")
-        if parts:
-            local_output = f"/tmp/spark_output_{job_id}.csv"
-            shutil.copy(parts[0], local_output)
-            shutil.rmtree(local_tmp_dir)
+        import pandas as pd, shutil
+        local_output = f"/tmp/spark_output_{job_id}.csv"
+        df.toPandas().to_csv(local_output, index=False)
+        if True:
+            pass
             # Upload to GCS
             try:
                 from google.cloud import storage as gcs_lib
@@ -238,7 +238,7 @@ def run_job(job_id, req):
         }
 
     except Exception as e:
-        log.error(f"Job {job_id} failed: {e}")
+        import traceback; tb = traceback.format_exc(); log.error(f"Job {job_id} failed: {e}\n{tb}"); open("/tmp/last_error.txt","w").write(tb)
         jobs[job_id] = {"status": "failed", "job_id": job_id, "error": str(e)}
 
 if __name__ == "__main__":
@@ -246,43 +246,78 @@ if __name__ == "__main__":
 
 # Merge job - birden fazla CSV'yi Spark ile merge et
 def merge_csvs_with_spark(spark, input_paths, output_path):
-    dfs = []
-    for path in input_paths:
-        try:
-            df = spark.read \
-                .option("header", "true") \
-                .option("inferSchema", "true") \
-                .option("multiLine", "true") \
-                .option("escape", '"') \
-                .csv(path)
-            df = sanitize_columns(df)
-            dfs.append(df)
-            log.info(f"Loaded {path}: {df.count()} rows")
-        except Exception as e:
-            log.error(f"Failed to load {path}: {e}")
-    
-    if not dfs:
-        return 0
-    
-    # UNION ALL ile merge
-    from functools import reduce
-    merged = reduce(lambda a, b: a.unionByName(b, allowMissingColumns=True), dfs)
-    row_count = merged.count()
-    
-    merged.coalesce(1).write \
-        .mode("overwrite") \
-        .option("header", "true") \
-        .csv(output_path + "_tmp")
-    
-    import glob, shutil
-    parts = glob.glob(output_path + "_tmp/part-*.csv")
-    if parts:
-        shutil.copy(parts[0], output_path)
-        shutil.rmtree(local_tmp_dir)
-    
-    log.info(f"Merged {len(dfs)} files: {row_count} rows → {output_path}")
-    return row_count
+    import time as _time
+    import pandas as pd
+    from concurrent.futures import ThreadPoolExecutor
+    _t0 = _time.time()
+    GCS_BUCKET = os.getenv("GCS_BUCKET", "schemalabs-prod-us-central1")
+    from google.cloud import storage as gcs_lib
+    client = gcs_lib.Client()
+    bucket = client.bucket(GCS_BUCKET)
+    SPARK_SIZE_MB = 50
 
+    def dl(p):
+        key = p.replace("./", "").replace("../", "")
+        local = f"/tmp/spark_merge_{os.path.basename(key)}"
+        bucket.blob(key).download_to_filename(local)
+        return local
+
+    local_files = []
+    with ThreadPoolExecutor(max_workers=12) as ex:
+        futures = {ex.submit(dl, p): p for p in input_paths}
+        for f in futures:
+            try:
+                local_files.append(f.result())
+            except Exception as e:
+                log.error(f"Failed to download {futures[f]}: {e}")
+
+    if not local_files:
+        return 0
+
+    total_mb = sum(os.path.getsize(f) for f in local_files) / (1024*1024)
+    log.info(f"[MERGE] {len(local_files)} files downloaded in {_time.time()-_t0:.1f}s, {total_mb:.1f}MB")
+
+    gcs_key = output_path.replace("./", "").replace("../", "")
+    local_out = f"/tmp/spark_merged_{os.path.basename(output_path)}.csv"
+
+    if total_mb > SPARK_SIZE_MB:
+        log.info(f"[MERGE] Using Spark ({total_mb:.1f}MB > {SPARK_SIZE_MB}MB)")
+        from functools import reduce
+        dfs = []
+        for lf in local_files:
+            try:
+                df = spark.read.option("header","true").option("inferSchema","true").option("multiLine","true").option("escape",chr(34)).csv(lf)
+                df = sanitize_columns(df)
+                dfs.append(df)
+            except Exception as e:
+                log.error(f"[MERGE] Spark load failed {lf}: {e}")
+        if not dfs:
+            return 0
+        merged_spark = reduce(lambda a, b: a.unionByName(b, allowMissingColumns=True), dfs)
+        row_count = merged_spark.count()
+        tmp_dir = local_out + "_tmp"
+        merged_spark.coalesce(1).write.mode("overwrite").option("header","true").csv(tmp_dir)
+        import glob, shutil
+        parts = glob.glob(tmp_dir + "/part-*.csv")
+        if parts:
+            shutil.copy(parts[0], local_out)
+            shutil.rmtree(tmp_dir)
+    else:
+        log.info(f"[MERGE] Using pandas ({total_mb:.1f}MB <= {SPARK_SIZE_MB}MB)")
+        dfs = [pd.read_csv(f, low_memory=False) for f in local_files]
+        merged = pd.concat(dfs, ignore_index=True)
+        row_count = len(merged)
+        merged.to_csv(local_out, index=False)
+
+    for f in local_files:
+        try: os.remove(f)
+        except: pass
+
+    bucket.blob(gcs_key).upload_from_filename(local_out)
+    os.remove(local_out)
+    log.info(f"[GCS] Merged file written: {gcs_key}")
+    log.info(f"Merged {len(local_files)} files: {row_count} rows")
+    return row_count
 def preprocess_dataframe(df, target_col=None):
     from pyspark.sql import functions as F
     from pyspark.sql.types import NumericType, StringType
@@ -295,16 +330,5 @@ def preprocess_dataframe(df, target_col=None):
         class_counts = df.groupBy(target_col).count()
         max_count = class_counts.agg(F.max("count")).collect()[0][0]
         min_count = class_counts.agg(F.min("count")).collect()[0][0]
-        if max_count / max(min_count, 1) > 5:
-            log.info(f"[PREPROCESS] Class imbalance detected, applying oversampling")
-            dfs = []
-            counts = {row[target_col]: row["count"] for row in class_counts.collect()}
-            for cls, cnt in counts.items():
-                cls_df = df.filter(F.col(target_col) == cls)
-                ratio = int(max_count / cnt)
-                if ratio > 1:
-                    cls_df = cls_df.sample(withReplacement=True, fraction=float(ratio))
-                dfs.append(cls_df)
-            from functools import reduce
-            df = reduce(lambda a, b: a.union(b), dfs)
+        pass
     return df

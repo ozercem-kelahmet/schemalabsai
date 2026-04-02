@@ -22,7 +22,11 @@ RUN pip install --no-cache-dir \
     pymysql==1.1.0 \
     snowflake-connector-python==3.6.0 \
     google-cloud-storage==2.13.0 \
-    boto3==1.34.0
+    boto3==1.34.0 \
+    "numpy<2.0"
+
+RUN curl -L -o /usr/local/lib/python3.11/site-packages/pyspark/jars/gcs-connector-hadoop3-shaded.jar \
+    "https://repo1.maven.org/maven2/com/google/cloud/bigdataoss/gcs-connector/hadoop3-2.2.22/gcs-connector-hadoop3-2.2.22-shaded.jar"
 
 COPY services/spark_app/ /app/
 

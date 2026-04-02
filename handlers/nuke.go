@@ -116,28 +116,31 @@ func nukeGCP() {
 }
 
 func nukeDatabase() {
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		dbURL = "postgresql://schemalabs:schemalabs@localhost:5432/schemalabs"
-	}
+	pgContainer := "schemalabs-postgres"
 	tables := []string{
 		"uploaded_files", "fine_tuned_models", "connections", "sessions",
 		"users", "credits", "api_keys", "endpoints", "scheduled_jobs",
 		"training_sessions", "usage_logs", "notifications",
 	}
 	for _, t := range tables {
-		cmd := exec.Command("psql", dbURL, "-c", fmt.Sprintf("DROP TABLE IF EXISTS %s CASCADE;", t))
+		cmd := exec.Command("docker", "exec", pgContainer, "psql", "-U", "schemalabs", "-d", "schemalabs", "-c", fmt.Sprintf("DROP TABLE IF EXISTS %s CASCADE;", t))
 		out, err := cmd.CombinedOutput()
 		fmt.Printf("[NUKE] DB drop %s: %s %v\n", t, string(out), err)
 	}
-	cmd := exec.Command("psql", "postgresql://schemalabs:schemalabs@localhost:5432/postgres",
-		"-c", "DROP DATABASE IF EXISTS schemalabs;")
+	cmd := exec.Command("docker", "exec", pgContainer, "psql", "-U", "schemalabs", "-d", "postgres", "-c", "DROP DATABASE IF EXISTS schemalabs;")
 	out, err := cmd.CombinedOutput()
 	fmt.Printf("[NUKE] DB drop database: %s %v\n", string(out), err)
 }
 
 func nukeRedisAll() {
-	cmd := exec.Command("redis-cli", "FLUSHALL")
+	rpwd := os.Getenv("REDIS_PASSWORD")
+	redisContainer := "schemalabs-redis"
+	var cmd *exec.Cmd
+	if rpwd != "" {
+		cmd = exec.Command("docker", "exec", redisContainer, "redis-cli", "-a", rpwd, "FLUSHALL")
+	} else {
+		cmd = exec.Command("docker", "exec", redisContainer, "redis-cli", "FLUSHALL")
+	}
 	out, err := cmd.CombinedOutput()
 	fmt.Printf("[NUKE] Redis FLUSHALL: %s %v\n", string(out), err)
 }

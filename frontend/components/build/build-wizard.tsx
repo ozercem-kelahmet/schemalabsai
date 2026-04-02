@@ -86,14 +86,14 @@ export function BuildWizard() {
             setTotalEpochs(prev => Math.max(prev, epochs))
             setCurrentMetrics(prev => {
               if (!prev || epoch >= prev.epoch) {
-                return { epoch, totalEpochs: epochs, loss, accuracy, learningRate: 0.001 }
+                return { epoch, totalEpochs: epochs, loss, accuracy, learningRate: data.lr || data.learning_rate || 0.001 }
               }
               return prev
             })
             setMetricsHistory(prev => {
               const exists = prev.some((m: any) => m.epoch === epoch)
               if (!exists && epoch > 0) {
-                const newEntry = { epoch, totalEpochs: epochs, loss, accuracy, learningRate: 0.001 }
+                const newEntry = { epoch, totalEpochs: epochs, loss, accuracy, learningRate: data.lr || data.learning_rate || 0.001 }
                 return [...prev, newEntry].sort((a: any, b: any) => a.epoch - b.epoch)
               }
               return prev
@@ -166,7 +166,7 @@ export function BuildWizard() {
               totalEpochs: progress.epochs || h.epoch + 1,
               loss: h.loss || 0,
               accuracy: (h.accuracy > 1 ? h.accuracy / 100 : h.accuracy) || 0,
-              learningRate: 0.001,
+              learningRate: progress?.learning_rate || 0.001,
             }))
             setMetricsHistory(restored)
             restored.forEach((m: any) => {
@@ -192,7 +192,7 @@ export function BuildWizard() {
           if (progress.epochs) setTotalEpochs(progress.epochs)
           const acc = progress.accuracy > 1 ? progress.accuracy / 100 : progress.accuracy
           setCurrentMetrics(prev => {
-            const serverMetrics = { epoch: progress.epoch, totalEpochs: progress.epochs || 0, loss: progress.loss || 0, accuracy: acc || 0, learningRate: 0.001 }
+            const serverMetrics = { epoch: progress.epoch, totalEpochs: progress.epochs || 0, loss: progress.loss || 0, accuracy: acc || 0, learningRate: progress?.learning_rate || 0.001 }
             if (prev && prev.epoch > serverMetrics.epoch) return prev
             return serverMetrics
           })
@@ -491,8 +491,8 @@ export function BuildWizard() {
           
           // Always update current metrics when training
           setCurrentMetrics(prev => {
-            if (!prev) return { epoch: progress.epoch, totalEpochs: epochs, loss: progress.loss || 0, accuracy: (progress.accuracy > 1 ? progress.accuracy / 100 : progress.accuracy) || 0, learningRate: 0.001 }
-            if (progress.epoch >= prev.epoch) return { epoch: progress.epoch, totalEpochs: Math.max(epochs, prev.totalEpochs), loss: progress.loss || 0, accuracy: (progress.accuracy > 1 ? progress.accuracy / 100 : progress.accuracy) || 0, learningRate: 0.001 }
+            if (!prev) return { epoch: progress.epoch, totalEpochs: epochs, loss: progress.loss || 0, accuracy: (progress.accuracy > 1 ? progress.accuracy / 100 : progress.accuracy) || 0, learningRate: progress?.learning_rate || 0.001 }
+            if (progress.epoch >= prev.epoch) return { epoch: progress.epoch, totalEpochs: Math.max(epochs, prev.totalEpochs), loss: progress.loss || 0, accuracy: (progress.accuracy > 1 ? progress.accuracy / 100 : progress.accuracy) || 0, learningRate: progress?.learning_rate || 0.001 }
             return prev
           })
           const newMetrics: TrainingMetrics = {
@@ -500,7 +500,7 @@ export function BuildWizard() {
             totalEpochs: epochs,
             loss: progress.loss || 0,
             accuracy: (progress.accuracy > 1 ? progress.accuracy / 100 : progress.accuracy) || 0,
-            learningRate: 0.001,
+            learningRate: progress?.learning_rate || 0.001,
           }
           
           // Metrics update handled in animation block above
@@ -512,7 +512,7 @@ export function BuildWizard() {
               const existingEpochs = new Set(merged.map((m: any) => m.epoch))
               for (const h of progress.history) {
                 if (!existingEpochs.has(h.epoch)) {
-                  merged.push({ epoch: h.epoch, totalEpochs: epochs, loss: h.loss || 0, accuracy: h.accuracy > 1 ? h.accuracy / 100 : h.accuracy || 0, learningRate: 0.001 })
+                  merged.push({ epoch: h.epoch, totalEpochs: epochs, loss: h.loss || 0, accuracy: h.accuracy > 1 ? h.accuracy / 100 : h.accuracy || 0, learningRate: progress?.learning_rate || 0.001 })
                   existingEpochs.add(h.epoch)
                 }
               }

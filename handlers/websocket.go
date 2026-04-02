@@ -143,9 +143,12 @@ func BroadcastTrainingProgress(userID, queryID string, data map[string]interface
 		return
 	}
 
-	select {
-	case client.ch <- string(msg):
-	default:
-		log.Printf("[SSE] Client buffer full: %s", key)
-	}
+	func() {
+		defer func() { recover() }()
+		select {
+		case client.ch <- string(msg):
+		default:
+			log.Printf("[SSE] Client buffer full: %s", key)
+		}
+	}()
 }

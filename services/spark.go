@@ -138,7 +138,7 @@ func (s *SparkService) WaitForJob(jobID string, timeout time.Duration) (*SparkJo
 		if jobResp.Status == "completed" || jobResp.Status == "failed" {
 			return &jobResp, nil
 		}
-		time.Sleep(5 * time.Second)
+		time.Sleep(500 * time.Millisecond)
 	}
 	return nil, fmt.Errorf("spark job timeout after %v", timeout)
 }

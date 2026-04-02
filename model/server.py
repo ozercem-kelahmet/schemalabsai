@@ -9,7 +9,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 import storage as cloud_storage
 
-def storage_exists(path):
+def storage_exists(path, user_id=None):
     gcs_key = path.replace('../', '').replace('./', '')
     basename = os.path.basename(gcs_key)
     # Try exact key
@@ -18,25 +18,31 @@ def storage_exists(path):
             return True
     except:
         pass
-    # Try common prefixes in GCS
     if cloud_storage.STORAGE_BACKEND == 'gcs':
         try:
             client = cloud_storage._get_gcs_client()
             bucket = client.bucket(cloud_storage.GCS_BUCKET)
-            for prefix in ['shared/checkpoints/', 'shared/base-models/', 'uploads/', 'users/']:
-                blobs = list(bucket.list_blobs(prefix=prefix + basename))
-                if blobs:
+            # Try user-scoped first (fast, no listing)
+            if user_id:
+                for subdir in ['uploads', 'checkpoints']:
+                    blob = bucket.blob(f'users/{user_id}/{subdir}/{basename}')
+                    if blob.exists():
+                        return True
+            # Try shared prefixes
+            for prefix in ['shared/checkpoints/', 'shared/base-models/', 'uploads/']:
+                blob = bucket.blob(prefix + basename)
+                if blob.exists():
                     return True
-                if prefix == 'users/':
-                    blobs = list(bucket.list_blobs(prefix=prefix))
-                    for b in blobs:
-                        if b.name.endswith('/' + basename):
-                            return True
+            # Last resort
+            if not user_id:
+                for b in bucket.list_blobs(prefix='users/', max_results=200):
+                    if b.name.endswith('/' + basename):
+                        return True
         except:
             pass
     return False
 
-def storage_resolve(path):
+def storage_resolve(path, user_id=None):
     gcs_key = path.replace('../', '').replace('./', '')
     basename = os.path.basename(gcs_key)
     # Try exact key
@@ -44,19 +50,28 @@ def storage_resolve(path):
         return cloud_storage.download(gcs_key)
     except:
         pass
-    # Try common prefixes
     if cloud_storage.STORAGE_BACKEND == 'gcs':
         try:
             client = cloud_storage._get_gcs_client()
             bucket = client.bucket(cloud_storage.GCS_BUCKET)
+            # Try user-scoped first (fast, no listing)
+            if user_id:
+                for subdir in ['uploads', 'checkpoints']:
+                    key = f'users/{user_id}/{subdir}/{basename}'
+                    blob = bucket.blob(key)
+                    if blob.exists():
+                        return cloud_storage.download(key)
+            # Try shared prefixes
             for prefix in ['shared/checkpoints/', 'shared/base-models/', 'uploads/']:
-                blobs = list(bucket.list_blobs(prefix=prefix + basename))
-                if blobs:
-                    return cloud_storage.download(blobs[0].name)
-            # Deep search under users/
-            for b in bucket.list_blobs(prefix='users/'):
-                if b.name.endswith('/' + basename):
-                    return cloud_storage.download(b.name)
+                key = prefix + basename
+                blob = bucket.blob(key)
+                if blob.exists():
+                    return cloud_storage.download(key)
+            # Last resort: search users (limited)
+            if not user_id:
+                for b in bucket.list_blobs(prefix='users/', max_results=200):
+                    if b.name.endswith('/' + basename):
+                        return cloud_storage.download(b.name)
         except:
             pass
     return None
@@ -666,19 +681,69 @@ def smart_merge_datasets(dataframes, file_names=None):
     if len(dataframes) == 1:
         return dataframes[0]
     
-    # Check if all dataframes have same columns
     first_cols = set(dataframes[0].columns)
     same_structure = all(set(df.columns) == first_cols for df in dataframes)
     
     if same_structure:
-        # Same columns - simple row concat
         merged = pd.concat(dataframes, axis=0, ignore_index=True)
         merged = merged.fillna(0)
         print(f"Row concat (same structure): {len(dataframes)} files -> {merged.shape}")
         return merged
     
-    # Different columns - use prefix merge
-    print(f"Column merge (different structure): {len(dataframes)} files")
+    groups = {}
+    group_names = {}
+    for i, df in enumerate(dataframes):
+        key = tuple(sorted(df.columns))
+        if key not in groups:
+            groups[key] = []
+            group_names[key] = []
+        groups[key].append(df)
+        if file_names and i < len(file_names):
+            group_names[key].append(file_names[i])
+    
+    if len(groups) == 1:
+        merged = pd.concat(dataframes, axis=0, ignore_index=True)
+        merged = merged.fillna(0)
+        print(f"Row concat (single group): {len(dataframes)} files -> {merged.shape}")
+        return merged
+    
+    print(f"Grouped merge: {len(groups)} groups from {len(dataframes)} files")
+    group_dfs = []
+    for key, dfs in groups.items():
+        g = pd.concat(dfs, axis=0, ignore_index=True)
+        g = g.fillna(0)
+        print(f"  Group ({len(dfs)} files, {len(key)} cols): {g.shape}")
+        group_dfs.append(g)
+    
+    if len(group_dfs) == 1:
+        return group_dfs[0]
+    
+    merged_keys = set(group_dfs[0].columns)
+    for g in group_dfs[1:]:
+        merged_keys &= set(g.columns)
+    
+    if merged_keys:
+        best_key = None
+        best_score = 0
+        for col in merged_keys:
+            try:
+                score = sum(df[col].nunique() for df in group_dfs) / len(group_dfs)
+                if score > best_score:
+                    best_score = score
+                    best_key = col
+            except:
+                continue
+        if best_key:
+            print(f"  Merge key: {best_key}")
+            result = group_dfs[0]
+            for g in group_dfs[1:]:
+                g_agg = g.groupby(best_key).mean(numeric_only=True).reset_index()
+                result = pd.merge(result, g_agg, on=best_key, how='left', suffixes=('', f'_{len(result.columns)}'))
+            result = result.fillna(0)
+            print(f"  Final merged: {result.shape}")
+            return result
+    
+    print(f"  No common key, falling back to prefix merge")
     return smart_merge_with_prefix(dataframes, file_names)
 
 def smart_merge_with_prefix(dataframes, file_names=None):
@@ -2783,45 +2848,70 @@ def finetune(bypass_queue=False):
             goto_training = False
 
         if not goto_training:
-            # Çoklu dosya kontrolü
-            files = request.files.getlist('file')
-            if not files or len(files) == 0:
-                if 'file' in request.files:
-                    files = [request.files['file']]
-                else:
-                    return jsonify({"error": "No file provided"}), 400
-            
-            dataframes = []
-            file_names = []
-            
-            for file in files:
-                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
-                file.save(temp_file.name)
-                temp_file.close()
-                
-                # CSV, Excel, JSON, Parquet
-                if file.filename.endswith(('.xlsx', '.xls')):
-                    df_temp = pd.read_excel(temp_file.name)
-                elif file.filename.endswith('.json'):
-                    df_temp = pd.read_json(temp_file.name)
-                elif file.filename.endswith('.parquet'):
-                    df_temp = pd.read_parquet(temp_file.name)
-                else:
-                    # Multi-row header detection: if first row has many duplicate values, skip it
+            file_paths_str = request.form.get('file_paths', '')
+            if file_paths_str:
+                print(f"[GCS-DIRECT] Loading files from GCS paths")
+                dataframes = []
+                file_names = []
+                for fp in file_paths_str.split(','):
+                    fp = fp.strip()
+                    if not fp:
+                        continue
                     try:
-                        first_row = pd.read_csv(temp_file.name, nrows=0).columns.tolist()
-                        unique_ratio = len(set(str(c).split('.')[0] for c in first_row)) / max(len(first_row), 1)
-                        if unique_ratio < 0.5 and len(first_row) > 3:
-                            df_temp = pd.read_csv(temp_file.name, header=1)
-                            print(f"Multi-row header detected in {file.filename}, using row 2 as header")
-                        else:
-                            df_temp = pd.read_csv(temp_file.name)
-                    except:
-                        df_temp = pd.read_csv(temp_file.name)
+                        resolved = storage_resolve(fp)
+                        if resolved is None:
+                            print(f"[GCS-DIRECT] Could not resolve: {fp}")
+                            continue
+                        df_temp = pd.read_csv(resolved)
+                        if df_temp is not None and len(df_temp) > 0 and len(df_temp.columns) > 0:
+                            dataframes.append(df_temp)
+                            file_names.append(os.path.basename(fp))
+                            print(f"[GCS-DIRECT] Loaded {os.path.basename(fp)}: {df_temp.shape}")
+                    except Exception as e:
+                        print(f"[GCS-DIRECT] Failed to load {fp}: {e}")
+                if not dataframes:
+                    return jsonify({"error": "No valid files found in GCS paths"}), 400
+            else:
+                files = request.files.getlist('file')
+                if not files or len(files) == 0:
+                    if 'file' in request.files:
+                        files = [request.files['file']]
+                    else:
+                        return jsonify({"error": "No file provided"}), 400
                 
-                dataframes.append(df_temp)
-                file_names.append(file.filename)
-                os.unlink(temp_file.name)
+                dataframes = []
+                file_names = []
+            
+                for file in files:
+                    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.csv')
+                    file.save(temp_file.name)
+                    temp_file.close()
+                    if file.filename.endswith(('.xlsx', '.xls')):
+                        df_temp = pd.read_excel(temp_file.name)
+                    elif file.filename.endswith('.json'):
+                        df_temp = pd.read_json(temp_file.name)
+                    elif file.filename.endswith('.parquet'):
+                        df_temp = pd.read_parquet(temp_file.name)
+                    else:
+                        try:
+                            first_row = pd.read_csv(temp_file.name, nrows=0).columns.tolist()
+                            unique_ratio = len(set(str(c).split('.')[0] for c in first_row)) / max(len(first_row), 1)
+                            if unique_ratio < 0.5 and len(first_row) > 3:
+                                df_temp = pd.read_csv(temp_file.name, header=1)
+                            else:
+                                df_temp = pd.read_csv(temp_file.name)
+                        except Exception as csv_err:
+                            try:
+                                df_temp = pd.read_csv(temp_file.name)
+                            except Exception as e2:
+                                print(f"Failed to parse {file.filename}: {e2}")
+                                df_temp = None
+                    if df_temp is not None and len(df_temp) > 0 and len(df_temp.columns) > 0:
+                        dataframes.append(df_temp)
+                        file_names.append(file.filename)
+                    else:
+                        print(f"Skipping empty file: {file.filename}")
+                    os.unlink(temp_file.name)
         
         # Birden fazla dosya varsa smart merge yap
         if not goto_training:
@@ -2911,9 +3001,28 @@ def finetune(bypass_queue=False):
         # TabularFoundationModel herhangi feature sayısı ile çalışır
         # Agnostik: Herhangi feature sayısı ile çalışır
         input_dim = X.shape[1]
-        # print(f"Training with {input_dim} features")
         
-        # Tam dinamik config
+        if torch.cuda.is_available():
+            free_mem = torch.cuda.mem_get_info()[0] / (1024**3)
+            total_mem = torch.cuda.mem_get_info()[1] / (1024**3)
+            print(f"GPU memory: {free_mem:.1f}GB free / {total_mem:.1f}GB total")
+            estimated_gb = (input_dim * len(X) * 4) / (1024**3) * 3
+            if estimated_gb > free_mem * 0.8:
+                max_features = int((free_mem * 0.8 * (1024**3)) / (len(X) * 4 * 3))
+                max_features = max(64, min(max_features, input_dim))
+                if max_features < input_dim:
+                    print(f"Feature reduction: {input_dim} -> {max_features} (GPU memory limit)")
+                    from sklearn.feature_selection import VarianceThreshold
+                    vt = VarianceThreshold()
+                    vt.fit(X)
+                    variances = vt.variances_
+                    top_idx = np.argsort(variances)[-max_features:]
+                    X = X[:, top_idx]
+                    feature_cols = [feature_cols[i] for i in top_idx] if isinstance(feature_cols, list) else feature_cols
+                    input_dim = X.shape[1]
+                    print(f"After reduction: X.shape={X.shape}")
+        
+        dyn_cfg = get_dynamic_config(len(X), input_dim, n_classes)
         dyn_cfg = get_dynamic_config(len(X), input_dim, n_classes)
         session["lr"] = dyn_cfg['lr']
         save_session(query_id, session)
@@ -3215,6 +3324,8 @@ def finetune(bypass_queue=False):
                 break
             if time.time() >= training_timeout:
                 print(f"⏰ Training timeout (30min) at epoch {current_epoch} - best: {best_acc:.1f}%")
+                session["status"] = "failed"
+                session["error"] = "Training timeout (30min)"
                 break
         
         if best_state:
@@ -3318,7 +3429,7 @@ def finetune(bypass_queue=False):
         return jsonify({
             "status": "success",
             "accuracy": float(best_acc),
-            "loss": float(avg_loss),
+            "loss": float(avg_loss) if not math.isnan(float(avg_loss)) else None,
             "precision": session.get("precision", 0),
             "recall": session.get("recall", 0),
             "f1_score": session.get("f1_score", 0),
