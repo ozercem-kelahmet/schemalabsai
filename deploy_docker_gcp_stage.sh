@@ -89,6 +89,16 @@ scp /tmp/Dockerfile.frontend.stage $SERVER:/tmp/Dockerfile.frontend.stage
 ssh $SERVER 'sudo cp /tmp/Dockerfile.frontend.stage /opt/schemalabsai-stage/docker/Dockerfile.frontend'
 echo "[OK] Dockerfile updated"
 
+step 3.5 "Override frontend/.env for stage"
+cat > /tmp/frontend.env.stage <<FENV
+DATABASE_URL=postgresql://schemalabs:$(ssh $SERVER "grep ^POSTGRES_PASSWORD= /opt/schemalabsai-stage/.env.stage | cut -d= -f2-")@postgres-stage:5432/schemalabs
+NEXTAUTH_SECRET=$(ssh $SERVER "grep ^NEXTAUTH_SECRET= /opt/schemalabsai/frontend/.env 2>/dev/null | cut -d= -f2- || echo gW0pHizNNY7M4aXW/ZnCu7JAZC1tt4JtKnb2ef+PvcI=")
+NEXTAUTH_URL=https://stage.schemalabs.ai
+FENV
+scp /tmp/frontend.env.stage $SERVER:/tmp/frontend.env.stage
+ssh $SERVER "sudo cp /tmp/frontend.env.stage /opt/schemalabsai-stage/frontend/.env"
+echo "[OK] frontend/.env stage-specific"
+
 step 4 "Remote Build & Deploy (Stage)"
 ssh -o ServerAliveInterval=10 -o ServerAliveCountMax=360 -o TCPKeepAlive=yes $SERVER << 'DEPLOY_EOF'
 #!/bin/bash
