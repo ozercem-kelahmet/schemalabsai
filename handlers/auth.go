@@ -11,7 +11,6 @@ import (
 	"fmt"
 "log"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -122,7 +121,7 @@ func InitAuth() error {
 
 	// AutoMigrate in background to not block startup
 	go func() {
-		DB.AutoMigrate(&User{}, &UploadedFile{}, &Query{}, &Message{}, &QueryFile{}, &FineTunedModel{}, &Folder{}, &Connection{}, &APIKey{}, &VerificationCode{}, &PasswordResetToken{}, &UserQuota{}, &VerticalConfig{}, &VerticalTool{}, &VerticalAgent{}, &Endpoint{}, &PredictionStore{}, &LLMSecret{})
+		DB.AutoMigrate(&User{}, &UploadedFile{}, &Query{}, &Message{}, &QueryFile{}, &FineTunedModel{}, &Folder{}, &Connection{}, &APIKey{}, &VerificationCode{}, &PasswordResetToken{}, &UserQuota{}, &VerticalConfig{}, &VerticalTool{}, &VerticalAgent{}, &Endpoint{}, &PredictionStore{}, &LLMSecret{}, &FrontierPrice{}, &GiftCode{}, &DedicatedBundle{}, &DedicatedBundleKey{}, &DedicatedBundleAudit{}, &DedicatedDownloadToken{}, &ProcessedWebhookEvent{}, &Organization{}, &OrganizationMember{}, &OrganizationInvite{})
 		// Create indexes for performance
 		DB.Exec("CREATE INDEX IF NOT EXISTS idx_queries_user_updated ON queries(user_id, updated_at DESC)")
 		DB.Exec("CREATE INDEX IF NOT EXISTS idx_uploaded_files_user ON uploaded_files(user_id, created_at DESC)")
@@ -432,10 +431,12 @@ type FineTunedModel struct {
 	NextSyncAt       *time.Time `json:"next_sync_at"`
 	SyncStatus       string     `json:"sync_status" gorm:"default:idle"`
 	ConnectionIDs    string     `json:"connection_ids"`
+	ConnectionNames  string     `json:"connection_names"`
 Status           string     `json:"status" gorm:"default:active"`
 TrainingEpoch    int        `json:"training_epoch" gorm:"default:0"`
 TrainingLoss     float64    `json:"training_loss" gorm:"default:0"`
 TrainingAcc      float64    `json:"training_acc" gorm:"default:0"`
+	QueryID          string     `json:"query_id" gorm:"column:query_id"`
 }
 
 type Folder struct {
@@ -473,6 +474,8 @@ RateLimit         string     `json:"rate_limit"`
 	RateLimitPaused   bool       `json:"rate_limit_paused"`
 	APICallsCount     int        `json:"api_calls_count"`
 	LastPollAt        *time.Time `json:"last_poll_at"`
+	LastError         string     `json:"last_error"`
+	LastErrorAt       *time.Time `json:"last_error_at"`
 	UserID            string     `json:"user_id"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`
@@ -550,6 +553,13 @@ return
 		SSL:      input.SSL,
 		Status:   "active",
 		UserID:   session.UserID,
+	}
+
+	if conn.SubType == "postgresql" || conn.SubType == "supabase" || conn.SubType == "mysql" {
+		if err := validateDBConnection(&conn); err != nil {
+			http.Error(w, friendlyDBError(err), http.StatusBadRequest)
+			return
+		}
 	}
 
 if err := DB.Create(&conn).Error; err != nil {
@@ -1195,13 +1205,10 @@ if (conn.SubType == "postgresql" || conn.SubType == "supabase") && conn.Host != 
 connHost := conn.Host
 sslmode := "disable"
 if conn.SubType == "supabase" {
-if ips, err := net.LookupIP(conn.Host); err == nil {
-for _, ip := range ips { if ip.To4() != nil { connHost = ip.String(); break } }
-}
 sslmode = "require"
 }
 if conn.SSL { sslmode = "require" }
-dsn := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=%s", conn.Username, conn.Password, connHost, conn.Port, conn.Database, sslmode)
+dsn := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=%s&default_query_exec_mode=simple_protocol&statement_cache_capacity=0", conn.Username, conn.Password, connHost, conn.Port, conn.Database, sslmode)
 tempDB, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 if err == nil {
 sqlDB2, _ := tempDB.DB()
@@ -1209,7 +1216,10 @@ filteredInfos = nil
 for _, tbl := range req.SelectedTables {
 var rw int64
 var cl int
-sqlDB2.QueryRow("SELECT count(*) FROM \"" + tbl + "\"").Scan(&rw)
+rwQ := fmt.Sprintf(`SELECT count(*) FROM public.%q`, tbl)
+if rcErr := sqlDB2.QueryRow(rwQ).Scan(&rw); rcErr != nil {
+log.Printf("[ROWCOUNT selected] table=%s err=%v", tbl, rcErr)
+}
 sqlDB2.QueryRow("SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name=$1", tbl).Scan(&cl)
 filteredInfos = append(filteredInfos, map[string]interface{}{"name": tbl, "rows": rw, "columns": cl})
 log.Printf("📡 PostgreSQL row count: %s = %d rows, %d cols", tbl, rw, cl)
@@ -1401,28 +1411,25 @@ return
 
 	log.Printf("🔍 Tables request: conn=%s type=%s sub_type=%s endpoint=%s host=%s", conn.ID, conn.Type, conn.SubType, conn.Endpoint, conn.Host)
 
+	if conn.LastErrorAt != nil && time.Since(*conn.LastErrorAt) < 60*time.Second && (conn.SubType == "postgresql" || conn.SubType == "supabase" || conn.SubType == "mysql") {
+		http.Error(w, "Connection error (cached): "+conn.LastError, 424)
+		return
+	}
+
 	switch conn.SubType {
 	case "postgresql", "supabase":
 		connHost := conn.Host
-		if conn.SubType == "supabase" {
-			if ips, err := net.LookupIP(conn.Host); err == nil {
-				for _, ip := range ips {
-					if ip.To4() != nil {
-						connHost = ip.String()
-						break
-					}
-				}
-			}
-		}
 		sslmode := "disable"
 		if conn.SubType == "supabase" || conn.SSL {
 			sslmode = "require"
 		}
-		dsn := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=%s",
+		dsn := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=%s&default_query_exec_mode=simple_protocol&statement_cache_capacity=0",
 			conn.Username, conn.Password, connHost, conn.Port, conn.Database, sslmode)
 		tempDB, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 		if err != nil {
-			http.Error(w, "Connection failed: "+err.Error(), http.StatusInternalServerError)
+			now := time.Now()
+			DB.Model(&Connection{}).Where("id = ?", conn.ID).Updates(map[string]interface{}{"last_error": err.Error(), "last_error_at": now, "status": "error"})
+			http.Error(w, "Connection failed: "+err.Error(), 424)
 			return
 		}
 		sqlDB, _ := tempDB.DB()
@@ -1437,15 +1444,26 @@ return
 		}
 		defer rows.Close()
 
+		type pgTbl struct{ name string; colCount int }
+		var pgTables []pgTbl
 		for rows.Next() {
 			var name string
 			var colCount int
 			rows.Scan(&name, &colCount)
-			tables = append(tables, name)
-			// Get row count
+			pgTables = append(pgTables, pgTbl{name, colCount})
+		}
+		rows.Close()
+		for _, t := range pgTables {
+			tables = append(tables, t.name)
 			var rowCount int64
-			sqlDB.QueryRow("SELECT count(*) FROM \"" + name + "\"").Scan(&rowCount)
-			tableInfos = append(tableInfos, TableInfo{Name: name, Rows: rowCount, Columns: colCount})
+			q := fmt.Sprintf(`SELECT count(*) FROM public.%q`, t.name)
+			if rcErr := sqlDB.QueryRow(q).Scan(&rowCount); rcErr != nil {
+				log.Printf("[ROWCOUNT] table=%s err=%v", t.name, rcErr)
+				rowCount = 0
+			} else {
+				log.Printf("[ROWCOUNT] table=%s rows=%d", t.name, rowCount)
+			}
+			tableInfos = append(tableInfos, TableInfo{Name: t.name, Rows: rowCount, Columns: t.colCount})
 		}
 
 	case "mysql":
@@ -3888,12 +3906,10 @@ func DeleteAccountHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Delete user's data
 	DB.Where("user_id = ?", userID).Delete(&Query{})
 	DB.Where("user_id = ?", userID).Delete(&FineTunedModel{})
 	DB.Where("id = ?", userID).Delete(&User{})
 
-	// Clear session
 	cookie := &http.Cookie{
 		Name:     "session_id",
 		Value:    "",
@@ -4149,3 +4165,65 @@ type UsageLog struct {
 }
 
 func (UsageLog) TableName() string { return "usage_logs" }
+
+func validateDBConnection(conn *Connection) error {
+	sslmode := "disable"
+	if conn.SubType == "supabase" || conn.SSL {
+		sslmode = "require"
+	}
+	if conn.SubType == "postgresql" || conn.SubType == "supabase" {
+		dsn := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=%s&connect_timeout=5&default_query_exec_mode=simple_protocol&statement_cache_capacity=0",
+			conn.Username, conn.Password, conn.Host, conn.Port, conn.Database, sslmode)
+		db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+		if err != nil {
+			return fmt.Errorf("postgres open: %w", err)
+		}
+		sqlDB, err := db.DB()
+		if err != nil {
+			return err
+		}
+		defer sqlDB.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		defer cancel()
+		return sqlDB.PingContext(ctx)
+	}
+	if conn.SubType == "mysql" {
+		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?timeout=5s",
+			conn.Username, conn.Password, conn.Host, conn.Port, conn.Database)
+		db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+		if err != nil {
+			return fmt.Errorf("mysql open: %w", err)
+		}
+		sqlDB, err := db.DB()
+		if err != nil {
+			return err
+		}
+		defer sqlDB.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		defer cancel()
+		return sqlDB.PingContext(ctx)
+	}
+	return nil
+}
+
+func friendlyDBError(err error) string {
+	msg := err.Error()
+	low := strings.ToLower(msg)
+	switch {
+	case strings.Contains(low, "tenant or user not found"):
+		return "Invalid credentials: Supabase project reference or region is incorrect. Double-check the host and username."
+	case strings.Contains(low, "password authentication failed"):
+		return "Wrong password."
+	case strings.Contains(low, "no such host") || strings.Contains(low, "dial tcp"):
+		return "Cannot reach the database host. Check the host address and your network."
+	case strings.Contains(low, "connection refused"):
+		return "Database refused the connection. Check the port and that the server is running."
+	case strings.Contains(low, "timeout") || strings.Contains(low, "context deadline"):
+		return "Connection timed out. The host may be unreachable or blocking access."
+	case strings.Contains(low, "ssl") && strings.Contains(low, "required"):
+		return "SSL is required for this connection. Enable the SSL option."
+	case strings.Contains(low, "database") && strings.Contains(low, "does not exist"):
+		return "The specified database name does not exist."
+	}
+	return "Connection failed. Please verify host, port, database, username, password, and SSL settings."
+}

@@ -322,6 +322,26 @@ http.HandleFunc("/api/vertical/tools/update", enableCORS(handlers.AuthMiddleware
 	// Quota & Billing
 	http.HandleFunc("/api/quota", enableCORS(handlers.AuthMiddleware(handlers.QuotaHandler)))
 	http.HandleFunc("/api/usage/logs", enableCORS(handlers.AuthMiddleware(handlers.GetUsageLogsHandler)))
+
+	http.HandleFunc("/api/usage/rate-limits", enableCORS(handlers.AuthMiddleware(handlers.GetRateLimitStatusHandler)))
+	http.HandleFunc("/api/billing/me", enableCORS(handlers.AuthMiddleware(handlers.GetBillingSummaryHandler)))
+	http.HandleFunc("/api/billing/gift-codes", enableCORS(handlers.AuthMiddleware(handlers.ListGiftCodesHandler)))
+	http.HandleFunc("/api/admin/gift-codes/create", enableCORS(handlers.AuthMiddleware(handlers.CreateGiftCodeHandler)))
+	http.HandleFunc("/api/admin/gift-codes", enableCORS(handlers.AuthMiddleware(handlers.ListAllGiftCodesHandler)))
+	http.HandleFunc("/api/billing/redeem", enableCORS(handlers.AuthMiddleware(handlers.RedeemGiftCodeHandler)))
+	http.HandleFunc("/api/billing/checkout", enableCORS(handlers.AuthMiddleware(handlers.CreateCheckoutSessionHandler)))
+	http.HandleFunc("/api/billing/credits/purchase", enableCORS(handlers.AuthMiddleware(handlers.BuyCreditsHandler)))
+	http.HandleFunc("/api/billing/portal", enableCORS(handlers.AuthMiddleware(handlers.CustomerPortalHandler)))
+	http.HandleFunc("/api/billing/contact", enableCORS(handlers.AuthMiddleware(handlers.ContactSalesHandler)))
+	http.HandleFunc("/api/dedicated/bundles/create", enableCORS(handlers.AuthMiddleware(handlers.CreateDedicatedBundleHandler)))
+	http.HandleFunc("/api/dedicated/bundles", enableCORS(handlers.AuthMiddleware(handlers.ListDedicatedBundlesHandler)))
+	http.HandleFunc("/api/dedicated/bundles/token", enableCORS(handlers.AuthMiddleware(handlers.IssueDownloadTokenHandler)))
+	http.HandleFunc("/api/dedicated/bundles/key", enableCORS(handlers.AuthMiddleware(handlers.RevealBundleKeyHandler)))
+	http.HandleFunc("/api/dedicated/bundles/rotate", enableCORS(handlers.AuthMiddleware(handlers.RotateBundleKeyHandler)))
+	http.HandleFunc("/api/dedicated/bundles/revoke", enableCORS(handlers.AuthMiddleware(handlers.RevokeBundleHandler)))
+	http.HandleFunc("/api/dedicated/audit", enableCORS(handlers.AuthMiddleware(handlers.ListBundleAuditHandler)))
+	http.HandleFunc("/api/dedicated/download/", enableCORS(handlers.DownloadDedicatedBundleHandler))
+	http.HandleFunc("/api/webhooks/stripe", enableCORS(handlers.StripeWebhookHandler))
 	http.HandleFunc("/api/admin/files", enableCORS(handlers.AuthMiddleware(handlers.AdminFilesHandler)))
 	http.HandleFunc("/api/admin/files/", enableCORS(handlers.AuthMiddleware(handlers.AdminFilesHandler)))
 	http.HandleFunc("/api/upload/file/", enableCORS(handlers.AuthMiddleware(handlers.GetFileByIDHandler)))
@@ -345,6 +365,21 @@ http.HandleFunc("/api/vertical/tools/update", enableCORS(handlers.AuthMiddleware
 
 	// Serve uploaded files
 	http.HandleFunc("/metrics", handlers.MetricsHandler)
+	http.HandleFunc("/api/team", enableCORS(handlers.AuthMiddleware(handlers.TeamHandler)))
+	http.HandleFunc("/api/team/invite", enableCORS(handlers.AuthMiddleware(handlers.TeamInviteHandler)))
+	http.HandleFunc("/api/team/invite/cancel", enableCORS(handlers.AuthMiddleware(handlers.TeamInviteCancelHandler)))
+	http.HandleFunc("/api/team/invite/resend", enableCORS(handlers.AuthMiddleware(handlers.TeamInviteResendHandler)))
+	http.HandleFunc("/api/team/remove", enableCORS(handlers.AuthMiddleware(handlers.TeamRemoveHandler)))
+	http.HandleFunc("/api/team/deactivate", enableCORS(handlers.AuthMiddleware(handlers.TeamDeactivateHandler)))
+	http.HandleFunc("/api/team/reactivate", enableCORS(handlers.AuthMiddleware(handlers.TeamReactivateHandler)))
+	http.HandleFunc("/api/team/role", enableCORS(handlers.AuthMiddleware(handlers.TeamRoleHandler)))
+
+	http.HandleFunc("/api/train/jobs", handlers.TrainingJobsHandler)
+
+	http.HandleFunc("/api/vertical/secrets/update-models", handlers.UpdateLLMSecretModelsHandler)
+
+	http.HandleFunc("/api/train/jobs/seen", handlers.TrainingJobSeenHandler)
+
 	// Frontend routes with auth check
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// Static files - no debug log
@@ -377,8 +412,12 @@ http.HandleFunc("/api/vertical/tools/update", enableCORS(handlers.AuthMiddleware
 
 	// Start scheduler for scheduled/real-time sync
 	handlers.GlobalScheduler.Start()
+	handlers.StartCreditExpiryCron()
+	handlers.StartFrontierPricingSync()
+	handlers.StartBillingJobs()
 	handlers.RestoreTrainingFromRedis()
 	handlers.StartTrainingChecker()
+	handlers.StartTrainingQueueWorker()
 	log.Println("SCHEMALABS AI running on http://localhost:" + apiPort)
 	server := &http.Server{Addr: ":" + apiPort, Handler: nil, MaxHeaderBytes: 1 << 20}
 	log.Fatal(server.ListenAndServe())

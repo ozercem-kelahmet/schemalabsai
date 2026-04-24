@@ -1,7 +1,7 @@
 "use client"
 import { toast } from "sonner"
 
-import { useState, useMemo, useEffect } from "react"
+import { useState, useMemo, useEffect, useRef, useCallback } from "react"
 import { DatasetFilters } from "./dataset-filters"
 import { DatasetCard } from "./dataset-card"
 import { DatasetSchemaModal } from "./dataset-schema-modal"
@@ -29,7 +29,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
-import { Plus, Search, FolderOpen, ChevronDown, ChevronRight, SlidersHorizontal } from "lucide-react"
+import { Plus, Search, SlidersHorizontal, Trash2, CheckSquare, Square } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Sparkles } from "lucide-react" // Import Sparkles component
 
@@ -58,9 +58,17 @@ export function DatasetGrid() {
   const [rateLimitNotified, setRateLimitNotified] = useState<Set<string>>(new Set())
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const [loading, setLoading] = useState(true)
+  
+  // Multi-select state
+  const [selectedDatasetIds, setSelectedDatasetIds] = useState<Set<string>>(new Set())
+  const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null)
+  
+  // Vertical search state for generate modal
+  const [verticalSearch, setVerticalSearch] = useState("")
 
   const loadData = async () => {
       const t0 = performance.now()
+      
       try {
         // Progressive loading - show data as each API completes
         const filesPromise = api.getUploadedFiles()
@@ -81,8 +89,8 @@ export function DatasetGrid() {
     description: model ? `Trained: ${model.name}` : "Uploaded file",
     source: (f.source || "upload") as DataSource,
     vertical: (f.vertical || "") as Vertical,
-    complexity: cols.length > 25 ? "advanced" : cols.length > 10 ? "medium" : "simple" as Complexity,
-    rowCount: (f.row_count || 0) > 10000 ? "large" : (f.row_count || 0) > 1000 ? "medium" : "small" as RowCount,
+    complexity: (cols.length >= 100000 ? "advanced" : cols.length >= 10000 ? "high" : cols.length >= 1000 ? "medium" : "simple") as Complexity,
+    rowCount: ((f.row_count || 0) >= 100000 ? "advanced" : (f.row_count || 0) >= 10000 ? "high" : (f.row_count || 0) >= 1000 ? "medium" : "simple") as RowCount,
     rows: f.row_count || 0,
     columns: cols.length,
     schema: cols.map((col: string) => ({ name: col.trim(), type: "string", nullable: true, description: "" })),
@@ -118,7 +126,7 @@ export function DatasetGrid() {
             source: (c.sub_type === "postgresql" ? "postgresql" : c.sub_type === "mongodb" ? "mongodb" : c.sub_type === "rest_api" ? "rest" : c.sub_type === "graphql" ? "graphql" : c.sub_type || "api") as DataSource,
             vertical: "" as Vertical,
             complexity: "medium" as Complexity,
-            rowCount: totalRows > 10000 ? "large" as RowCount : totalRows > 1000 ? "medium" as RowCount : "small" as RowCount,
+            rowCount: (totalRows >= 100000 ? "advanced" : totalRows >= 10000 ? "high" : totalRows >= 1000 ? "medium" : "simple") as RowCount,
             rows: totalRows,
             columns: totalCols,
             schema: schemaDetails,
@@ -162,7 +170,7 @@ export function DatasetGrid() {
                   const idx = updated.findIndex(d => d.id === connsToFetch[ci].id)
                   if (idx >= 0 && totalRows > updated[idx].rows) {
                     updated[idx] = { ...updated[idx], rows: totalRows, columns: totalCols, schema: schemaDetails,
-                      rowCount: totalRows > 10000 ? "large" : totalRows > 1000 ? "medium" : "small" as any }
+                      rowCount: (totalRows >= 100000 ? "advanced" : totalRows >= 10000 ? "high" : totalRows >= 1000 ? "medium" : "simple") as RowCount }
                   }
                 }
               }
@@ -172,6 +180,9 @@ export function DatasetGrid() {
         }
       } catch (e) {
         console.error("Load error:", e)
+        toast.error("Failed to load datasets", { description: "Please refresh or check your connection." })
+        setDatasets([])
+        setLoading(false)
       }
   }
 
@@ -230,8 +241,11 @@ export function DatasetGrid() {
     const unique = [...new Set(datasets.map(d => d.rowCount))]
     return unique as RowCount[]
   }, [datasets])
+  // Determine if any filters are active (for grouping decision)
+  const hasActiveFilters = selectedSources.length > 0 || selectedVerticals.length > 0 || selectedComplexity.length > 0 || selectedRowCount.length > 0
+
   const groupedDatasets = useMemo(() => {
-    const filtered = datasets.filter((dataset) => {
+    let filtered = datasets.filter((dataset) => {
       // Search filter
       if (searchQuery) {
         const query = searchQuery.toLowerCase()
@@ -250,18 +264,24 @@ export function DatasetGrid() {
       return true
     })
 
-    // Group by source
+    // Sort by most recent (assuming datasets are returned with most recent last, we reverse)
+    // Keep original order but reverse so latest uploads appear first
+    filtered = [...filtered].reverse()
+
+    // Only group by source when filters are active
     const groups: Record<string, Dataset[]> = {}
-    filtered.forEach((dataset) => {
-      const source = dataset.source
-      if (!groups[source]) {
-        groups[source] = []
-      }
-      groups[source].push(dataset)
-    })
+    if (hasActiveFilters) {
+      filtered.forEach((dataset) => {
+        const source = dataset.source
+        if (!groups[source]) {
+          groups[source] = []
+        }
+        groups[source].push(dataset)
+      })
+    }
     
-    return { filtered, groups }
-  }, [datasets, searchQuery, selectedSources, selectedVerticals, selectedComplexity, selectedRowCount])
+    return { filtered, groups, shouldGroup: hasActiveFilters }
+  }, [datasets, searchQuery, selectedSources, selectedVerticals, selectedComplexity, selectedRowCount, hasActiveFilters])
 
   const activeFiltersCount =
     selectedSources.length + selectedVerticals.length + selectedComplexity.length + selectedRowCount.length
@@ -271,16 +291,107 @@ export function DatasetGrid() {
     setIsModalOpen(true)
   }
 
+  // Multi-select handlers
+  const handleSelectDataset = useCallback((datasetId: string, index: number, event: React.MouseEvent) => {
+    const isShiftKey = event.shiftKey
+    
+    if (isShiftKey && lastSelectedIndex !== null) {
+      // Shift+click: select range
+      const start = Math.min(lastSelectedIndex, index)
+      const end = Math.max(lastSelectedIndex, index)
+      const idsToSelect = groupedDatasets.filtered.slice(start, end + 1).map(d => d.id)
+      setSelectedDatasetIds(prev => {
+        const next = new Set(prev)
+        idsToSelect.forEach(id => next.add(id))
+        return next
+      })
+    } else {
+      // Normal click: toggle selection
+      setSelectedDatasetIds(prev => {
+        const next = new Set(prev)
+        if (next.has(datasetId)) {
+          next.delete(datasetId)
+        } else {
+          next.add(datasetId)
+        }
+        return next
+      })
+      setLastSelectedIndex(index)
+    }
+  }, [lastSelectedIndex, groupedDatasets.filtered])
+
+  const handleSelectAll = useCallback(() => {
+    if (selectedDatasetIds.size === groupedDatasets.filtered.length) {
+      setSelectedDatasetIds(new Set())
+    } else {
+      setSelectedDatasetIds(new Set(groupedDatasets.filtered.map(d => d.id)))
+    }
+  }, [groupedDatasets.filtered, selectedDatasetIds.size])
+
+  const clearSelection = useCallback(() => {
+    setSelectedDatasetIds(new Set())
+    setLastSelectedIndex(null)
+  }, [])
+
   const [deleteTarget, setDeleteTarget] = useState<Dataset | null>(null)
+  const [isMultiDeleteMode, setIsMultiDeleteMode] = useState(false)
   
   const handleDelete = (dataset: Dataset) => {
+    setIsMultiDeleteMode(false)
     setDeleteTarget(dataset)
   }
 
+  const handleMultiDelete = () => {
+    if (selectedDatasetIds.size === 0) return
+    setIsMultiDeleteMode(true)
+    setDeleteTarget({ id: "multi", name: `${selectedDatasetIds.size} datasets` } as Dataset)
+  }
+
   const confirmDelete = async () => {
+    if (isMultiDeleteMode) {
+      // Multi-delete
+      const idsToDelete = Array.from(selectedDatasetIds)
+      let successCount = 0
+      let failCount = 0
+      
+      for (const id of idsToDelete) {
+        const dataset = datasets.find(d => d.id === id)
+        if (!dataset) continue
+        
+        try {
+          const isConnection = dataset.source !== "upload" && dataset.source !== "generated" && dataset.source !== "csv" && dataset.source !== "json" && dataset.source !== "excel"
+          if (isConnection) {
+            await api.deleteConnection(id)
+          } else {
+            await api.deleteFile(id)
+          }
+          successCount++
+        } catch (error) {
+          console.error("Delete failed for:", id, error)
+          failCount++
+        }
+      }
+      
+      if (successCount > 0) {
+        toast.success(`${successCount} dataset(s) deleted successfully`)
+        setDatasets(prev => prev.filter(d => !selectedDatasetIds.has(d.id)))
+      }
+      if (failCount > 0) {
+        toast.error(`${failCount} dataset(s) failed to delete`)
+      }
+      
+      setSelectedDatasetIds(new Set())
+      setLastSelectedIndex(null)
+      setDeleteTarget(null)
+      setIsMultiDeleteMode(false)
+      try { await fetch("/api/quota", { credentials: "include" }) } catch {}
+      return
+    }
+
+    // Single delete
     if (!deleteTarget) return
     try {
-      const isConnection = deleteTarget.source !== "upload" as any && deleteTarget.source !== "generated" as any && deleteTarget.source !== "" as any
+      const isConnection = deleteTarget.source !== "upload" && deleteTarget.source !== "generated" && deleteTarget.source !== "csv" && deleteTarget.source !== "json" && deleteTarget.source !== "excel"
       if (isConnection) {
         await api.deleteConnection(deleteTarget.id)
       } else {
@@ -300,16 +411,6 @@ export function DatasetGrid() {
 
   const handleEdit = (dataset: Dataset) => {
     toast.info("Editing...")
-  }
-  const toggleFolder = (source: string) => {
-    setOpenFolders(prev => ({
-      ...prev,
-      [source]: prev[source] === undefined ? false : !prev[source]
-    }))
-  }
-
-  const isFolderOpen = (source: string) => {
-    return openFolders[source] === undefined ? true : openFolders[source]
   }
 
   const handleGenerate = async () => {
@@ -361,7 +462,11 @@ export function DatasetGrid() {
     "pinecone": "Pinecone",
     "gcs": "Google Cloud Storage",
     "aws-s3": "AWS S3",
+    "csv": "CSV Files",
+    "json": "JSON Files",
+    "excel": "Excel Files",
     "upload": "Uploaded Files",
+    "generated": "Generated Data",
   }
 
   return (
@@ -386,7 +491,7 @@ export function DatasetGrid() {
         </div>
         <div className="flex-1">
           {/* Search and Actions Header */}
-          <div className="mb-4 flex items-center gap-3">
+          <div className="mb-4 flex flex-wrap items-center gap-3">
             <Button
               variant="outline"
               size="icon"
@@ -394,7 +499,48 @@ export function DatasetGrid() {
               onClick={() => setShowMobileFilters(!showMobileFilters)}
             >
               <SlidersHorizontal className="h-4 w-4" />
-            </Button>            <div className="relative flex-1">
+            </Button>
+            
+            {/* Multi-select controls */}
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2 bg-transparent shrink-0"
+              onClick={handleSelectAll}
+            >
+              {selectedDatasetIds.size === groupedDatasets.filtered.length && groupedDatasets.filtered.length > 0 ? (
+                <CheckSquare className="h-4 w-4 text-[#0052CC]" />
+              ) : (
+                <Square className="h-4 w-4" />
+              )}
+              <span className="hidden sm:inline">
+                {selectedDatasetIds.size > 0 ? `${selectedDatasetIds.size} selected` : "Select All"}
+              </span>
+            </Button>
+            
+            {selectedDatasetIds.size > 0 && (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 bg-transparent text-red-500 hover:bg-red-500/10 hover:text-red-500 shrink-0"
+                  onClick={handleMultiDelete}
+                >
+                  <Trash2 className="h-4 w-4" />
+                  <span className="hidden sm:inline">Delete ({selectedDatasetIds.size})</span>
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-muted-foreground shrink-0"
+                  onClick={clearSelection}
+                >
+                  Clear
+                </Button>
+              </>
+            )}
+            
+            <div className="relative flex-1 min-w-[200px]">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={searchQuery}
@@ -409,14 +555,14 @@ export function DatasetGrid() {
               className="gap-2 bg-transparent"
             >
               <Plus className="h-4 w-4" />
-              Generate
+              <span className="hidden sm:inline">Generate</span>
             </Button>
             <Button 
               onClick={() => setIsConnectModalOpen(true)}
               className="gap-2 bg-[#0052CC] text-white hover:bg-[#003D99]"
             >
               <Plus className="h-4 w-4" />
-              Connect
+              <span className="hidden sm:inline">Connect</span>
             </Button>
           </div>
 
@@ -435,35 +581,83 @@ export function DatasetGrid() {
             </div>
           </div>
 
-          {/* Grouped Grid by Source */}
+          {/* Dataset Grid - Flat list when no filters, grouped when filters active */}
           {groupedDatasets.filtered.length > 0 ? (
-            <div className="space-y-6">
-              {Object.entries(groupedDatasets.groups).map(([source, datasets]) => (
-                <div key={source} className="space-y-3">
-                  <button
-                    onClick={() => toggleFolder(source)}
-                    className="flex items-center gap-2 text-sm font-medium text-foreground hover:text-[#0052CC] transition-colors"
-                  >
-                    {isFolderOpen(source) ? (
-                      <ChevronDown className="h-4 w-4" />
-                    ) : (
-                      <ChevronRight className="h-4 w-4" />
-                    )}
-                    <FolderOpen className="h-4 w-4 text-[#0052CC]" />
-                    <span>{sourceLabels[source] || source}</span>
-                    <span className="ml-1 text-xs text-muted-foreground">({datasets.length})</span>
-                  </button>
-                  
-                  {isFolderOpen(source) && (
-                    <div className="grid gap-4 pl-6 md:grid-cols-2 xl:grid-cols-3">
-                      {datasets.map((dataset) => (
-                        <DatasetCard key={dataset.id} dataset={dataset} onViewSchema={handleViewSchema} onEdit={handleEdit} onDelete={handleDelete} />
-                      ))}
+            groupedDatasets.shouldGroup ? (
+              // Grouped view when filters are active
+              <div className="space-y-6">
+                {Object.entries(groupedDatasets.groups).map(([source, sourceDatasets]) => (
+                  <div key={source} className="space-y-3">
+                    <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                      <span className="text-[#0052CC]">{sourceLabels[source] || source}</span>
+                      <span className="text-xs text-muted-foreground">({sourceDatasets.length})</span>
                     </div>
-                  )}
-                </div>
-              ))}
-            </div>
+                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                      {sourceDatasets.map((dataset, index) => {
+                        const globalIndex = groupedDatasets.filtered.findIndex(d => d.id === dataset.id)
+                        return (
+                          <div key={dataset.id} className="relative">
+                            {/* Selection checkbox overlay */}
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleSelectDataset(dataset.id, globalIndex, e) }}
+                              className={cn(
+                                "absolute top-2 right-2 z-20 p-1 rounded-md transition-all",
+                                selectedDatasetIds.has(dataset.id) 
+                                  ? "bg-[#0052CC] text-white" 
+                                  : "bg-background/80 backdrop-blur-sm border border-border text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100"
+                              )}
+                              style={{ opacity: selectedDatasetIds.has(dataset.id) ? 1 : undefined }}
+                            >
+                              {selectedDatasetIds.has(dataset.id) ? (
+                                <CheckSquare className="h-4 w-4" />
+                              ) : (
+                                <Square className="h-4 w-4" />
+                              )}
+                            </button>
+                            <div className={cn(
+                              "group",
+                              selectedDatasetIds.has(dataset.id) && "ring-2 ring-[#0052CC] rounded-lg"
+                            )}>
+                              <DatasetCard dataset={dataset} onViewSchema={handleViewSchema} onEdit={handleEdit} onDelete={handleDelete} />
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              // Flat grid view - latest uploads first
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {groupedDatasets.filtered.map((dataset, index) => (
+                  <div key={dataset.id} className="relative group">
+                    {/* Selection checkbox overlay */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleSelectDataset(dataset.id, index, e) }}
+                      className={cn(
+                        "absolute top-2 right-2 z-20 p-1 rounded-md transition-all",
+                        selectedDatasetIds.has(dataset.id) 
+                          ? "bg-[#0052CC] text-white" 
+                          : "bg-background/80 backdrop-blur-sm border border-border text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100"
+                      )}
+                      style={{ opacity: selectedDatasetIds.has(dataset.id) ? 1 : undefined }}
+                    >
+                      {selectedDatasetIds.has(dataset.id) ? (
+                        <CheckSquare className="h-4 w-4" />
+                      ) : (
+                        <Square className="h-4 w-4" />
+                      )}
+                    </button>
+                    <div className={cn(
+                      selectedDatasetIds.has(dataset.id) && "ring-2 ring-[#0052CC] rounded-lg"
+                    )}>
+                      <DatasetCard dataset={dataset} onViewSchema={handleViewSchema} onEdit={handleEdit} onDelete={handleDelete} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
           ) : (
             <div className="flex h-64 items-center justify-center rounded-xl border border-border bg-card">
               <div className="text-center">
@@ -731,10 +925,14 @@ export function DatasetGrid() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={isGenerateModalOpen} onOpenChange={setIsGenerateModalOpen}>
-        <DialogContent className="border-border bg-card sm:max-w-[500px]">
+      <Dialog open={isGenerateModalOpen} onOpenChange={(open) => {
+        setIsGenerateModalOpen(open)
+        if (!open) setVerticalSearch("")
+      }}>
+        <DialogContent className="border-border bg-card sm:max-w-[550px]">
           <DialogHeader>
-            <DialogTitle className="text-foreground">
+            <DialogTitle className="text-foreground flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-[#0052CC]" />
               Generate Synthetic Data
             </DialogTitle>
             <DialogDescription className="text-muted-foreground">
@@ -743,73 +941,100 @@ export function DatasetGrid() {
           </DialogHeader>
 
           <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="gen-name" className="text-foreground">Dataset Name</Label>
-              <Input
-                id="gen-name"
-                placeholder="e.g., Customer Data Sample"
-                value={generateName}
-                onChange={(e) => setGenerateName(e.target.value)}
-                className="border-border bg-background text-foreground"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="gen-desc" className="text-foreground">Description (Optional)</Label>
-              <Input
-                id="gen-desc"
-                placeholder="Brief description of the dataset"
-                value={generateDescription}
-                onChange={(e) => setGenerateDescription(e.target.value)}
-                className="border-border bg-background text-foreground"
-              />
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="gen-name" className="text-foreground">Dataset Name <span className="text-red-500">*</span></Label>
+                <Input
+                  id="gen-name"
+                  placeholder="e.g., Customer Data Sample"
+                  value={generateName}
+                  onChange={(e) => setGenerateName(e.target.value)}
+                  className="border-border bg-background text-foreground"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="gen-desc" className="text-foreground">Description</Label>
+                <Input
+                  id="gen-desc"
+                  placeholder="Brief description"
+                  value={generateDescription}
+                  onChange={(e) => setGenerateDescription(e.target.value)}
+                  className="border-border bg-background text-foreground"
+                />
+              </div>
             </div>
 
             <div className="grid grid-cols-3 gap-4">
               <div className="space-y-2">
-                <Label className="text-foreground">Rows</Label>
-                <Select value={generateRows} onValueChange={setGenerateRows}>
-                  <SelectTrigger className="border-border bg-background text-foreground">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="border-border bg-popover">
-                    <SelectItem value="100">100</SelectItem>
-                    <SelectItem value="500">500</SelectItem>
-                    <SelectItem value="1000">1,000</SelectItem>
-                    <SelectItem value="5000">5,000</SelectItem>
-                    <SelectItem value="10000">10,000</SelectItem>
-                    <SelectItem value="50000">50,000</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Label className="text-foreground">Rows <span className="text-red-500">*</span></Label>
+                <Input
+                  type="number"
+                  min="1"
+                  max="1000000"
+                  placeholder="e.g., 1000"
+                  value={generateRows}
+                  onChange={(e) => setGenerateRows(e.target.value)}
+                  className="border-border bg-background text-foreground font-mono"
+                />
+                <p className="text-[10px] text-muted-foreground">1 - 1,000,000</p>
               </div>
 
               <div className="space-y-2">
-                <Label className="text-foreground">Columns</Label>
-                <Select value={generateColumns} onValueChange={setGenerateColumns}>
-                  <SelectTrigger className="border-border bg-background text-foreground">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="border-border bg-popover">
-                    <SelectItem value="5">5</SelectItem>
-                    <SelectItem value="10">10</SelectItem>
-                    <SelectItem value="15">15</SelectItem>
-                    <SelectItem value="20">20</SelectItem>
-                    <SelectItem value="30">30</SelectItem>
-                    <SelectItem value="50">50</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Label className="text-foreground">Columns <span className="text-red-500">*</span></Label>
+                <Input
+                  type="number"
+                  min="1"
+                  max="500"
+                  placeholder="e.g., 10"
+                  value={generateColumns}
+                  onChange={(e) => setGenerateColumns(e.target.value)}
+                  className="border-border bg-background text-foreground font-mono"
+                />
+                <p className="text-[10px] text-muted-foreground">1 - 500</p>
               </div>
 
               <div className="space-y-2">
-                <Label className="text-foreground">Vertical</Label>
-                <Select value={generateVertical} onValueChange={setGenerateVertical}>
+                <Label className="text-foreground">Vertical <span className="text-red-500">*</span></Label>
+                <Select value={generateVertical} onValueChange={(val) => {
+                  setGenerateVertical(val)
+                  setVerticalSearch("")
+                }}>
                   <SelectTrigger className="border-border bg-background text-foreground">
                     <SelectValue placeholder="Select vertical..." />
                   </SelectTrigger>
-                  <SelectContent className="border-border bg-popover max-h-[300px]">
-                    {verticals.map((v) => (
-                      <SelectItem key={v.value} value={v.value}>{v.label}</SelectItem>
-                    ))}
+                  <SelectContent className="border-border bg-popover max-h-[350px]">
+                    <div className="sticky top-0 bg-popover p-2 border-b border-border">
+                      <div className="relative">
+                        <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                          placeholder="Search verticals..."
+                          value={verticalSearch}
+                          onChange={(e) => setVerticalSearch(e.target.value)}
+                          className="h-8 pl-8 text-sm border-border bg-background"
+                          onClick={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => e.stopPropagation()}
+                        />
+                      </div>
+                    </div>
+                    <div className="pt-1">
+                      {verticals
+                        .filter(v => 
+                          !verticalSearch || 
+                          v.label.toLowerCase().includes(verticalSearch.toLowerCase()) ||
+                          v.value.toLowerCase().includes(verticalSearch.toLowerCase())
+                        )
+                        .map((v) => (
+                          <SelectItem key={v.value} value={v.value}>{v.label}</SelectItem>
+                        ))
+                      }
+                      {verticals.filter(v => 
+                        !verticalSearch || 
+                        v.label.toLowerCase().includes(verticalSearch.toLowerCase()) ||
+                        v.value.toLowerCase().includes(verticalSearch.toLowerCase())
+                      ).length === 0 && (
+                        <p className="text-sm text-muted-foreground text-center py-4">No verticals found</p>
+                      )}
+                    </div>
                   </SelectContent>
                 </Select>
               </div>
@@ -898,12 +1123,18 @@ Example: Generate customer data with columns: customer_id, name, email, signup_d
       </Dialog>
 
       {/* Delete Confirmation Dialog */}
-      <Dialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
+      <Dialog open={!!deleteTarget} onOpenChange={() => { setDeleteTarget(null); setIsMultiDeleteMode(false) }}>
         <DialogContent className="sm:max-w-md border-border bg-card">
           <DialogHeader>
-            <DialogTitle className="text-foreground">Delete Dataset</DialogTitle>
+            <DialogTitle className="text-foreground flex items-center gap-2">
+              <Trash2 className="h-5 w-5 text-red-500" />
+              {isMultiDeleteMode ? "Delete Multiple Datasets" : "Delete Dataset"}
+            </DialogTitle>
             <DialogDescription className="text-muted-foreground">
-              Are you sure you want to delete "{deleteTarget?.name}"? This action cannot be undone.
+              {isMultiDeleteMode 
+                ? `Are you sure you want to delete ${selectedDatasetIds.size} selected datasets? This action cannot be undone.`
+                : `Are you sure you want to delete "${deleteTarget?.name}"? This action cannot be undone.`
+              }
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-3">

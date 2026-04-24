@@ -3,6 +3,7 @@ package handlers
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"encoding/json"
@@ -27,6 +28,21 @@ func NewEmailService() *EmailService {
 		email:    os.Getenv("SMTP_EMAIL"),
 		password: os.Getenv("SMTP_PASSWORD"),
 	}
+}
+
+
+func encodeBase64Chunks(body string) string {
+	enc := base64.StdEncoding.EncodeToString([]byte(body))
+	var out []byte
+	for i := 0; i < len(enc); i += 76 {
+		end := i + 76
+		if end > len(enc) {
+			end = len(enc)
+		}
+		out = append(out, enc[i:end]...)
+		out = append(out, '\r', '\n')
+	}
+	return string(out)
 }
 
 func generateMessageID() string {
@@ -60,11 +76,11 @@ func (e *EmailService) SendEmail(to, subject, htmlBody string) error {
 		"\r\n"+
 		"--%s\r\n"+
 		"Content-Type: text/html; charset=UTF-8\r\n"+
-		"Content-Transfer-Encoding: 7bit\r\n"+
+		"Content-Transfer-Encoding: base64\r\n"+
 		"\r\n"+
 		"%s\r\n"+
 		"--%s--\r\n",
-		to, subject, msgID, time.Now().Format(time.RFC1123Z), boundary, boundary, plainText, boundary, htmlBody, boundary)
+		to, subject, msgID, time.Now().Format(time.RFC1123Z), boundary, boundary, plainText, boundary, encodeBase64Chunks(htmlBody), boundary)
 
 	addr := fmt.Sprintf("%s:%s", e.host, e.port)
 	return smtp.SendMail(addr, auth, e.email, []string{to}, []byte(msg))

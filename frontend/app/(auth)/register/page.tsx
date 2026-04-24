@@ -421,10 +421,10 @@ export default function RegisterPage() {
           )}
         </div>
 
-        {/* Alpha Badge */}
+        {/* Beta Badge */}
         <div className="mt-6 flex items-center gap-2 rounded-full border border-border bg-card/50 px-4 py-2 text-xs text-muted-foreground backdrop-blur-sm">
           <div className="h-2 w-2 rounded-full bg-[#0052CC] animate-pulse" />
-          Alpha Version
+          Beta Version
         </div>
 
         {/* Terms */}

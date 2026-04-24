@@ -28,13 +28,16 @@ import {
   Check,
   X,
   User,
+  Users,
   CreditCard,
   BarChart3,
+  Gift,
   LogOut,
   Mail,
   Calendar,
   Loader2,
   Menu,
+  Rocket,
 } from "lucide-react"
 import {
   Dialog,
@@ -55,9 +58,29 @@ import type { PlaygroundSession } from "@/lib/types"
 const navigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Data", href: "/datasets", icon: Database },
-  { name: "Model Builder", href: "/build", icon: Cpu, dynamic: true },
-  { name: "Models", href: "/models", icon: Layers },
 ]
+
+// Model building job status types
+type JobStatus = "building" | "completed" | "failed"
+
+interface ModelBuildingJob {
+  id: string
+  name: string
+  status: JobStatus
+  progress?: number
+  epoch?: number
+  totalEpochs?: number
+  accuracy?: number
+  loss?: number
+  learningRate?: number
+  startTime?: number
+  history?: any[]
+  initLogs?: string[]
+  queryId?: string
+  error?: string
+  createdAt: Date
+  seen?: boolean
+}
 
 interface BackendQuery {
   id: string
@@ -77,6 +100,9 @@ export const SidebarContext = createContext<{
   resetPlayground: () => void
   mobileOpen: boolean
   setMobileOpen: (value: boolean) => void
+  buildingJobs: ModelBuildingJob[]
+  setBuildingJobs: React.Dispatch<React.SetStateAction<ModelBuildingJob[]>>
+  markJobSeen: (jobId: string) => void
 }>({
   collapsed: false,
   setCollapsed: () => {},
@@ -88,6 +114,9 @@ export const SidebarContext = createContext<{
   resetPlayground: () => {},
   mobileOpen: false,
   setMobileOpen: () => {},
+  buildingJobs: [],
+  setBuildingJobs: () => {},
+  markJobSeen: () => {},
 })
 
 export function useSidebar() {
@@ -101,6 +130,56 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false)
   const [queriesLoaded, setQueriesLoaded] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
+  
+  const [buildingJobs, setBuildingJobs] = useState<ModelBuildingJob[]>([])
+
+  useEffect(() => {
+    let cancelled = false
+    const fetchJobs = async () => {
+      try {
+        const res = await fetch("/api/train/jobs", { credentials: "include" })
+        if (!res.ok) return
+        const data = await res.json()
+        if (cancelled || !Array.isArray(data)) return
+        setBuildingJobs(prev => {
+          const seenMap = new Map(prev.map(j => [j.id, j.seen]))
+          return data.map((j: any) => ({
+            id: j.id,
+            name: j.name,
+            status: j.status,
+            progress: j.progress,
+            epoch: j.epoch,
+            totalEpochs: j.total_epochs,
+            accuracy: j.accuracy,
+            loss: j.loss,
+            learningRate: j.learning_rate,
+            startTime: j.start_time,
+            history: j.history,
+            initLogs: j.init_logs,
+            error: j.error,
+            queryId: j.query_id,
+            createdAt: j.created_at ? new Date(j.created_at) : new Date(),
+            seen: seenMap.get(j.id) ?? (j.status === "building" ? false : false),
+          }))
+        })
+      } catch {}
+    }
+    fetchJobs()
+    const interval = setInterval(fetchJobs, 2000)
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [])
+  
+  const markJobSeen = (jobId: string) => {
+    setBuildingJobs(prev => prev.map(job => 
+      job.id === jobId ? { ...job, seen: true } : job
+    ))
+    fetch("/api/train/jobs/seen", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ job_id: jobId })
+    }).catch(() => {})
+  }
 
   useEffect(() => {
     const savedTheme = localStorage.getItem("schemalabs-theme") as "dark" | "light" | null
@@ -178,10 +257,51 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
         chatSessions, setChatSessions,
         addChatSession, resetPlayground,
         mobileOpen, setMobileOpen,
+        buildingJobs, setBuildingJobs,
+        markJobSeen,
       }}
     >
       {children}
     </SidebarContext.Provider>
+  )
+}
+
+function JobStatusIndicator({ status }: { status: JobStatus }) {
+  if (status === "building") {
+    return (
+      <span className="relative flex h-2 w-2">
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#2684FF] opacity-75"></span>
+        <span className="relative inline-flex rounded-full h-2 w-2 bg-[#2684FF]"></span>
+      </span>
+    )
+  }
+  // No indicator for completed/failed - we use colored text instead
+  return null
+}
+
+function ModelBuilderJobItem({ job, theme, onNavigate }: { job: ModelBuildingJob; theme: "dark" | "light"; onNavigate: () => void }) {
+  return (
+    <Link 
+      href={`/build?qid=${job.queryId || job.id}`}
+      onClick={() => onNavigate()}
+      className={cn(
+        "flex items-center gap-2 rounded-lg pl-6 pr-2 py-2 text-xs transition-colors",
+        theme === "dark" ? "text-gray-500 hover:bg-white/5 hover:text-gray-300" : "text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+      )}
+      title={job.name}
+    >
+      {job.status === "building" && <JobStatusIndicator status={job.status} />}
+      <span className={cn("truncate flex-1", job.status !== "building" && "italic")}>{job.name}</span>
+      {job.status === "building" && job.progress !== undefined && (
+        <span className="text-[10px] text-muted-foreground">{job.progress}%</span>
+      )}
+      {job.status === "completed" && (
+        <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-[#36B37E]/15 text-[#36B37E]">done</span>
+      )}
+      {job.status === "failed" && (
+        <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-[#FF5630]/15 text-[#FF5630]">failed</span>
+      )}
+    </Link>
   )
 }
 
@@ -258,13 +378,31 @@ function ChatSessionItem({ session, theme }: { session: PlaygroundSession; theme
 }
 
 export function Sidebar() {
+
   const pathname = usePathname()
   const router = useRouter()
   const { user, logout } = useAuth()
-  const { collapsed, setCollapsed, theme, setTheme, chatSessions, mobileOpen, setMobileOpen } = useSidebar()
+  const { collapsed, setCollapsed, theme, setTheme, chatSessions, mobileOpen, setMobileOpen, buildingJobs, markJobSeen } = useSidebar()
   const [playgroundExpanded, setPlaygroundExpanded] = useState(true)
+  const [modelBuilderExpanded, setModelBuilderExpanded] = useState(true)
   const [helpModalOpen, setHelpModalOpen] = useState(false)
   const [bookingModalOpen, setBookingModalOpen] = useState(false)
+  
+  const visibleJobs = buildingJobs.filter(job => 
+    job.status === "building" || !job.seen
+  )
+  
+  const handleJobClick = (job: ModelBuildingJob) => {
+    if (job.status !== "building") {
+      fetch("/api/train/jobs/seen", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ job_id: job.id })
+      }).catch(() => {})
+    }
+    setMobileOpen(false)
+  }
 
   // Swipe-to-close support
   const touchStartX = useRef<number | null>(null)
@@ -329,7 +467,7 @@ export function Sidebar() {
           {(!collapsed || mobileOpen) ? (
             <>
               <img src={theme === "dark" ? "/images/schema-light.png" : "/images/schema-dark.png"} alt="Schema" width={72} height={20} className="h-5 w-auto" />
-              <span className="ml-auto rounded bg-[#0052CC]/20 px-1.5 py-0.5 font-mono text-[10px] text-[#2684FF]">ALPHA</span>
+              <span className="ml-auto rounded bg-[#0052CC]/20 px-1.5 py-0.5 font-mono text-[10px] text-[#2684FF]">BETA</span>
               {mobileOpen && (
                 <button onClick={() => setMobileOpen(false)} className={cn("ml-2 p-1 rounded-md md:hidden", theme === "dark" ? "hover:bg-white/10 text-gray-400" : "hover:bg-gray-100 text-gray-600")} aria-label="Close menu">
                   <X className="h-4 w-4" />
@@ -343,10 +481,11 @@ export function Sidebar() {
 
         {/* Main Navigation */}
         <nav className="flex-1 overflow-y-auto space-y-1 px-3 py-4">
+          {/* Dashboard */}
           {navigation.map((item) => {
             const isActive = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href))
             return (
-              <Link key={item.name} href={item.href} onClick={(e) => { if (item.dynamic && pathname === item.href) { e.preventDefault(); router.push(item.href + "?t=" + Date.now()) } }}
+              <Link key={item.name} href={item.href}
                 className={cn(
                   "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
                   isActive ? "bg-[#0052CC]/15 text-[#2684FF]" : theme === "dark" ? "text-gray-400 hover:bg-white/5 hover:text-white" : "text-gray-600 hover:bg-gray-100 hover:text-gray-900",
@@ -359,6 +498,56 @@ export function Sidebar() {
               </Link>
             )
           })}
+
+          {/* Model Builder Section with Jobs */}
+          <div>
+            {(collapsed && !mobileOpen) ? (
+              <Link href="/build" className={cn("flex items-center justify-center rounded-lg px-2 py-2.5 text-sm font-medium transition-colors", pathname.startsWith("/build") ? "bg-[#0052CC]/15 text-[#2684FF]" : theme === "dark" ? "text-gray-400 hover:bg-white/5 hover:text-white" : "text-gray-600 hover:bg-gray-100 hover:text-gray-900")} title="Model Builder">
+                <Cpu className="h-5 w-5 shrink-0" />
+                {visibleJobs.length > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-[#2684FF]" />
+                )}
+              </Link>
+            ) : (
+              <>
+                <button onClick={() => setModelBuilderExpanded(!modelBuilderExpanded)} className={cn("flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors", pathname.startsWith("/build") ? "bg-[#0052CC]/15 text-[#2684FF]" : theme === "dark" ? "text-gray-400 hover:bg-white/5 hover:text-white" : "text-gray-600 hover:bg-gray-100 hover:text-gray-900")}>
+                  <Cpu className="h-5 w-5 shrink-0" />
+                  <span className="flex-1 text-left">Model Builder</span>
+                  {visibleJobs.length > 0 && (
+                    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-[#2684FF]/20 text-[#2684FF]">{visibleJobs.length}</span>
+                  )}
+                  {modelBuilderExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                </button>
+                {modelBuilderExpanded && (
+                  <div className={cn("ml-4 mt-1 space-y-0.5 border-l pl-3 max-h-48 overflow-y-auto [&::-webkit-scrollbar]:w-0 hover:[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-muted-foreground/30 [&::-webkit-scrollbar-thumb]:rounded-full", theme === "dark" ? "border-white/10" : "border-gray-200")}>
+                    <Link href="/build" onClick={(e) => { e.preventDefault(); setMobileOpen(false); sessionStorage.removeItem('trainingQueryId'); window.location.href = `/build?t=${Date.now()}` }} className={cn("flex items-center gap-2 rounded-lg px-2 py-2 text-xs font-medium transition-colors w-full text-left", theme === "dark" ? "text-[#2684FF] hover:bg-white/5" : "text-[#0052CC] hover:bg-gray-100")}>
+                      <Plus className="h-3.5 w-3.5" />
+                      New Model
+                    </Link>
+                    {visibleJobs.length === 0 ? (
+                      <p className={cn("pl-6 py-2 text-xs", theme === "dark" ? "text-gray-600" : "text-gray-400")}>No active jobs</p>
+                    ) : (
+                      visibleJobs.map((job) => (
+                        <ModelBuilderJobItem key={job.id} job={job} theme={theme} onNavigate={() => handleJobClick(job)} />
+                      ))
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* Models */}
+          <Link href="/models" className={cn("flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors", pathname === "/models" || pathname.startsWith("/models") ? "bg-[#0052CC]/15 text-[#2684FF]" : theme === "dark" ? "text-gray-400 hover:bg-white/5 hover:text-white" : "text-gray-600 hover:bg-gray-100 hover:text-gray-900", (collapsed && !mobileOpen) && "justify-center px-2")} title={(collapsed && !mobileOpen) ? "Models" : undefined}>
+            <Layers className="h-5 w-5 shrink-0" />
+            {(!collapsed || mobileOpen) && "Models"}
+          </Link>
+
+          {/* Deploy */}
+          <Link href="/configuration" className={cn("flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors", pathname === "/configuration" ? "bg-[#0052CC]/15 text-[#2684FF]" : theme === "dark" ? "text-gray-400 hover:bg-white/5 hover:text-white" : "text-gray-600 hover:bg-gray-100 hover:text-gray-900", (collapsed && !mobileOpen) && "justify-center px-2")} title={(collapsed && !mobileOpen) ? "Deploy" : undefined}>
+            <Rocket className="h-5 w-5 shrink-0" />
+            {(!collapsed || mobileOpen) && "Deploy"}
+          </Link>
 
           {/* Playground Section with Chat History */}
           <div className="pt-2">
@@ -398,13 +587,7 @@ export function Sidebar() {
               </>
             )}
           </div>
-
-          {/* Configuration */}
-          <Link href="/configuration" className={cn("flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors", pathname === "/configuration" ? "bg-[#0052CC]/15 text-[#2684FF]" : theme === "dark" ? "text-gray-400 hover:bg-white/5 hover:text-white" : "text-gray-600 hover:bg-gray-100 hover:text-gray-900", (collapsed && !mobileOpen) && "justify-center px-2")} title={(collapsed && !mobileOpen) ? "Configuration" : undefined}>
-            <Settings className="h-5 w-5 shrink-0" />
-            {(!collapsed || mobileOpen) && "Configuration"}
-          </Link>
-        </nav>
+          </nav>
 
         {/* Bottom Section */}
         <div className={cn("border-t px-3 py-4 space-y-1", theme === "dark" ? "border-white/10" : "border-gray-200")}>
@@ -435,7 +618,9 @@ export function Sidebar() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" side="top" className="w-56 mb-2">
                 <Link href="/account"><DropdownMenuItem className="gap-3 cursor-pointer"><User className="h-4 w-4" />Account</DropdownMenuItem></Link>
+                <Link href="/team"><DropdownMenuItem className="gap-3 cursor-pointer"><Users className="h-4 w-4" />Team</DropdownMenuItem></Link>
                 <Link href="/billing"><DropdownMenuItem className="gap-3 cursor-pointer"><CreditCard className="h-4 w-4" />Billing</DropdownMenuItem></Link>
+                {user?.role === "admin" && (<Link href="/admin/gift-codes"><DropdownMenuItem className="gap-3 cursor-pointer"><Gift className="h-4 w-4" />Admin</DropdownMenuItem></Link>)}
                 <Link href="/usage"><DropdownMenuItem className="gap-3 cursor-pointer"><BarChart3 className="h-4 w-4" />Usage</DropdownMenuItem></Link>
                 <DropdownMenuItem onClick={handleLogout} className="gap-3 cursor-pointer text-red-500 focus:text-red-500"><LogOut className="h-4 w-4" />Log out</DropdownMenuItem>
               </DropdownMenuContent>
@@ -453,7 +638,9 @@ export function Sidebar() {
               <DropdownMenuContent align="center" side="top" className="w-56 mb-2">
                 <div className="px-2 py-1.5 text-xs text-muted-foreground">{user?.email || ""}</div>
                 <Link href="/account"><DropdownMenuItem className="gap-3 cursor-pointer"><User className="h-4 w-4" />Account</DropdownMenuItem></Link>
+                <Link href="/team"><DropdownMenuItem className="gap-3 cursor-pointer"><Users className="h-4 w-4" />Team</DropdownMenuItem></Link>
                 <Link href="/billing"><DropdownMenuItem className="gap-3 cursor-pointer"><CreditCard className="h-4 w-4" />Billing</DropdownMenuItem></Link>
+                {user?.role === "admin" && (<Link href="/admin/gift-codes"><DropdownMenuItem className="gap-3 cursor-pointer"><Gift className="h-4 w-4" />Admin</DropdownMenuItem></Link>)}
                 <Link href="/usage"><DropdownMenuItem className="gap-3 cursor-pointer"><BarChart3 className="h-4 w-4" />Usage</DropdownMenuItem></Link>
                 <DropdownMenuItem onClick={handleLogout} className="gap-3 cursor-pointer text-red-500 focus:text-red-500"><LogOut className="h-4 w-4" />Log out</DropdownMenuItem>
               </DropdownMenuContent>

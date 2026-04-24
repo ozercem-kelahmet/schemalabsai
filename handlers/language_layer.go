@@ -1406,10 +1406,7 @@ func ListAvailableModelsHandler(w http.ResponseWriter, r *http.Request) {
 
 func defaultMistralModels() []LLMModelInfo {
 	return []LLMModelInfo{
-		{ID: "ministral-3b-2501", Name: "Schema-3B", Provider: "Schema"},
-		{ID: "ministral-8b-2410", Name: "Schema-8B", Provider: "Schema"},
-		{ID: "mistral-small-2503", Name: "Schema-14B", Provider: "Schema"},
-		{ID: "mistral-medium-2505", Name: "Schema-24B", Provider: "Schema"},
+		{ID: "nota", Name: "Nota", Provider: "Schema"},
 	}
 }
 
@@ -1441,13 +1438,8 @@ func fetchMistralModels(apiKey string) []LLMModelInfo {
 
 	// Name mapping for branding
 	nameMap := map[string]string{
-		"ministral-3b-2501":    "Schema-3B",
-		"ministral-8b-2410":    "Schema-8B",
-		"mistral-small-2503":   "Schema-14B",
-		"mistral-medium-2505":  "Schema-24B",
-		"mistral-small-latest": "Schema-14B",
-		"mistral-large-latest": "Schema-Large",
-	}
+										"nota": "Nota",
+			}
 
 	var models []LLMModelInfo
 	for _, m := range result.Data {
@@ -1526,7 +1518,7 @@ func CreateSessionHandler(w http.ResponseWriter, r *http.Request) {
 		"vertical_name":   verticalName,
 		"expires_at":      time.Now().Add(sessionTTLMinutes * time.Minute).Format(time.RFC3339),
 		"active_provider": "mistral",
-		"active_model":    "mistral-medium-2505",
+		"active_model":    "nota",
 		"status":          "active",
 	})
 }

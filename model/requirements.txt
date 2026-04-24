@@ -73,3 +73,5 @@ tiktoken==0.9.0
 kafka-python==2.0.2
 google-cloud-storage
 google-cloud-storage
+turboquant_torch==0.4.0
+sentence-transformers==3.3.1

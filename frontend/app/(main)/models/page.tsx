@@ -3,12 +3,14 @@ import { toast } from "sonner"
 import { useState, useEffect, useMemo } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Search, Layers, Play, MoreHorizontal, Calendar, Hash, Activity, Zap, ChevronLeft, ChevronRight, Database, FileText, MessageSquare, Trash2, CheckCircle2, TrendingUp, Settings } from "lucide-react"
+import { Search, Layers, Play, MoreHorizontal, Calendar, Hash, Activity, Zap, ChevronLeft, ChevronRight, Database, FileText, MessageSquare, Trash2, CheckCircle2, TrendingUp, Settings, XCircle, Copy, Clock, HardDrive, Phone } from "lucide-react"
+import { Checkbox } from "@/components/ui/checkbox"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { SourceBadge } from "@/components/datasets/source-badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
 import { ModelSystemModal } from "@/components/models/model-system-modal"
 
 interface FineTunedModel {
@@ -34,6 +36,10 @@ interface FineTunedModel {
   next_sync_at?: string
   last_sync_at?: string
   connection_ids?: string
+  training_time?: number
+  training_data_size?: number
+  endpoint_calls?: number
+  status?: string
 }
 
 function ChartWithTooltip({ data, label, finalValue, isLoss = false }: { data: number[]; label: string; finalValue: string; isLoss?: boolean }) {
@@ -88,6 +94,7 @@ export default function ModelsPage() {
   const [editingName, setEditingName] = useState("")
   const [endpointModalOpen, setEndpointModalOpen] = useState(false)
   const [selectedModelForEndpoint, setSelectedModelForEndpoint] = useState<FineTunedModel | null>(null)
+  const [creatingEndpoint, setCreatingEndpoint] = useState(false)
   const [endpointForm, setEndpointForm] = useState({ name: "", urlPath: "", description: "" })
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [syncModalOpen, setSyncModalOpen] = useState(false)
@@ -103,14 +110,38 @@ export default function ModelsPage() {
   const [selectedModelForDelete, setSelectedModelForDelete] = useState<FineTunedModel | null>(null)
   const [modelSystemModalOpen, setModelSystemModalOpen] = useState(false)
   const [selectedModelForSystem, setSelectedModelForSystem] = useState<FineTunedModel | null>(null)
+  
+  // Multi-select state
+  const [selectedModelIds, setSelectedModelIds] = useState<Set<string>>(new Set())
+  const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null)
+  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false)
+  
+  // Rename validation
+  const [renameError, setRenameError] = useState<string>("")
 
   const startEditing = (model: FineTunedModel) => {
     setEditingModelId(model.id)
     setEditingName(model.name)
+    setRenameError("")
+  }
+
+  const validateRename = (newName: string, currentModelId: string) => {
+    const nameLower = newName.toLowerCase().trim()
+    const duplicate = allModels.find(m => m.id !== currentModelId && m.name.toLowerCase().trim() === nameLower)
+    if (duplicate) {
+      setRenameError("A model with this name already exists")
+      return false
+    }
+    setRenameError("")
+    return true
   }
 
   const saveModelName = async () => {
     if (editingModelId && editingName.trim()) {
+      if (!validateRename(editingName, editingModelId)) {
+        toast.error("Name Not Available", { description: "A model with this name already exists. Please choose a different name." })
+        return
+      }
       try {
         await fetch("/api/models/finetuned/update", {
           method: "POST",
@@ -119,20 +150,85 @@ export default function ModelsPage() {
           body: JSON.stringify({ id: editingModelId, name: editingName.trim() }),
         })
         setAllModels(prev => prev.map(m => m.id === editingModelId ? { ...m, name: editingName.trim() } : m))
-      } catch (e) { console.error(e) }
+        toast.success("Model renamed successfully")
+      } catch (e) { console.error(e); toast.error("Failed to rename model") }
     }
     setEditingModelId(null)
     setEditingName("")
+    setRenameError("")
   }
 
   const cancelEditing = () => {
     setEditingModelId(null)
     setEditingName("")
+    setRenameError("")
+  }
+  
+  // Copy ID to clipboard
+  const copyToClipboard = (id: string) => {
+    navigator.clipboard.writeText(id)
+    toast.success("ID copied to clipboard")
+  }
+  
+  // Multi-select handlers
+  const handleModelSelect = (modelId: string, index: number, event: React.MouseEvent) => {
+    event.stopPropagation()
+    
+    if (event.shiftKey && lastSelectedIndex !== null) {
+      // Shift+click: select range
+      const startIdx = Math.min(lastSelectedIndex, index)
+      const endIdx = Math.max(lastSelectedIndex, index)
+      const newSelected = new Set(selectedModelIds)
+      for (let i = startIdx; i <= endIdx; i++) {
+        if (paginated[i]) {
+          newSelected.add(paginated[i].id)
+        }
+      }
+      setSelectedModelIds(newSelected)
+    } else {
+      // Normal click: toggle single selection
+      const newSelected = new Set(selectedModelIds)
+      if (newSelected.has(modelId)) {
+        newSelected.delete(modelId)
+      } else {
+        newSelected.add(modelId)
+      }
+      setSelectedModelIds(newSelected)
+      setLastSelectedIndex(index)
+    }
+  }
+  
+  const selectAll = () => {
+    const allIds = new Set(paginated.map(m => m.id))
+    setSelectedModelIds(allIds)
+  }
+  
+  const clearSelection = () => {
+    setSelectedModelIds(new Set())
+    setLastSelectedIndex(null)
+  }
+  
+  const bulkDelete = async () => {
+    const ids = Array.from(selectedModelIds)
+    let successCount = 0
+    for (const id of ids) {
+      try {
+        const res = await fetch("/api/models/finetuned/" + id, {
+          method: "DELETE",
+          credentials: "include",
+        })
+        if (res.ok) successCount++
+      } catch (e) { console.error(e) }
+    }
+    setAllModels(prev => prev.filter(m => !selectedModelIds.has(m.id)))
+    toast.success(`Deleted ${successCount} model${successCount !== 1 ? 's' : ''}`)
+    setBulkDeleteConfirmOpen(false)
+    clearSelection()
   }
 
   const openEndpointModal = (model: FineTunedModel) => {
     setSelectedModelForEndpoint(model)
-    setEndpointForm({ name: "", urlPath: `/v1/models/${model.id}/`, description: "" })
+    setEndpointForm({ name: "", urlPath: "", description: "" })
     setEndpointModalOpen(true)
   }
 
@@ -196,6 +292,7 @@ export default function ModelsPage() {
   }, [])
 
   const fetchModels = async () => {
+    
     try {
       const res = await fetch("/api/models/finetuned", { credentials: "include" })
       if (res.ok) {
@@ -210,8 +307,13 @@ export default function ModelsPage() {
           }
         })
         setAllModels(list)
+      } else {
+        setAllModels([])
       }
-    } catch (e) { console.error(e) }
+    } catch (e) { 
+      console.error(e)
+      setAllModels([])
+    }
     finally { setLoading(false) }
   }
 
@@ -249,7 +351,17 @@ export default function ModelsPage() {
   const cleanName = (s: string) => s.replace(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}[_.]?/, "").replace(/^\.csv_?/, "").replace(/_\d{8}_\d{6}/, "").replace(/\.(csv|json|jsonl)$/, "")
   const getSourceNames = (m: FineTunedModel): string[] => {
     const names: string[] = []
-    // For connection-based models, show clean table/dataset names from source_file_names
+    // Backend provides sources[] with connection_name — preferred source of truth
+    const srcs = (m as any).sources
+    if (Array.isArray(srcs) && srcs.length > 0) {
+      srcs.forEach((s: any) => {
+        const n = s.connection_name || s.file_name || s.name
+        if (n) names.push(n)
+      })
+      const seen = new Set<string>()
+      return names.filter(n => { const k = n.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true })
+    }
+    // Legacy fallback for old models
     if (m.connection_ids && m.source_file_names) {
       const fileNames = m.source_file_names.split(",").map(s => {
         let name = cleanName(s.trim())
@@ -325,6 +437,36 @@ export default function ModelsPage() {
         <Link href="/build"><Button className="bg-[#0052CC] hover:bg-[#0052CC]/90 text-white">Build New Model</Button></Link>
       </div>
 
+      {/* Multi-select toolbar */}
+      {selectedModelIds.size > 0 && (
+        <div className="flex items-center gap-3 rounded-lg border border-[#0052CC]/30 bg-[#0052CC]/10 px-4 py-2.5">
+          <Checkbox
+            checked={selectedModelIds.size === paginated.length && paginated.length > 0}
+            onCheckedChange={(checked) => checked ? selectAll() : clearSelection()}
+            className="border-[#0052CC] data-[state=checked]:bg-[#0052CC] data-[state=checked]:border-[#0052CC]"
+          />
+          <span className="text-sm font-medium text-[#0052CC] dark:text-[#2684FF]">
+            {selectedModelIds.size} selected
+          </span>
+          <div className="h-4 w-px bg-[#0052CC]/30" />
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs border-red-500/50 text-red-500 hover:bg-red-500/10"
+            onClick={() => setBulkDeleteConfirmOpen(true)}
+          >
+            <Trash2 className="h-3 w-3 mr-1" />
+            Delete Selected
+          </Button>
+          <button
+            onClick={clearSelection}
+            className="ml-auto text-xs text-[#0052CC] dark:text-[#2684FF] hover:underline"
+          >
+            Clear selection
+          </button>
+        </div>
+      )}
+
       {/* SEARCH INPUT */}
       <div className="relative w-full">
         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground pointer-events-none" />
@@ -357,21 +499,42 @@ export default function ModelsPage() {
       ) : filteredModels.length > 0 ? (
         <>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {paginated.map(m => (
-              <Card key={m.id} className="border-border bg-card hover:border-[#0052CC]/50 transition-colors cursor-pointer" onClick={() => { if (editingModelId) return; setTimeout(() => handleClick(m), 100) }}>
+            {paginated.map((m, index) => (
+              <Card 
+                key={m.id} 
+                className={`border-border bg-card hover:border-[#0052CC]/50 transition-colors cursor-pointer relative ${selectedModelIds.has(m.id) ? 'ring-2 ring-[#0052CC] border-[#0052CC]' : ''}`} 
+                onClick={() => { if (editingModelId) return; setSelectedModelForSystem(m); setModelSystemModalOpen(true) }}
+              >
                 <CardContent className="p-4">
                   <div className="flex items-start justify-between">
-                    <div className="flex-1 min-w-0">
-                      {editingModelId === m.id ? (
-                        <div className="flex items-center gap-1 w-full" onClick={e => e.stopPropagation()}>
-                          <input className="font-medium text-foreground bg-background border border-border rounded px-2 py-0.5 flex-1 min-w-0" value={editingName} onChange={e => setEditingName(e.target.value)} onKeyDown={e => { if (e.key === "Enter") saveModelName(); if (e.key === "Escape") cancelEditing() }} autoFocus />
-                          <button className="p-1 rounded hover:bg-green-500/20 text-green-500" onClick={e => { e.stopPropagation(); saveModelName() }}>✓</button>
-                          <button className="p-1 rounded hover:bg-red-500/20 text-red-500" onClick={e => { e.stopPropagation(); cancelEditing() }}>✕</button>
-                        </div>
-                      ) : (
-                        <h3 className="font-medium text-foreground truncate">{m.name}</h3>
-                      )}
-                      <p className="text-xs text-muted-foreground mt-0.5">Fine-tuned model</p>
+                    <div className="flex items-start gap-2 flex-1 min-w-0">
+                      <Checkbox
+                        checked={selectedModelIds.has(m.id)}
+                        onCheckedChange={() => {}}
+                        onClick={(e) => handleModelSelect(m.id, index, e)}
+                        className="mt-0.5 border-border data-[state=checked]:bg-[#0052CC] data-[state=checked]:border-[#0052CC]"
+                      />
+                      <div className="flex-1 min-w-0">
+                        {editingModelId === m.id ? (
+                          <div className="flex flex-col gap-1 w-full" onClick={e => e.stopPropagation()}>
+                            <div className="flex items-center gap-1">
+                              <input 
+                                className={`font-medium text-foreground bg-background border rounded px-2 py-0.5 flex-1 min-w-0 ${renameError ? 'border-red-500' : 'border-border'}`} 
+                                value={editingName} 
+                                onChange={e => { setEditingName(e.target.value); validateRename(e.target.value, m.id) }} 
+                                onKeyDown={e => { if (e.key === "Enter") saveModelName(); if (e.key === "Escape") cancelEditing() }} 
+                                autoFocus 
+                              />
+                              <button className="p-1 rounded hover:bg-green-500/20 text-green-500" onClick={e => { e.stopPropagation(); saveModelName() }}>OK</button>
+                              <button className="p-1 rounded hover:bg-red-500/20 text-red-500" onClick={e => { e.stopPropagation(); cancelEditing() }}>X</button>
+                            </div>
+                            {renameError && <p className="text-[10px] text-red-500">{renameError}</p>}
+                          </div>
+                        ) : (
+                          <h3 className="font-medium text-foreground truncate">{m.name}</h3>
+                        )}
+                        <p className="text-xs text-muted-foreground mt-0.5">Fine-tuned model</p>
+                      </div>
                     </div>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild onClick={e => e.stopPropagation()}><Button variant="ghost" size="icon" className="h-8 w-8"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
@@ -386,11 +549,19 @@ export default function ModelsPage() {
                     </DropdownMenu>
                   </div>
                   <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-                    <Hash className="h-3 w-3" /><span className="truncate">{m.id.slice(0, 8)}...</span>
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); copyToClipboard(m.id) }}
+                      className="flex items-center gap-1 hover:text-foreground transition-colors group"
+                      title="Click to copy ID"
+                    >
+                      <Hash className="h-3 w-3" />
+                      <span className="truncate">{m.id.slice(0, 8)}...</span>
+                      <Copy className="h-2.5 w-2.5 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </button>
                     <Calendar className="h-3 w-3 ml-2" /><span>{formatDate(m.created_at)}</span>
                   </div>
                   <div className="mt-3 flex items-center gap-2">
-                    <span className="inline-flex items-center rounded-md bg-[#0052CC]/10 px-2 py-1 text-xs font-medium text-[#0052CC] dark:text-[#2684FF]">schema-v0</span>
+                    <span className="inline-flex items-center rounded-md bg-[#0052CC]/10 px-2 py-1 text-xs font-medium text-[#0052CC] dark:text-[#2684FF]">{process.env.NEXT_PUBLIC_BASE_MODEL || "schema-v1"}</span>
                     {m.status === "failed" ? <span className="flex items-center gap-1.5 rounded-md bg-red-500/10 px-2 py-1 text-xs text-red-500"><XCircle className="h-3 w-3" />Failed</span> : <span className="flex items-center gap-1.5 rounded-md bg-emerald-500/10 px-2 py-1 text-xs text-emerald-500"><CheckCircle2 className="h-3 w-3" />Active</span>}
                     {m.sync_mode && m.sync_mode !== "manual" && (
                       <span className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium ${
@@ -406,7 +577,7 @@ export default function ModelsPage() {
                       <span className="inline-flex items-center gap-1 rounded-md bg-red-500/10 px-2 py-1 text-xs font-medium text-red-500">Sync Error</span>
                     )}
                   </div>
-                  <div className="mt-4 grid grid-cols-3 gap-3 rounded-lg bg-muted/50 p-3">
+                  <div className="mt-4 grid grid-cols-4 gap-2 rounded-lg bg-muted/50 p-3">
                     <div className="text-center">
                       <div className="flex items-center justify-center gap-1 text-muted-foreground">
                         <TrendingUp className="h-3 w-3" />
@@ -414,19 +585,26 @@ export default function ModelsPage() {
                       </div>
                       <p className={`mt-1 font-mono text-sm font-medium ${m.status === "failed" ? "text-red-500" : "text-emerald-500"}`}>{m.accuracy?.toFixed(1) || 0}%</p>
                     </div>
-                    <div className="text-center border-x border-border">
+                    <div className="text-center border-l border-border">
+                      <div className="flex items-center justify-center gap-1 text-muted-foreground">
+                        <Clock className="h-3 w-3" />
+                        <span className="text-[10px] uppercase tracking-wider">Time</span>
+                      </div>
+                      <p className="mt-1 font-mono text-sm font-medium text-foreground">{m.training_time ? `${Math.round(m.training_time / 60)}m` : `${m.epochs || 5}m`}</p>
+                    </div>
+                    <div className="text-center border-l border-border">
+                      <div className="flex items-center justify-center gap-1 text-muted-foreground">
+                        <HardDrive className="h-3 w-3" />
+                        <span className="text-[10px] uppercase tracking-wider">Data</span>
+                      </div>
+                      <p className="mt-1 font-mono text-sm font-medium text-foreground">{m.training_data_size ? `${(m.training_data_size / 1024).toFixed(1)}K` : '-'}</p>
+                    </div>
+                    <div className="text-center border-l border-border">
                       <div className="flex items-center justify-center gap-1 text-muted-foreground">
                         <Activity className="h-3 w-3" />
                         <span className="text-[10px] uppercase tracking-wider">Epochs</span>
                       </div>
                       <p className="mt-1 font-mono text-sm font-medium text-foreground">{m.epochs || 5}</p>
-                    </div>
-                    <div className="text-center">
-                      <div className="flex items-center justify-center gap-1 text-muted-foreground">
-                        <Zap className="h-3 w-3" />
-                        <span className="text-[10px] uppercase tracking-wider">Loss</span>
-                      </div>
-                      <p className="mt-1 font-mono text-sm font-medium text-foreground">{(m.loss || 0).toFixed(3)}</p>
                     </div>
                   </div>
                   {m.next_sync_at && (
@@ -489,33 +667,65 @@ export default function ModelsPage() {
         <DialogContent className="max-w-2xl border-border bg-card">
           <DialogHeader>
             <DialogTitle>{selectedModel?.name} - Metrics</DialogTitle>
-            <DialogDescription>Training metrics</DialogDescription>
+            <DialogDescription>Training metrics and usage statistics</DialogDescription>
           </DialogHeader>
           {selectedModel && (
+            <TooltipProvider delayDuration={200}>
             <div className="space-y-6">
-              <div className="grid grid-cols-4 gap-4">
-                <div className="rounded-lg bg-muted/50 p-3 text-center"><p className="text-[10px] uppercase text-muted-foreground">Accuracy</p><p className="mt-1 font-mono text-lg font-semibold text-emerald-500">{selectedModel.accuracy?.toFixed(1)}%</p></div>
-                <div className="rounded-lg bg-muted/50 p-3 text-center"><p className="text-[10px] uppercase text-muted-foreground">Loss</p><p className="mt-1 font-mono text-lg font-semibold">{(selectedModel.loss || 0).toFixed(3)}</p></div>
+              <div className="grid grid-cols-2 gap-4">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="rounded-lg bg-muted/50 p-4 text-center cursor-help hover:bg-muted/70 transition-colors">
+                      <p className="text-[10px] uppercase text-muted-foreground">Accuracy</p>
+                      <p className="mt-1 font-mono text-2xl font-semibold text-emerald-500">{selectedModel.accuracy?.toFixed(1)}%</p>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-[200px]">
+                    <p className="text-xs">Accuracy measures how often the model makes correct predictions on the test dataset.</p>
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="rounded-lg bg-muted/50 p-4 text-center cursor-help hover:bg-muted/70 transition-colors">
+                      <p className="text-[10px] uppercase text-muted-foreground">Loss</p>
+                      <p className="mt-1 font-mono text-2xl font-semibold text-foreground">{(selectedModel.loss || 0).toFixed(4)}</p>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-[200px]">
+                    <p className="text-xs">Loss measures the error between predicted and actual values. Lower is better.</p>
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+              <div className="grid grid-cols-4 gap-3">
                 <div className="rounded-lg bg-muted/50 p-3 text-center"><p className="text-[10px] uppercase text-muted-foreground">Epochs</p><p className="mt-1 font-mono text-lg font-semibold">{selectedModel.epochs || 10}</p></div>
                 <div className="rounded-lg bg-muted/50 p-3 text-center"><p className="text-[10px] uppercase text-muted-foreground">Batch</p><p className="mt-1 font-mono text-lg font-semibold">{selectedModel.batch_size || 32}</p></div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <ChartWithTooltip data={selectedModel.loss_history || []} label="Loss" finalValue={(selectedModel.loss || 0).toFixed(4)} isLoss />
-                <ChartWithTooltip data={selectedModel.accuracy_history || []} label="Accuracy" finalValue={`${(selectedModel.accuracy || 0).toFixed(1)}%`} />
+                <div className="rounded-lg bg-muted/50 p-3 text-center"><p className="text-[10px] uppercase text-muted-foreground">Time</p><p className="mt-1 font-mono text-lg font-semibold">{selectedModel.training_time ? `${Math.round(selectedModel.training_time / 60)}m` : `${selectedModel.epochs || 5}m`}</p></div>
+                <div className="rounded-lg bg-muted/50 p-3 text-center"><p className="text-[10px] uppercase text-muted-foreground">Data</p><p className="mt-1 font-mono text-lg font-semibold">{selectedModel.training_data_size ? `${(selectedModel.training_data_size / 1024).toFixed(1)}K` : '-'}</p></div>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-muted/30 rounded-lg p-3"><div className="flex items-center gap-2 text-muted-foreground mb-1"><MessageSquare className="w-3.5 h-3.5" /><span className="text-xs">Requests</span></div><p className="text-xl font-semibold">{(selectedModel.request_count || 0).toLocaleString()}</p></div>
-                <div className="bg-muted/30 rounded-lg p-3"><div className="flex items-center gap-2 text-muted-foreground mb-1"><Layers className="w-3.5 h-3.5" /><span className="text-xs">Predictions</span></div><p className="text-xl font-semibold">{(selectedModel.usage_count || 0).toLocaleString()}</p></div>
+                <div className="bg-muted/30 rounded-lg p-3"><div className="flex items-center gap-2 text-muted-foreground mb-1"><Zap className="w-3.5 h-3.5" /><span className="text-xs">Active Endpoints</span></div><p className="text-xl font-semibold">{(selectedModel.endpoint_calls || selectedModel.usage_count || 0).toLocaleString()}</p></div>
               </div>
               <div className="rounded-lg border border-border p-4">
                 <p className="mb-3 text-sm font-medium">Info</p>
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between"><span className="text-muted-foreground flex items-center gap-1.5"><FileText className="w-3.5 h-3.5" />Source</span><span className="font-medium">{selectedModel.source_name || getSourceNames(selectedModel).join(", ") || "N/A"}</span></div>
                   <div className="flex justify-between"><span className="text-muted-foreground flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5" />Created</span><span className="font-medium">{formatDate(selectedModel.created_at)}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground flex items-center gap-1.5"><Hash className="w-3.5 h-3.5" />ID</span><span className="font-mono text-xs">{selectedModel.id.slice(0, 20)}...</span></div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground flex items-center gap-1.5"><Hash className="w-3.5 h-3.5" />ID</span>
+                    <button 
+                      onClick={() => copyToClipboard(selectedModel.id)}
+                      className="font-mono text-xs flex items-center gap-1.5 hover:text-[#0052CC] transition-colors group"
+                      title="Click to copy full ID"
+                    >
+                      {selectedModel.id}
+                      <Copy className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
+            </TooltipProvider>
           )}
         </DialogContent>
       </Dialog>
@@ -546,7 +756,38 @@ export default function ModelsPage() {
           </div>
           <div className="flex justify-end gap-2 pt-2">
             <button className="rounded-md border border-border px-4 py-2 text-sm hover:bg-muted" onClick={() => setEndpointModalOpen(false)}>Cancel</button>
-            <button className="rounded-md bg-[#0052CC] px-4 py-2 text-sm text-white hover:bg-[#003D99] disabled:opacity-50" disabled={!endpointForm.name || !endpointForm.urlPath} onClick={async () => { try { const res = await fetch("/api/endpoints/create", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ fine_tuned_model_id: selectedModelForEndpoint?.id, name: endpointForm.name, path: "/v1/query/" + endpointForm.urlPath, llm_model: "gpt-4o-mini", description: endpointForm.description }) }); if (res.ok) { setEndpointModalOpen(false) } } catch(e) { console.error(e) } }}>Create Endpoint</button>
+            <button className="rounded-md bg-[#0052CC] px-4 py-2 text-sm text-white hover:bg-[#003D99] disabled:opacity-50" disabled={!endpointForm.name || !endpointForm.urlPath || creatingEndpoint} onClick={async () => {
+                setCreatingEndpoint(true)
+                try {
+                  const res = await fetch("/api/endpoints/create", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    credentials: "include",
+                    body: JSON.stringify({
+                      fine_tuned_model_id: selectedModelForEndpoint?.id,
+                      name: endpointForm.name,
+                      path: endpointForm.urlPath,
+                      description: endpointForm.description,
+                      endpoint_type: "query",
+                      vertical_config_id: ""
+                    })
+                  })
+                  if (res.ok) {
+                    setEndpointModalOpen(false)
+                    setEndpointForm({ name: "", urlPath: "", description: "" })
+                    toast.success("Endpoint created", { description: `/v1/query/${endpointForm.urlPath}` })
+                  } else if (res.status === 409) {
+                    toast.error("Path already exists", { description: "Choose a different URL path." })
+                  } else {
+                    const txt = await res.text().catch(() => "")
+                    toast.error("Failed to create endpoint", { description: txt || `HTTP ${res.status}` })
+                  }
+                } catch (e: any) {
+                  toast.error("Network error", { description: e?.message || "Unknown error" })
+                } finally {
+                  setCreatingEndpoint(false)
+                }
+              }}>Create Endpoint</button>
           </div>
         </DialogContent>
       </Dialog>
@@ -656,6 +897,20 @@ export default function ModelsPage() {
           modelName={selectedModelForSystem.name}
         />
       )}
+
+      {/* Bulk Delete Confirm Modal */}
+      <Dialog open={bulkDeleteConfirmOpen} onOpenChange={setBulkDeleteConfirmOpen}>
+        <DialogContent className="max-w-sm border-border bg-card">
+          <DialogHeader>
+            <DialogTitle>Delete {selectedModelIds.size} Model{selectedModelIds.size !== 1 ? 's' : ''}</DialogTitle>
+            <DialogDescription>Are you sure you want to delete these models? This action cannot be undone.</DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 pt-4">
+            <button className="rounded-md border border-border px-4 py-2 text-sm hover:bg-muted" onClick={() => setBulkDeleteConfirmOpen(false)}>Cancel</button>
+            <button className="rounded-md bg-red-500 px-4 py-2 text-sm text-white hover:bg-red-600" onClick={bulkDelete}>Delete All</button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
 </div>
   )

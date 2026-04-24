@@ -53,12 +53,7 @@ func loadDefaultPricing() {
 		"gemini-2.5-flash-lite":  {0.10e-06, 0.40e-06, "google"},
 		"gemini-2.0-flash-001":   {0.10e-06, 0.40e-06, "google"},
 		"gemini-2.0-flash-lite":  {0.10e-06, 0.40e-06, "google"},
-		"mistral-small-2503":     {0.10e-06, 0.30e-06, "mistral"},
-		"mistral-medium-2505":    {0.40e-06, 2e-06, "mistral"},
-		"mistral-large-latest":   {2e-06, 6e-06, "mistral"},
-		"ministral-3b-2501":      {0.04e-06, 0.10e-06, "mistral"},
-		"ministral-8b-2410":      {0.10e-06, 0.10e-06, "mistral"},
-		"mistral-small-latest":   {0.10e-06, 0.30e-06, "mistral"},
+		"mistral-small-2603":     {0.15e-06, 0.60e-06, "mistral"},
 	}
 
 	for k, v := range defaults {

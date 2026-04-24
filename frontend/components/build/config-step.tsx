@@ -1,12 +1,15 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
+import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { SourceBadge } from "@/components/datasets/source-badge"
 import { api } from "@/lib/api"
 import type { Dataset, SyncMode, DataSource, Complexity, RowCount, Vertical } from "@/lib/types"
@@ -43,6 +46,7 @@ interface ConfigStepProps {
   scheduleCron?: string
   onScheduleChange?: (cron: string, desc: string) => void
   onConnectionIDsChange?: (ids: string) => void
+  modelNameError?: string
 }
 
 export function ConfigStep({
@@ -60,11 +64,13 @@ export function ConfigStep({
   onScheduleChange,
   onConnectionIDsChange,
   onStartTraining,
+  modelNameError,
 }: ConfigStepProps) {
   const [allDatasets, setAllDatasets] = useState<Dataset[]>([])
   const [loading, setLoading] = useState(true)
   const [expandedSources, setExpandedSources] = useState<Record<string, boolean>>({})
   const [searchQuery, setSearchQuery] = useState("")
+  const [sourceFilter, setSourceFilter] = useState<string>("all")
 
   useEffect(() => {
     loadData()
@@ -231,31 +237,54 @@ export function ConfigStep({
     }
   }
 
-  // Filter datasets
+  // Get unique sources for filter dropdown
+  const availableSources = useMemo(() => {
+    const sources = [...new Set(allDatasets.map(d => d.source))]
+    return sources.sort()
+  }, [allDatasets])
+
+  // Source label mapping
+  const sourceLabels: Record<string, string> = {
+    "upload": "Uploaded Files",
+    "csv": "CSV Files",
+    "json": "JSON Files",
+    "excel": "Excel Files",
+    "postgresql": "PostgreSQL",
+    "mongodb": "MongoDB",
+    "supabase": "Supabase",
+    "snowflake": "Snowflake",
+    "api": "API",
+    "google-drive": "Google Drive",
+    "databricks": "Databricks",
+    "aws-s3": "AWS S3",
+    "gcs": "Google Cloud Storage",
+    "pinecone": "Pinecone",
+    "generated": "Generated Data",
+  }
+
+  // Filter datasets by search and source filter
   const getFilteredDatasets = () => {
-    if (!searchQuery.trim()) return allDatasets
-    const q = searchQuery.toLowerCase()
-    return allDatasets.filter(ds => 
-      ds.name.toLowerCase().includes(q) ||
-      ds.description.toLowerCase().includes(q) ||
-      ds.source.toLowerCase().includes(q)
-    )
+    let filtered = allDatasets
+    
+    // Apply source filter
+    if (sourceFilter !== "all") {
+      filtered = filtered.filter(ds => ds.source === sourceFilter)
+    }
+    
+    // Apply search filter
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase()
+      filtered = filtered.filter(ds => 
+        ds.name.toLowerCase().includes(q) ||
+        ds.description.toLowerCase().includes(q) ||
+        ds.source.toLowerCase().includes(q)
+      )
+    }
+    
+    return filtered
   }
   
   const filteredDatasets = getFilteredDatasets()
-  
-  // Group by source
-  const getGroupedDatasets = () => {
-    const groups: Record<string, Dataset[]> = {}
-    filteredDatasets.forEach(ds => {
-      if (!groups[ds.source]) groups[ds.source] = []
-      groups[ds.source].push(ds)
-    })
-    return groups
-  }
-  
-  const datasetsBySource = getGroupedDatasets()
-  const sourceOrder = Object.keys(datasetsBySource)
 
   const toggleSource = (source: string) => {
     setExpandedSources(prev => ({ ...prev, [source]: !prev[source] }))
@@ -280,15 +309,30 @@ export function ConfigStep({
           <p className="text-sm text-muted-foreground">Select datasets from your connected sources</p>
         </CardHeader>
         <CardContent className="flex-1 overflow-hidden flex flex-col space-y-4">
-          {/* Search */}
-          <div className="shrink-0 relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search datasets by name..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9 border-border bg-background text-foreground"
-            />
+          {/* Search and Filter */}
+          <div className="shrink-0 flex flex-col sm:flex-row gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search datasets..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9 border-border bg-background text-foreground"
+              />
+            </div>
+            <Select value={sourceFilter} onValueChange={setSourceFilter}>
+              <SelectTrigger className="w-full sm:w-[160px] border-border bg-background text-foreground">
+                <SelectValue placeholder="All Sources" />
+              </SelectTrigger>
+              <SelectContent className="border-border bg-popover">
+                <SelectItem value="all">All Sources</SelectItem>
+                {availableSources.map(source => (
+                  <SelectItem key={source} value={source}>
+                    {sourceLabels[source] || source}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {/* Selected datasets compact summary bar */}
@@ -314,109 +358,92 @@ export function ConfigStep({
             </div>
           )}
 
-          {/* Dataset list */}
-          <div className="flex-1 overflow-y-auto space-y-4 pr-2 min-h-0">
+          {/* Dataset list - Flat view with source badges */}
+          <div className="flex-1 overflow-y-auto pr-2 min-h-0">
             {filteredDatasets.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <FileSpreadsheet className="h-12 w-12 text-muted-foreground/50 mb-4" />
                 <p className="text-muted-foreground">No datasets found</p>
-                <p className="text-sm text-muted-foreground/70 mt-1">{searchQuery ? "Try a different search term" : "Upload files to get started"}</p>
+                <p className="text-sm text-muted-foreground/70 mt-1">{searchQuery || sourceFilter !== "all" ? "Try adjusting your filters" : "Upload files to get started"}</p>
               </div>
             ) : (
-              sourceOrder.map(source => {
-                const sourceDatasets = datasetsBySource[source]
-                if (!sourceDatasets?.length) return null
-                const isExpanded = expandedSources[source] !== false
-                const selectedCount = selectedDatasets.filter(d => d.source === source).length
-
-                return (
-                  <div key={source} className="rounded-lg border border-border overflow-hidden">
-                    <div className="flex items-center gap-2 px-3 py-2.5 bg-muted/50">
-                      <Checkbox
-                        checked={sourceDatasets.every((ds) => selectedDatasets.some((s) => s.id === ds.id))}
-                        onCheckedChange={() => {
-                          const allSelected = sourceDatasets.every((ds) => selectedDatasets.some((s) => s.id === ds.id))
-                          if (allSelected) {
-                            sourceDatasets.forEach((ds) => {
-                              if (selectedDatasets.some((s) => s.id === ds.id)) {
-                                onDatasetToggle(ds)
-                              }
-                            })
-                          } else {
-                            sourceDatasets.forEach((ds) => {
-                              if (!selectedDatasets.some((s) => s.id === ds.id)) {
-                                onDatasetToggle(ds)
-                              }
-                            })
+              <div className="rounded-lg border border-border overflow-hidden divide-y divide-border">
+                {/* Select all header */}
+                <div className="flex items-center gap-2 px-3 py-2 bg-muted/50">
+                  <Checkbox
+                    checked={filteredDatasets.length > 0 && filteredDatasets.every((ds) => selectedDatasets.some((s) => s.id === ds.id))}
+                    onCheckedChange={() => {
+                      const allSelected = filteredDatasets.every((ds) => selectedDatasets.some((s) => s.id === ds.id))
+                      if (allSelected) {
+                        filteredDatasets.forEach((ds) => {
+                          if (selectedDatasets.some((s) => s.id === ds.id)) {
+                            onDatasetToggle(ds)
                           }
-                        }}
-                        className="border-border data-[state=checked]:bg-[#0052CC] data-[state=checked]:border-[#0052CC]"
+                        })
+                      } else {
+                        filteredDatasets.forEach((ds) => {
+                          if (!selectedDatasets.some((s) => s.id === ds.id)) {
+                            onDatasetToggle(ds)
+                          }
+                        })
+                      }
+                    }}
+                    className="border-border data-[state=checked]:bg-[#0052CC] data-[state=checked]:border-[#0052CC]"
+                  />
+                  <span className="text-xs font-medium text-muted-foreground">
+                    {filteredDatasets.length} dataset{filteredDatasets.length !== 1 ? "s" : ""}
+                    {sourceFilter !== "all" && ` in ${sourceLabels[sourceFilter] || sourceFilter}`}
+                  </span>
+                </div>
+                
+                {/* Dataset items */}
+                {filteredDatasets.map(ds => {
+                  const isSelected = selectedDatasets.some(s => s.id === ds.id)
+                  return (
+                    <div
+                      key={ds.id}
+                      onClick={() => onDatasetToggle(ds)}
+                      className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors ${
+                        isSelected
+                          ? "bg-[#0052CC]/5 dark:bg-[#2684FF]/5"
+                          : "hover:bg-muted/50"
+                      }`}
+                    >
+                      <Checkbox
+                        checked={isSelected}
+                        className="pointer-events-none shrink-0 border-border data-[state=checked]:bg-[#0052CC] data-[state=checked]:border-[#0052CC]"
                       />
-                      <button
-                        onClick={() => toggleSource(source)}
-                        className="flex-1 flex items-center justify-between"
-                      >
+                      <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                          <SourceBadge source={source as DataSource} />
-                          <span className="text-xs text-muted-foreground">({sourceDatasets.length})</span>
-                          {selectedCount > 0 && (
-                            <span className="text-[10px] text-[#2684FF] bg-[#0052CC]/20 px-1.5 py-0.5 rounded">{selectedCount} selected</span>
-                          )}
+                          <p className="text-sm font-medium text-foreground truncate max-w-[200px]" title={ds.name}>{ds.name}</p>
+                          <SourceBadge source={ds.source as DataSource} />
                         </div>
-                        {isExpanded ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
-                      </button>
-                    </div>
-
-                    {isExpanded && (
-                      <div className="divide-y divide-border">
-                        {sourceDatasets.map(ds => {
-                          const isSelected = selectedDatasets.some(s => s.id === ds.id)
-                          return (
-                            <div
-                              key={ds.id}
-                              onClick={() => onDatasetToggle(ds)}
-                              className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors ${
-                                isSelected
-                                  ? "bg-[#0052CC]/5 dark:bg-[#2684FF]/5"
-                                  : "hover:bg-muted/50"
-                              }`}
-                            >
-                              <Checkbox
-                                checked={isSelected}
-                                className="pointer-events-none shrink-0 border-border data-[state=checked]:bg-[#0052CC] data-[state=checked]:border-[#0052CC]"
-                              />
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium text-foreground truncate max-w-[300px]" title={ds.name}>{ds.name}</p>
-                                <div className="flex items-center gap-3 mt-0.5 text-[11px] text-muted-foreground">
-                                  {ds.vertical && <span className="capitalize">{ds.vertical}</span>}
-                                  <span>{ds.rows.toLocaleString()} rows</span>
-                                  <span>{ds.columns} cols</span>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                {ds.schema.slice(0, 2).map((col, i) => (
-                                  <span
-                                    key={i}
-                                    className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground hidden lg:inline-block max-w-[120px] truncate"
-                                    title={col.name}
-                                  >
-                                    {col.name}
-                                  </span>
-                                ))}
-                                {ds.schema.length > 2 && (
-                                  <span className="text-[10px] text-muted-foreground hidden lg:inline-block">
-                                    +{ds.schema.length - 2}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          )
-                        })}
+                        <div className="flex items-center gap-3 mt-0.5 text-[11px] text-muted-foreground">
+                          {ds.vertical && <span className="capitalize">{ds.vertical}</span>}
+                          <span>{ds.rows.toLocaleString()} rows</span>
+                          <span>{ds.columns} cols</span>
+                        </div>
                       </div>
-                    )}
-                  </div>
-                )
-              })
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {ds.schema.slice(0, 2).map((col, i) => (
+                          <span
+                            key={i}
+                            className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground hidden lg:inline-block max-w-[100px] truncate"
+                            title={col.name}
+                          >
+                            {col.name}
+                          </span>
+                        ))}
+                        {ds.schema.length > 2 && (
+                          <span className="text-[10px] text-muted-foreground hidden lg:inline-block">
+                            +{ds.schema.length - 2}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
             )}
           </div>
         </CardContent>
@@ -435,8 +462,15 @@ export function ConfigStep({
               id="model-name"
               value={modelName}
               onChange={(e) => onModelNameChange(e.target.value)}
-              placeholder="e.g., Customer Intelligence Model" className="w-full border-border bg-background text-foreground"
+              placeholder="e.g., Customer Intelligence Model" 
+              className={`w-full border-border bg-background text-foreground ${modelNameError ? "border-red-500 focus-visible:ring-red-500" : ""}`}
             />
+            {modelNameError && (
+              <p className="text-xs text-red-500 flex items-center gap-1">
+                <span className="inline-block w-1 h-1 rounded-full bg-red-500" />
+                {modelNameError}
+              </p>
+            )}
           </div>
 
           <div className="space-y-2">
@@ -453,57 +487,108 @@ export function ConfigStep({
           <div className="space-y-2">
             <Label className="text-sm text-foreground">Base Model</Label>
             <p className="text-xs text-muted-foreground">SchemaLabs foundation model for tabular AI</p>
-            <div className="mt-2">
-              <div className="flex items-center gap-3 rounded-lg border border-[#0052CC] bg-[#0052CC]/10 p-3">
-                <Box className="h-5 w-5 text-[#2684FF]" />
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-sm font-medium text-foreground">schema-v0</span>
-                    <span className="rounded bg-[#0052CC]/20 px-1.5 py-0.5 text-[10px] font-medium text-[#2684FF]">SELECTED</span>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              {["schema-v1", "schema-v0"].map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => onBaseModelChange(m)}
+                  className={cn(
+                    "flex items-center gap-3 rounded-lg border p-3 text-left transition-colors",
+                    baseModel === m
+                      ? "border-[#0052CC] bg-[#0052CC]/10"
+                      : "border-border bg-card hover:border-[#0052CC]/50"
+                  )}
+                >
+                  <Box className={cn("h-5 w-5", baseModel === m ? "text-[#2684FF]" : "text-muted-foreground")} />
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-sm font-medium text-foreground">{m}</span>
+                      {baseModel === m && (
+                        <span className="rounded bg-[#0052CC]/20 px-1.5 py-0.5 text-[10px] font-medium text-[#2684FF]">SELECTED</span>
+                      )}
+                    </div>
                   </div>
-                  <p className="mt-0.5 text-xs text-muted-foreground">Native tabular data understanding.</p>
-                </div>
-              </div>
+                </button>
+              ))}
             </div>
           </div>
 
           <div className="space-y-2">
             <Label className="text-sm text-foreground">Data Sync Mode</Label>
             <p className="text-xs text-muted-foreground">How should the model stay updated with data changes?</p>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              {[
-                { mode: "real-time" as SyncMode, label: "Real-time", icon: Zap, desc: "Auto-sync", needsConnection: true },
-                { mode: "scheduled" as SyncMode, label: "Scheduled", icon: Clock, desc: "Timed sync", needsConnection: true },
-                { mode: "manual" as SyncMode, label: "Manual", icon: RefreshCw, desc: "On-demand" },
-              ].map(option => (
-                <button
-                  key={option.mode}
-                  type="button"
-                  onClick={() => {
-                    const hasConnections = selectedDatasets.some(d => d.syncStatus === "synced")
-                    if ((option as any).needsConnection && !hasConnections) return
-                    if (syncMode === option.mode && option.mode !== "manual") {
-                      onSyncModeChange("manual")
-                      onScheduleChange?.("", "")
-                    } else {
-                      onSyncModeChange(option.mode)
-                      if (option.mode === "manual") onScheduleChange?.("", "")
-                    }
-                  }}
-                  className={`flex flex-col items-center justify-center gap-1 rounded-lg border px-3 py-3 transition-all ${
-                    (option as any).needsConnection && !selectedDatasets.some(d => d.syncStatus === "synced")
-                      ? "border-border bg-muted/50 text-muted-foreground opacity-40 cursor-not-allowed"
-                      : syncMode === option.mode
-                        ? "border-[#0052CC] bg-[#0052CC]/10 text-[#2684FF]"
-                        : "border-border bg-muted/50 text-muted-foreground hover:border-border/80"
-                  }`}
-                >
-                  <option.icon className="h-4 w-4" />
-                  <span className="text-sm font-medium">{option.label}</span>
-                  <span className="text-[10px] opacity-60">{option.desc}</span>
-                </button>
-              ))}
-            </div>
+            <TooltipProvider delayDuration={200}>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {[
+                  { 
+                    mode: "real-time" as SyncMode, 
+                    label: "Real-time", 
+                    icon: Zap, 
+                    desc: "Auto-sync", 
+                    needsConnection: true,
+                    tooltip: "Connect a database or API to enable real-time sync. Uploaded files cannot be monitored for changes.",
+                    disabledTooltip: "Select a database or API connection to activate real-time sync mode"
+                  },
+                  { 
+                    mode: "scheduled" as SyncMode, 
+                    label: "Scheduled", 
+                    icon: Clock, 
+                    desc: "Timed sync", 
+                    needsConnection: true,
+                    tooltip: "Automatically retrain your model on a schedule when data sources are updated.",
+                    disabledTooltip: "Select a database or API connection to activate scheduled sync mode"
+                  },
+                  { 
+                    mode: "manual" as SyncMode, 
+                    label: "Manual", 
+                    icon: RefreshCw, 
+                    desc: "On-demand",
+                    tooltip: "Manually trigger retraining when you need to update the model with new data."
+                  },
+                ].map(option => {
+                  const hasConnections = selectedDatasets.some(d => d.syncStatus === "synced")
+                  const isDisabled = option.needsConnection && !hasConnections
+                  const tooltipText = isDisabled ? option.disabledTooltip : option.tooltip
+                  
+                  return (
+                    <Tooltip key={option.mode}>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isDisabled) return
+                            if (syncMode === option.mode && option.mode !== "manual") {
+                              onSyncModeChange("manual")
+                              onScheduleChange?.("", "")
+                            } else {
+                              onSyncModeChange(option.mode)
+                              if (option.mode === "manual") onScheduleChange?.("", "")
+                            }
+                          }}
+                          className={`flex flex-col items-center justify-center gap-1 rounded-lg border px-3 py-3 transition-all ${
+                            isDisabled
+                              ? "border-border bg-transparent text-muted-foreground opacity-40 cursor-not-allowed"
+                              : syncMode === option.mode
+                                ? "border-[#0052CC] bg-[#0052CC]/10 text-[#2684FF]"
+                                : "border-border bg-transparent text-muted-foreground hover:bg-muted/30 hover:border-muted-foreground/30"
+                          }`}
+                        >
+                          <option.icon className="h-4 w-4" />
+                          <span className="text-sm font-medium">{option.label}</span>
+                          <span className="text-[10px] opacity-60">{option.desc}</span>
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent 
+                        side="top" 
+                        className={`max-w-[240px] text-xs ${isDisabled ? "bg-amber-500/90 text-white border-amber-600" : ""}`}
+                      >
+                        <p>{tooltipText}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  )
+                })}
+              </div>
+            </TooltipProvider>
 
             {/* Schedule Configuration */}
             {syncMode === "scheduled" && (

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -203,12 +204,14 @@ func QueryEndpointHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update call counts
-	// Check quota
-	if ok, reason := CheckCredits(key.UserID, 0.02); !ok {
+	if ok, reason := CheckCredits(key.UserID, 0); !ok {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
 		json.NewEncoder(w).Encode(map[string]string{"error": reason})
+		return
+	}
+	if ok, reason := CheckRateLimit(key.UserID, "schema", 0, 0); !ok {
+		RateLimitResponse(w, reason)
 		return
 	}
 
@@ -288,16 +291,27 @@ result["vertical"] = vInfo
 w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
 
-	// Deduct credits and log usage
 	if DB != nil {
-		var quota UserQuota
-		if DB.Where("user_id = ?", key.UserID).First(&quota).Error == nil {
-			quota.CreditsUsed += 0.02
-			DB.Save(&quota)
+		rows := 1
+		cols := 0
+		if req.Data != nil {
+			cols = len(req.Data)
+		}
+		outputRows := 1
+		if preds, ok := flaskResponse["predictions"].([]interface{}); ok {
+			outputRows = len(preds)
+			rows = outputRows
+		}
+		version := getBaseModelVersion()
+		if preds, ok := flaskResponse["model_version"].(string); ok && strings.Contains(preds, "v1") {
+			version = "v1"
+		}
+		if err := TrackSchemaCall(key.UserID, rows, cols, outputRows, version, true); err != nil {
+			log.Printf("[ENDPOINT] TrackSchemaCall failed for user %s: %v", key.UserID, err)
 		}
 		DB.Create(&UsageLog{
 			ID: uuid.New().String(), UserID: key.UserID, EventType: "endpoint", EventName: "Endpoint Query: " + path,
-			ResourceID: endpoint.ID, CreditsUsed: 0.02, ModelUsed: endpoint.FineTunedModelID, CreatedAt: time.Now(),
+			ResourceID: endpoint.ID, ModelUsed: endpoint.FineTunedModelID, CreatedAt: time.Now(),
 		})
 	}
 }

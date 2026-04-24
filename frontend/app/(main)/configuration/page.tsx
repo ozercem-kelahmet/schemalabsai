@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Settings, Key, Globe, Plus, Copy, Eye, EyeOff, Trash2, CheckCircle2, Play, Brain, Check, AlertTriangle, Info, Layers, Pencil } from "lucide-react"
+import { Rocket, Key, Globe, Plus, Copy, Eye, EyeOff, Trash2, CheckCircle2, Play, Brain, Check, AlertTriangle, Info, Layers, Pencil, Link2 } from "lucide-react"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
@@ -65,7 +65,7 @@ const llmModels = [
 ]
 
 const rateLimitOptions = [
-  { value: "1000/min", label: "1,000 requests/min (Alpha)" },
+  { value: "1000/min", label: "1,000 requests/min (Beta)" },
 ]
 
 function ConfigurationPageInner() {
@@ -96,7 +96,7 @@ function ConfigurationPageInner() {
   const [newEndpointName, setNewEndpointName] = useState("")
   const [newEndpointPath, setNewEndpointPath] = useState("")
   const [newEndpointModel, setNewEndpointModel] = useState("")
-  const [newEndpointBaseModel, setNewEndpointBaseModel] = useState("schema-v0")
+  const [newEndpointBaseModel, setNewEndpointBaseModel] = useState(process.env.NEXT_PUBLIC_BASE_MODEL || "schema-v1")
   const [newEndpointLLM, setNewEndpointLLM] = useState("")
   const [newEndpointDescription, setNewEndpointDescription] = useState("")
   const [newEndpointVertical, setNewEndpointVertical] = useState("")
@@ -307,11 +307,11 @@ function ConfigurationPageInner() {
       )}
       <div className="flex items-center gap-3">
         <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#0052CC]/10 dark:bg-[#0052CC]/20">
-          <Settings className="h-5 w-5 text-[#0052CC] dark:text-[#2684FF]" />
+          <Rocket className="h-5 w-5 text-[#0052CC] dark:text-[#2684FF]" />
         </div>
         <div>
-          <h1 className="text-xl font-semibold text-foreground">Configuration</h1>
-          <p className="text-sm text-muted-foreground">Manage API keys and endpoints</p>
+          <h1 className="text-xl font-semibold text-foreground">Deploy</h1>
+          <p className="text-sm text-muted-foreground">Create endpoints and manage API keys</p>
         </div>
       </div>
 
@@ -321,7 +321,7 @@ function ConfigurationPageInner() {
             <CardTitle className="flex items-center gap-2 text-foreground">API Keys</CardTitle>
             <CardDescription>Manage your API keys for accessing Schema models</CardDescription>
           </div>
-          <Button onClick={() => setCreateKeyModalOpen(true)} disabled={fineTunedModels.length === 0} className="gap-2 bg-[#0052CC] text-white hover:bg-[#003D99]">
+          <Button onClick={() => setCreateKeyModalOpen(true)} className="gap-2 bg-[#0052CC] text-white hover:bg-[#003D99]">
             <Plus className="h-4 w-4" /> Create Key
           </Button>
         </CardHeader>
@@ -403,7 +403,7 @@ function ConfigurationPageInner() {
             <CardTitle className="flex items-center gap-2 text-foreground">Endpoints</CardTitle>
             <CardDescription>Create and manage your model API endpoints</CardDescription>
           </div>
-          <Button onClick={() => setCreateEndpointModalOpen(true)} disabled={fineTunedModels.length === 0} className="gap-2 bg-[#0052CC] text-white hover:bg-[#003D99]">
+          <Button onClick={() => { setCreateEndpointModalOpen(true); fetchVerticals(); }} className="gap-2 bg-[#0052CC] text-white hover:bg-[#003D99]">
             <Plus className="h-4 w-4" /> Create Endpoint
           </Button>
         </CardHeader>
@@ -500,7 +500,7 @@ function ConfigurationPageInner() {
                 <Label>Base Model</Label>
                 <Select value={selectedFineTunedModel} onValueChange={setSelectedFineTunedModel}>
                   <SelectTrigger className="border-border bg-background"><SelectValue placeholder="Select model" /></SelectTrigger>
-                  <SelectContent><SelectItem value="schema-v0">schema-v0</SelectItem></SelectContent>
+                  <SelectContent><SelectItem value={process.env.NEXT_PUBLIC_BASE_MODEL || "schema-v1"}>{process.env.NEXT_PUBLIC_BASE_MODEL || "schema-v1"}</SelectItem></SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
@@ -533,10 +533,10 @@ function ConfigurationPageInner() {
       </Dialog>
 
       <Dialog open={createEndpointModalOpen} onOpenChange={setCreateEndpointModalOpen}>
-        <DialogContent className="border-border bg-card sm:max-w-[500px]">
+        <DialogContent className="border-border bg-card sm:max-w-[520px]">
           <DialogHeader>
-            <DialogTitle>Create Endpoint</DialogTitle>
-            <DialogDescription>Create a new API endpoint for your model</DialogDescription>
+            <DialogTitle className="flex items-center gap-2"><Globe className="h-5 w-5 text-[#2684FF]" />Create Endpoint</DialogTitle>
+            <DialogDescription>Deploy your model as an API endpoint</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
@@ -549,45 +549,44 @@ function ConfigurationPageInner() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label>Base Model</Label>
-              <Select value={newEndpointBaseModel} onValueChange={setNewEndpointBaseModel}>
-                <SelectTrigger className="border-border bg-background"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="schema-v0">schema-v0</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
             {newEndpointType === "query" && <div className="space-y-2">
-              <Label>Fine-tuned Model</Label>
+              <Label>Fine-tuned Model <span className="text-red-500">*</span></Label>
               <Select value={newEndpointModel} onValueChange={v => { setNewEndpointModel(v); fetchVerticals(v); setNewEndpointVertical("") }}>
                 <SelectTrigger className="border-border bg-background"><SelectValue placeholder="Select your trained model" /></SelectTrigger>
                 <SelectContent>{fineTunedModels.map(m => <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>)}</SelectContent>
               </Select>
+              <p className="text-[10px] text-muted-foreground">Base model: {process.env.NEXT_PUBLIC_BASE_MODEL || "schema-v1"}</p>
             </div>}
-            <div className="space-y-2">
-              <Label>Endpoint Name</Label>
-              <Input placeholder="Sales Prediction API" value={newEndpointName} onChange={(e) => setNewEndpointName(e.target.value)} className="border-border bg-background" />
-            </div>
-            <div className="space-y-2">
-              <Label>URL Path</Label>
-              <div className="flex items-center">
-                <span className="rounded-l-md border border-r-0 border-border bg-muted px-3 py-2 text-sm text-muted-foreground">{newEndpointType === "analyze" ? "/v1/analyze/" : "/v1/query/"}</span>
-                <Input placeholder="sales-prediction" value={newEndpointPath} onChange={(e) => setNewEndpointPath(e.target.value.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, ""))} className="border-border bg-background rounded-l-none" />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>Endpoint Name <span className="text-red-500">*</span></Label>
+                <Input placeholder="Sales Prediction API" value={newEndpointName} onChange={(e) => setNewEndpointName(e.target.value)} className="border-border bg-background" />
+              </div>
+              <div className="space-y-2">
+                <Label>URL Path <span className="text-red-500">*</span></Label>
+                <div className="flex items-center">
+                  <span className="rounded-l-md border border-r-0 border-border bg-muted px-2 py-2 text-xs text-muted-foreground">{newEndpointType === "analyze" ? "/v1/analyze/" : "/v1/query/"}</span>
+                  <Input placeholder="sales" value={newEndpointPath} onChange={(e) => setNewEndpointPath(e.target.value.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, ""))} className="border-border bg-background rounded-l-none text-sm" />
+                </div>
               </div>
             </div>
             <div className="space-y-2">
-              <Label>Vertical AI Runtime (Optional)</Label>
+              <Label>Model System Configuration <span className="text-red-500">*</span></Label>
               <Select value={newEndpointVertical} onValueChange={setNewEndpointVertical}>
-                <SelectTrigger className="border-border bg-background"><SelectValue placeholder="None - no vertical processing" /></SelectTrigger>
+                <SelectTrigger className={`border-border bg-background ${!newEndpointVertical || newEndpointVertical === "none" ? "text-muted-foreground" : ""}`}><SelectValue placeholder="Select a configuration" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none">None</SelectItem>
-                  {verticalConfigs.map(v => <SelectItem key={v.id} value={v.id}>{v.name}{v.enabled ? " (Active)" : ""}</SelectItem>)}
+                  {verticalConfigs.length === 0 ? (
+                    <div className="px-2 py-3 text-center text-sm text-muted-foreground">
+                      <p>No configurations available</p>
+                      <p className="text-xs mt-1">Create one in Models page first</p>
+                    </div>
+                  ) : verticalConfigs.map(v => <SelectItem key={v.id} value={v.id}>{v.name}{v.enabled ? " (Active)" : ""}</SelectItem>)}
                 </SelectContent>
               </Select>
+              <p className="text-[10px] text-muted-foreground">Configure system instructions, tools, and agents for this endpoint</p>
             </div>
             <div className="space-y-2">
-              <Label>Description (Optional)</Label>
+              <Label>Description</Label>
               <Textarea placeholder="What does this endpoint do?" value={newEndpointDescription} onChange={(e) => setNewEndpointDescription(e.target.value)} className="border-border bg-background" rows={2} />
             </div>
             <div className="rounded-md bg-zinc-900 border border-zinc-700 p-3 relative">
@@ -626,7 +625,7 @@ function ConfigurationPageInner() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateEndpointModalOpen(false)}>Cancel</Button>
-            <Button onClick={createEndpoint} disabled={creatingEndpoint || (newEndpointType === "query" && !newEndpointModel) || !newEndpointName || !newEndpointPath} className="bg-[#0052CC] text-white hover:bg-[#003D99]">
+            <Button onClick={createEndpoint} disabled={creatingEndpoint || (newEndpointType === "query" && !newEndpointModel) || !newEndpointName || !newEndpointPath || !newEndpointVertical || newEndpointVertical === "none"} className="bg-[#0052CC] text-white hover:bg-[#003D99]">
               {creatingEndpoint ? "Creating..." : "Create Endpoint"}
             </Button>
           </DialogFooter>
@@ -670,27 +669,16 @@ function ConfigurationPageInner() {
           </DialogFooter>
         </DialogContent>
 
-      {/* LLM Settings - External LLMs */}
+      {/* LLM Connections */}
       <Card className="border-border bg-card">
         <CardHeader className="flex flex-row items-center justify-between">
           <div>
-            <CardTitle className="flex items-center gap-2 text-foreground">LLM Settings</CardTitle>
-            <CardDescription>Add your API keys to use GPT-4o, Claude, Gemini and other LLMs in the Playground chat. Keys are encrypted and stored securely.</CardDescription>
+            <CardTitle className="flex items-center gap-2 text-foreground"><Link2 className="h-5 w-5 text-[#2684FF]" />LLM Connections</CardTitle>
+            <CardDescription>Connect external LLMs like GPT-4o, Claude, and Gemini for use in the Playground. Keys are encrypted and stored securely.</CardDescription>
           </div>
         </CardHeader>
         <CardContent>
           <LanguageLayerConfig />
-        </CardContent>
-      </Card>
-
-      {/* Language Layer Config */}
-      <Card className="border-border bg-card">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-foreground">Language Layer</CardTitle>
-          <CardDescription>Configure conversation behavior, compliance rules, and function capabilities for the Language Layer.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <LanguageConfigPanel />
         </CardContent>
       </Card>
 
@@ -700,19 +688,23 @@ function ConfigurationPageInner() {
 }
 
 function LanguageLayerConfig() {
-  const [secrets, setSecrets] = useState<{id: string; provider: string; secret_name: string; encrypted_value: string}[]>([])
+  const [secrets, setSecrets] = useState<{id: string; provider: string; secret_name: string; encrypted_value: string; selected_models?: string[]}[]>([])
   const [provider, setProvider] = useState("openai")
-  const [model, setModel] = useState("gpt-4o")
   const [apiKey, setApiKey] = useState("")
   const [secretName, setSecretName] = useState("")
   const [showKey, setShowKey] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [customEndpoint, setCustomEndpoint] = useState("")
+  
+  // Model selection popup state
+  const [modelSelectOpen, setModelSelectOpen] = useState(false)
+  const [pendingSecretId, setPendingSecretId] = useState<string | null>(null)
+  const [selectedModels, setSelectedModels] = useState<string[]>([])
 
   const [providerModels, setProviderModels] = useState<Record<string, {id: string; name: string}[]>>({
-    openai: [{ id: "gpt-4o", name: "GPT-4o" }],
-    anthropic: [{ id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" }],
-    gemini: [{ id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" }],
+    openai: [{ id: "gpt-4o", name: "GPT-4o" }, { id: "gpt-4o-mini", name: "GPT-4o Mini" }, { id: "gpt-4-turbo", name: "GPT-4 Turbo" }],
+    anthropic: [{ id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" }, { id: "claude-3-opus", name: "Claude 3 Opus" }, { id: "claude-3-haiku", name: "Claude 3 Haiku" }],
+    gemini: [{ id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" }, { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" }],
   })
 
   const providerLabels: Record<string, string> = { openai: "OpenAI", anthropic: "Anthropic", gemini: "Google Gemini", custom: "Custom Endpoint" }
@@ -753,16 +745,42 @@ function LanguageLayerConfig() {
       if (!testData.success) { toast.error("Invalid API key: " + (testData.error || "Authentication failed")); return }
     } catch { toast.error("Failed to validate key"); return }
     try {
-      await fetch("/api/vertical/secrets", {
+      const res = await fetch("/api/vertical/secrets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({ provider, secret_name: secretName, value: apiKey, vertical_id: "", endpoint: provider === "custom" ? customEndpoint : "" })
       })
-      toast.success(editingId ? `"${secretName}" updated` : `"${secretName}" saved`)
+      const data = await res.json()
+      const newSecretId = data?.id || `temp-${Date.now()}`
+      
+      // Open model selection popup
+      setPendingSecretId(newSecretId)
+      setSelectedModels([])
+      setModelSelectOpen(true)
+      
       setApiKey(""); setSecretName(""); setEditingId(null)
       fetchSecrets()
     } catch { toast.error("Failed to save API key") }
+  }
+  
+  const saveModelSelection = async () => {
+    if (pendingSecretId && selectedModels.length > 0) {
+      try {
+        await fetch("/api/vertical/secrets/update-models", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ id: pendingSecretId, models: selectedModels })
+        })
+      } catch {}
+      // Update local state
+      setSecrets(prev => prev.map(s => s.id === pendingSecretId ? { ...s, selected_models: selectedModels } : s))
+    }
+    toast.success("LLM connection saved")
+    setModelSelectOpen(false)
+    setPendingSecretId(null)
+    setSelectedModels([])
   }
 
   const deleteSecret = async (id: string, name: string) => {
@@ -783,7 +801,6 @@ function LanguageLayerConfig() {
     setEditingId(s.id)
     setProvider(s.provider)
     setSecretName(s.secret_name)
-    setModel(providerModels[s.provider]?.[0]?.id || "")
     setApiKey("")
     setShowKey(false)
     toast(`Editing "${s.secret_name}"`)
@@ -797,33 +814,50 @@ function LanguageLayerConfig() {
     setEditingId(null)
     setApiKey(""); setSecretName("")
   }
+  
+  const toggleModelSelection = (modelId: string) => {
+    setSelectedModels(prev => 
+      prev.includes(modelId) ? prev.filter(m => m !== modelId) : [...prev, modelId]
+    )
+  }
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label>Provider</Label>
-          <Select value={provider} onValueChange={(v) => { setProvider(v); setModel(Object.values(providerModels).flat().find(m => providerModels[v]?.some(pm => pm.id === m.id))?.id || providerModels[v]?.[0]?.id || "") }}>
-            <SelectTrigger className="border-border bg-background"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="openai">OpenAI</SelectItem>
-              <SelectItem value="anthropic">Anthropic</SelectItem>
-              <SelectItem value="gemini">Google Gemini</SelectItem>
-              <SelectItem value="custom">Custom Endpoint</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-2">
-          <Label>Model</Label>
-          <Select value={model} onValueChange={setModel}>
-            <SelectTrigger className="border-border bg-background"><SelectValue placeholder="Select model" /></SelectTrigger>
-            <SelectContent>
-              {(providerModels[provider] || []).map(m => (
-                <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+      {/* Model Selection Popup */}
+      <Dialog open={modelSelectOpen} onOpenChange={setModelSelectOpen}>
+        <DialogContent className="border-border bg-card sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>Select Models</DialogTitle>
+            <DialogDescription>Choose which models to enable for this connection</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 max-h-[300px] overflow-y-auto">
+            {(providerModels[provider] || []).map(m => (
+              <label key={m.id} className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${selectedModels.includes(m.id) ? "border-[#0052CC] bg-[#0052CC]/10" : "border-border hover:bg-muted/30"}`}>
+                <Checkbox checked={selectedModels.includes(m.id)} onCheckedChange={() => toggleModelSelection(m.id)} className="data-[state=checked]:bg-[#0052CC] data-[state=checked]:border-[#0052CC]" />
+                <span className="text-sm font-medium">{m.name}</span>
+              </label>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setModelSelectOpen(false); toast.success("LLM connection saved without model selection") }}>Skip</Button>
+            <Button onClick={saveModelSelection} disabled={selectedModels.length === 0} className="bg-[#0052CC] text-white hover:bg-[#003D99]">
+              Save ({selectedModels.length} selected)
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <div className="space-y-2">
+        <Label>Provider</Label>
+        <Select value={provider} onValueChange={(v) => { setProvider(v) }}>
+          <SelectTrigger className="border-border bg-background"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="openai">OpenAI</SelectItem>
+            <SelectItem value="anthropic">Anthropic</SelectItem>
+            <SelectItem value="gemini">Google Gemini</SelectItem>
+            <SelectItem value="custom">Custom Endpoint</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       <div className="space-y-2">
@@ -855,18 +889,21 @@ function LanguageLayerConfig() {
             {editingId ? "Update" : <><Plus className="h-3 w-3" /> Save</>}
           </Button>
         </div>
+        <p className="text-[10px] text-muted-foreground">After saving, you'll be prompted to select which models to enable</p>
       </div>
 
       {secrets.length > 0 && (
         <div className="space-y-2">
-          <Label>Saved Keys</Label>
+          <Label>Connected LLMs</Label>
           <div className="space-y-2">
             {secrets.map(s => (
               <div key={s.id} className="flex items-center justify-between p-3 rounded-lg border border-border bg-muted/30">
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 flex-wrap">
                   <span className="text-xs font-medium px-2 py-0.5 rounded bg-[#2684FF]/10 text-[#2684FF]">{providerLabels[s.provider] || s.provider}</span>
                   <span className="font-mono text-sm">{s.secret_name}</span>
-                  <span className="text-xs text-muted-foreground font-mono">{s.encrypted_value}</span>
+                  {s.selected_models && s.selected_models.length > 0 && (
+                    <span className="text-xs text-muted-foreground">{s.selected_models.length} model(s)</span>
+                  )}
                 </div>
                 <div className="flex items-center gap-1">
                   <Button variant="ghost" size="sm" onClick={() => startEdit(s as any)} className="text-muted-foreground hover:text-foreground">
@@ -881,110 +918,6 @@ function LanguageLayerConfig() {
           </div>
         </div>
       )}
-    </div>
-  )
-}
-
-function LanguageConfigPanel() {
-  const [config, setConfig] = useState<any>({
-    assistant_tone: "professional", compliance_notes: "", confidence_threshold: 0.75,
-    history_lookback_days: 90, capabilities: {
-      run_prediction: true, run_full_inference: true, run_tool: true,
-      lookup_prediction: true, query_predictions: true, get_config: true
-    }
-  })
-  const [saving, setSaving] = useState(false)
-
-  useEffect(() => {
-    fetch("/api/vertical/language-config", { credentials: "include" })
-      .then(r => r.json()).then(setConfig).catch(() => {})
-  }, [])
-
-  const save = async () => {
-    setSaving(true)
-    try {
-      await fetch("/api/vertical/language-config/save", {
-        method: "POST", headers: {"Content-Type": "application/json"}, credentials: "include",
-        body: JSON.stringify(config)
-      })
-      toast.success("Language config saved")
-    } catch { toast.error("Failed to save") }
-    setSaving(false)
-  }
-
-  const tones = ["professional", "clinical", "technical", "friendly"]
-  const capabilities = ["run_prediction", "run_full_inference", "run_tool", "lookup_prediction", "query_predictions", "get_config"]
-  const capLabels: Record<string, string> = {
-    run_prediction: "Run Prediction", run_full_inference: "Run Full Inference", run_tool: "Run Tool",
-    lookup_prediction: "Lookup Prediction", query_predictions: "Query Predictions", get_config: "Get Config"
-  }
-  const capDescriptions: Record<string, string> = {
-    run_prediction: "Run Schema's neural network on a single data row. Returns prediction, confidence, and class probabilities.",
-    run_full_inference: "Run the complete vertical AI pipeline: Schema prediction + all tools + agent logic. Returns full structured response including final_decision.",
-    run_tool: "Run one specific registered tool on demand without running the whole pipeline.",
-    lookup_prediction: "Retrieve a previously completed prediction by its ID. Used when referencing past decisions.",
-    query_predictions: "Search prediction history with filters like date range, confidence level, or decision type.",
-    get_config: "Read this vertical's system configuration including thresholds, rules, and tool settings."
-  }
-
-  return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label>Assistant Tone</Label>
-          <Select value={config.assistant_tone} onValueChange={v => setConfig((p: any) => ({...p, assistant_tone: v}))}>
-            <SelectTrigger className="border-border bg-background"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {tones.map(t => <SelectItem key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-2">
-          <Label>Confidence Threshold</Label>
-          <Input type="number" min={0} max={1} step={0.05} value={config.confidence_threshold}
-            onChange={e => setConfig((p: any) => ({...p, confidence_threshold: parseFloat(e.target.value) || 0.75}))}
-            className="border-border bg-background" />
-          <p className="text-xs text-muted-foreground">Below this value, human review is recommended</p>
-        </div>
-      </div>
-
-      <div className="space-y-2">
-        <Label>History Lookback Days</Label>
-        <Input type="number" min={1} max={365} value={config.history_lookback_days}
-          onChange={e => setConfig((p: any) => ({...p, history_lookback_days: parseInt(e.target.value) || 90}))}
-          className="border-border bg-background w-32" />
-      </div>
-
-      <div className="space-y-2">
-        <Label>Compliance Notes</Label>
-        <textarea value={config.compliance_notes} onChange={e => setConfig((p: any) => ({...p, compliance_notes: e.target.value}))}
-          placeholder="e.g. This vertical operates under HIPAA. Do not repeat patient identifiers..."
-          className="w-full h-20 rounded-md border border-border bg-background px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-[#2684FF]" />
-      </div>
-
-      <div className="space-y-2">
-        <Label>Function Capabilities</Label>
-        <div className="grid grid-cols-2 gap-2">
-          {capabilities.map(cap => (
-            <label key={cap} className="flex items-center gap-2 p-2 rounded border border-border hover:bg-muted/30 cursor-pointer group relative">
-              <input type="checkbox" checked={config.capabilities?.[cap] !== false}
-                onChange={e => setConfig((p: any) => ({...p, capabilities: {...(p.capabilities || {}), [cap]: e.target.checked}}))}
-                className="rounded" />
-              <span className="text-sm">{capLabels[cap]}</span>
-              <div className="relative ml-auto">
-                <Info className="h-3.5 w-3.5 text-muted-foreground/50 hover:text-muted-foreground peer opacity-0 group-hover:opacity-100 transition-opacity" />
-                <div className="absolute bottom-full right-0 mb-2 w-64 p-2 rounded-md bg-popover border border-border shadow-lg text-xs text-muted-foreground hidden peer-hover:block z-50">
-                  {capDescriptions[cap]}
-                </div>
-              </div>
-            </label>
-          ))}
-        </div>
-      </div>
-
-      <Button onClick={save} disabled={saving} className="bg-[#0052CC] hover:bg-[#0052CC]/90 text-white">
-        {saving ? "Saving..." : "Save Language Config"}
-      </Button>
     </div>
   )
 }

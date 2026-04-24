@@ -29,7 +29,7 @@ def storage_exists(path, user_id=None):
                     if blob.exists():
                         return True
             # Try shared prefixes
-            for prefix in ['shared/checkpoints/', 'shared/base-models/', 'uploads/']:
+            for prefix in ['shared/checkpoints/', 'shared/base-models/', 'uploads/', 'users/system/checkpoints/', 'users/system/uploads/']:
                 blob = bucket.blob(prefix + basename)
                 if blob.exists():
                     return True
@@ -62,7 +62,7 @@ def storage_resolve(path, user_id=None):
                     if blob.exists():
                         return cloud_storage.download(key)
             # Try shared prefixes
-            for prefix in ['shared/checkpoints/', 'shared/base-models/', 'uploads/']:
+            for prefix in ['shared/checkpoints/', 'shared/base-models/', 'uploads/', 'users/system/checkpoints/', 'users/system/uploads/']:
                 key = prefix + basename
                 blob = bucket.blob(key)
                 if blob.exists():
@@ -76,19 +76,27 @@ def storage_resolve(path, user_id=None):
             pass
     return None
 
-def storage_listdir(directory):
+def storage_listdir(directory, user_id=None):
     files = []
     try:
         prefix = directory.replace('../', '').replace('./', '')
         if not prefix.endswith('/'):
             prefix += '/'
         if cloud_storage.STORAGE_BACKEND == 'gcs':
-            keys = cloud_storage._get_gcs_client().bucket(cloud_storage.GCS_BUCKET).list_blobs(prefix=prefix)
-            files = [os.path.basename(b.name) for b in keys if not b.name.endswith('/') and not b.name.endswith('.keep')]
+            client = cloud_storage._get_gcs_client()
+            bucket = client.bucket(cloud_storage.GCS_BUCKET)
+            seen = set()
+            search_prefixes = [prefix, 'users/system/' + prefix]
+            if user_id:
+                search_prefixes.insert(0, f'users/{user_id}/{prefix}')
+            for search_prefix in search_prefixes:
+                for b in bucket.list_blobs(prefix=search_prefix):
+                    bn = os.path.basename(b.name)
+                    if bn and not b.name.endswith('/') and not b.name.endswith('.keep') and bn not in seen:
+                        seen.add(bn)
+                        files.append(bn)
     except:
         pass
-    if not files and storage_exists(directory):
-        files = storage_listdir(directory)
     return files
 from flask import Flask, request, jsonify
 
@@ -152,6 +160,12 @@ try:
 except:
     HAS_CUDF = False
 from model import TabularFoundationModel, TabularFoundationModelMIRAS
+try:
+    from schema_v1 import SchemaV1, SchemaV1Config
+    HAS_SCHEMA_V1 = True
+except Exception as _e:
+    print(f"[SCHEMA_V1] Import failed: {_e}")
+    HAS_SCHEMA_V1 = False
 import os
 import sys
 import time
@@ -163,31 +177,106 @@ print(f"Using device: {device}")
 
 # Base model - startup'ta yukle
 BASE_MODEL_PATH = os.getenv("BASE_MODEL_PATH", "base_model_v0_1M_final.pt")
+BASE_MODEL_PATH_V0 = os.getenv("BASE_MODEL_PATH_V0", "base_model_v0_1M_final.pt")
+BASE_MODEL_PATH_V1 = os.getenv("BASE_MODEL_PATH_V1", "schema_v1_500m_tq4_buffers.pt")
 base_model = None
+base_models = {}
 
-def load_base_model():
-    global base_model
-    if base_model is not None:
-        return base_model
+def _is_schema_v1_checkpoint(ckpt):
+    if isinstance(ckpt, dict):
+        keys = set(ckpt.keys()) if "model_state_dict" not in ckpt else set(ckpt.get("model_state_dict", {}).keys())
+        markers = {"midas.value_proj.weight", "cell_proc.sbert_proj.0.weight", "schema_proc.layers.0.norm1.w", "global_reason.latents"}
+        return any(m in keys for m in markers)
+    return False
+
+def load_base_model(version=None):
+    global base_model, base_models
+    if version is None:
+        if "v0" in BASE_MODEL_PATH.lower():
+            version = "v0"
+        else:
+            version = "v1"
+    if version in base_models and base_models[version] is not None:
+        return base_models[version]
+    
+    if version == "v0":
+        model_path = BASE_MODEL_PATH_V0
+    elif version == "v1":
+        model_path = BASE_MODEL_PATH_V1
+    else:
+        model_path = BASE_MODEL_PATH
+    
+    print(f"[BASE MODEL] Loading version={version} path={model_path}")
     
     try:
-        from model import TabularFoundationModel
-        
-        # Load base model from GCS only
-        base_path = cloud_storage.download(cloud_storage.shared_key("base-models", os.path.basename(BASE_MODEL_PATH)))
+        base_path = cloud_storage.download(cloud_storage.shared_key("base-models", os.path.basename(model_path)))
         ckpt = torch.load(base_path, map_location=device, weights_only=False)
         print(f"[BASE MODEL] Loaded from GCS: {base_path}")
+        
+        is_v1 = _is_schema_v1_checkpoint(ckpt) or "schema_v1" in model_path.lower() or "tq4" in model_path.lower() or version == "v1"
+        
+        if is_v1 and HAS_SCHEMA_V1:
+            print("[BASE MODEL] Detected SchemaV1 architecture")
+            cfg_dict = ckpt.get("config", {}) if isinstance(ckpt, dict) else {}
+            sv1_cfg = SchemaV1Config(**cfg_dict) if cfg_dict else SchemaV1Config()
+            base_model = SchemaV1(sv1_cfg).to(device)
+            raw_state = ckpt.get("model_state_dict", ckpt) if isinstance(ckpt, dict) else ckpt
+            
+            sample_val = next(iter(raw_state.values())) if raw_state else None
+            is_tq4 = isinstance(sample_val, dict) and "c" in sample_val and "n" in sample_val
+            
+            if is_tq4:
+                print("[BASE MODEL] Dequantizing TQ4 state dict...")
+                from turboquant import TurboQuantMSE
+                try:
+                    from turboquant.mse_quantizer import MSEQuantizedOutput
+                except ImportError:
+                    from turboquant import MSEQuantizedOutput
+                state_dict = {}
+                for pname, v in raw_state.items():
+                    if pname == "_sector_names":
+                        continue
+                    if isinstance(v, dict) and "f" in v:
+                        state_dict[pname] = v["f"].float()
+                    elif isinstance(v, dict) and "c" in v:
+                        tq = TurboQuantMSE(dim=v["d"], bit_width=4, seed=42)
+                        qout = MSEQuantizedOutput(codes=v["c"].int(), norms=v["n"].float(), bit_width=4)
+                        state_dict[pname] = tq.dequantize(qout).reshape(v["s"])
+                    else:
+                        state_dict[pname] = v
+                print(f"[BASE MODEL] TQ4 dequantized: {len(state_dict)} tensors")
+            else:
+                state_dict = raw_state
+            
+            missing, unexpected = base_model.load_state_dict(state_dict, strict=False)
+            print(f"[BASE MODEL] SchemaV1 loaded. missing={len(missing)} unexpected={len(unexpected)}")
+            _sector_names = ckpt.get("_sector_names")
+            if _sector_names and isinstance(_sector_names, list):
+                base_model._sector_names = _sector_names
+                print(f"[BASE MODEL] Loaded {len(_sector_names)} sector names from checkpoint")
+            else:
+                base_model._sector_names = None
+            base_model.eval()
+            base_models[version] = base_model
+            return base_model
+        
+        from model import TabularFoundationModel
         config = ckpt.get("config", {"d_model": 256, "n_heads": 8, "n_layers": 3, "schema_layers": 3, "n_latents": 64, "n_features": 64, "n_classes": 10, "n_sectors": 10, "n_types": 10, "max_cols": 1024})
         base_model = TabularFoundationModel(config).to(device)
-        base_model.update_heads(n_classes=18, n_sectors=10)
+        n_cls = ckpt.get("n_classes", config.get("n_classes", 18))
+        n_sec = ckpt.get("n_sectors", config.get("n_sectors", 10))
+        base_model.update_heads(n_classes=n_cls, n_sectors=n_sec)
         if "model_state_dict" in ckpt:
             base_model.load_state_dict(ckpt["model_state_dict"], strict=False)
         else:
             base_model.load_state_dict(ckpt, strict=False)
         base_model.eval()
+        base_models[version] = base_model
         return base_model
     except Exception as e:
         print(f"[BASE MODEL] Error loading: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 # Load base model at startup
@@ -199,7 +288,7 @@ print("[STARTUP] Base model ready")
 ft_model_cache = {}
 FT_CACHE_MAX_SIZE = 3  # Max 3 model tut (GPU memory için)
 
-def get_cached_finetuned_model(model_id, config, model_path=None):
+def get_cached_finetuned_model(model_id, config, model_path=None, user_id=None):
     """Load model from cache or disk"""
     global ft_model_cache
     
@@ -233,19 +322,27 @@ def get_cached_finetuned_model(model_id, config, model_path=None):
     
     # Also try to find by date pattern in model_path or model_id
     import re
-    import glob
     search_str = model_path or model_id
     date_match = re.search(r'(\d{8})', search_str)
     if date_match:
         date_str = date_match.group(1)
-        pattern = f'../checkpoints/model_finetuned_{date_str}_*.pt'
-        matching_files = glob.glob(pattern)
-        if matching_files:
-            possible_paths.insert(0, matching_files[0])
-            print(f"Found checkpoint by date pattern: {matching_files[0]}")
+        if cloud_storage.STORAGE_BACKEND == 'gcs':
+            try:
+                client = cloud_storage._get_gcs_client()
+                bucket = client.bucket(cloud_storage.GCS_BUCKET)
+                for pfx in ['users/system/checkpoints/', 'shared/checkpoints/', 'checkpoints/']:
+                    for b in bucket.list_blobs(prefix=pfx + f'model_finetuned_{date_str}'):
+                        if b.name.endswith('.pt'):
+                            possible_paths.insert(0, b.name)
+                            print(f"Found checkpoint by date pattern in GCS: {b.name}")
+                            break
+                    if possible_paths and possible_paths[0].startswith(pfx):
+                        break
+            except:
+                pass
     
     for path in possible_paths:
-        resolved = storage_resolve(path)
+        resolved = storage_resolve(path, user_id=user_id)
         if resolved:
             ft_path = resolved
             print(f"[STORAGE] Checkpoint resolved: {path} → {ft_path}")
@@ -258,15 +355,26 @@ def get_cached_finetuned_model(model_id, config, model_path=None):
     map_location = 'cuda' if torch.cuda.is_available() else 'cpu'
     ft_ckpt = torch.load(ft_path, map_location=map_location, weights_only=False)
     
-    # Use config from checkpoint if available, otherwise use provided config
-    ckpt_config = ft_ckpt.get('config', config)
-    if ckpt_config:
-        config = ckpt_config
+    ckpt_model_type = ft_ckpt.get('model_type', 'v1_finetune')
     
-    ft_model = TabularFoundationModel(config)
-    ft_model.load_state_dict(ft_ckpt["model_state_dict"], strict=False)
-    ft_model.eval()
-    ft_model = ft_model.to(device)
+    if ckpt_model_type == 'schema_v1_finetune' and HAS_SCHEMA_V1:
+        from schema_v1 import SchemaV1FineTuneWrapper
+        sv1_task_type_ck = ft_ckpt.get('task_type', 'classification')
+        sv1_n_out_ck = ft_ckpt.get('n_classes', 1) if sv1_task_type_ck == 'classification' else 1
+        base = load_base_model()
+        if base is None or not isinstance(base, SchemaV1):
+            raise RuntimeError("SchemaV1 base model not loaded but fine-tuned checkpoint requires it")
+        ft_model = SchemaV1FineTuneWrapper(base, n_classes=sv1_n_out_ck, task_type=sv1_task_type_ck, freeze_backbone=False).to(device)
+        ft_model.load_state_dict(ft_ckpt["model_state_dict"], strict=False)
+        ft_model.eval()
+    else:
+        ckpt_config = ft_ckpt.get('config', config)
+        if ckpt_config:
+            config = ckpt_config
+        ft_model = TabularFoundationModel(config)
+        ft_model.load_state_dict(ft_ckpt["model_state_dict"], strict=False)
+        ft_model.eval()
+        ft_model = ft_model.to(device)
     
     # Cache doluysa en eskiyi sil
     if len(ft_model_cache) >= FT_CACHE_MAX_SIZE:
@@ -1022,13 +1130,17 @@ def get_dynamic_config(n_samples, n_features, n_classes):
     if n_samples < 100:
         batch_size = 4
     elif n_samples < 500:
-        batch_size = 16
-    elif n_samples < 2000:
         batch_size = 32
-    else:
+    elif n_samples < 2000:
         batch_size = 64
+    elif n_samples < 10000:
+        batch_size = 128
+    else:
+        batch_size = 256
     
-    if n_features > 150:
+    if n_features > 300:
+        batch_size = min(batch_size, 128)
+    elif n_features > 150:
         batch_size = max(batch_size, 128)
     elif n_features > 100:
         batch_size = max(batch_size, 64)
@@ -1405,29 +1517,6 @@ def _get_kafka_producer():
         print(f"[KAFKA INIT ERROR] {e}")
         return None
 
-# Global Kafka producer
-_kafka_producer = None
-def _get_kafka_producer():
-    global _kafka_producer
-    import os as _os2
-    kafka_servers = _os2.getenv("KAFKA_BOOTSTRAP_SERVERS", "")
-    if not kafka_servers:
-        return None
-    try:
-        if _kafka_producer is None:
-            from kafka import KafkaProducer
-            _kafka_producer = KafkaProducer(
-                bootstrap_servers=kafka_servers.split(","),
-                value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-                request_timeout_ms=5000,
-                max_block_ms=5000
-            )
-            print("[KAFKA] Producer initialized")
-        return _kafka_producer
-    except Exception as e:
-        print(f"[KAFKA INIT ERROR] {e}")
-        return None
-
 def _save_sessions():
     try:
         with open(SESSIONS_FILE, 'w') as f:
@@ -1438,7 +1527,18 @@ def _save_sessions():
 def get_session(query_id):
     _load_sessions()
     if query_id not in training_sessions:
-        training_sessions[query_id] = {"epoch": 0, "epochs": 0, "accuracy": 0.0, "loss": 0.0, "status": "idle", "eta": "0%", "start_time": 0, "query_id": query_id}
+        existing = {}
+        try:
+            rc = _get_redis()
+            if rc:
+                data = rc.get("training:" + query_id)
+                if data:
+                    existing = json.loads(data)
+        except:
+            pass
+        defaults = {"epoch": 0, "epochs": 0, "accuracy": 0.0, "loss": 0.0, "status": "idle", "eta": "0%", "start_time": 0, "query_id": query_id}
+        defaults.update(existing)
+        training_sessions[query_id] = defaults
         _save_sessions()
     return training_sessions[query_id]
 
@@ -1524,26 +1624,40 @@ def list_sectors():
 @app.route('/models/list', methods=['GET'])
 def list_models():
     models = []
-    checkpoint_dir = Path('../checkpoints')
-    for f in sorted(checkpoint_dir.glob('*.pt'), reverse=True):
-        filename = f.name
-        
-        # Load checkpoint to get source_file_id
-        source_file = None
+    models_found = []
+    if cloud_storage.STORAGE_BACKEND == 'gcs':
         try:
-            ckpt = torch.load(f, map_location='cpu', weights_only=False)
-            source_file = ckpt.get('source_file_id')
+            client = cloud_storage._get_gcs_client()
+            bucket = client.bucket(cloud_storage.GCS_BUCKET)
+            for pfx in ['users/system/checkpoints/', 'shared/checkpoints/', 'checkpoints/']:
+                for b in bucket.list_blobs(prefix=pfx):
+                    if b.name.endswith('.pt'):
+                        filename = os.path.basename(b.name)
+                        if filename not in [m['filename'] for m in models_found]:
+                            models_found.append({
+                                "name": filename.replace('.pt', ''),
+                                "filename": filename,
+                                "path": b.name,
+                                "type": "finetuned" if "finetuned" in filename else "base",
+                                "is_current": False,
+                                "source_file_id": None
+                            })
         except:
             pass
-        
-        models.append({
-            "name": filename.replace('.pt', ''),
-            "filename": filename,
-            "path": str(f),
-            "type": "finetuned" if "finetuned" in filename else "base",
-            "is_current": filename == "schemalabsai_v1.pt",
-            "source_file_id": source_file
-        })
+    else:
+        checkpoint_dir = Path('../checkpoints')
+        if checkpoint_dir.exists():
+            for f in sorted(checkpoint_dir.glob('*.pt'), reverse=True):
+                filename = f.name
+                models_found.append({
+                    "name": filename.replace('.pt', ''),
+                    "filename": filename,
+                    "path": str(f),
+                    "type": "finetuned" if "finetuned" in filename else "base",
+                    "is_current": False,
+                    "source_file_id": None
+                })
+    models = models_found
     return jsonify({"models": models, "current": current_model_name})
 
 @app.route('/predict', methods=['POST'])
@@ -1659,8 +1773,10 @@ def batch_predict_csv():
         ckpt = None
         if model_id:
             ckpt_path = f"./finetuned_models/{model_id}.pt"
-            if storage_exists(ckpt_path):
-                ckpt = torch.load(ckpt_path, map_location=device)
+            if storage_exists(ckpt_path, user_id=request.form.get('user_id', '')):
+                resolved_bp = storage_resolve(ckpt_path, user_id=request.form.get('user_id', ''))
+                if resolved_bp:
+                    ckpt = torch.load(resolved_bp, map_location=device)
         
         if ckpt is None:
             return jsonify({"error": f"Model {model_id} not found"}), 404
@@ -1795,15 +1911,25 @@ def predict_batch():
 data_cache = {}
 DATA_CACHE_MAX_SIZE = 100
 
-def get_cached_dataframe(file_path):
+def get_cached_dataframe(file_path, user_id=None):
     global data_cache
     if file_path in data_cache:
         print(f"Data cache HIT: {os.path.basename(file_path)}")
         return data_cache[file_path].copy()
     print(f"Data cache MISS: {os.path.basename(file_path)}")
-    resolved = storage_resolve(file_path)
+    resolved = storage_resolve(file_path, user_id=user_id)
     if not resolved:
-        raise FileNotFoundError(f"Data file not found: {file_path}")
+        basename_try = os.path.basename(file_path)
+        for pfx in ['uploads/', 'users/system/uploads/', 'users/']:
+            try:
+                resolved = cloud_storage.download(pfx + basename_try)
+                if resolved:
+                    print(f"[GCS] get_cached_dataframe fallback found: {pfx}{basename_try}")
+                    break
+            except:
+                pass
+        if not resolved:
+            raise FileNotFoundError(f"Data file not found: {file_path}")
     df = pd.read_csv(resolved)
     if len(data_cache) >= DATA_CACHE_MAX_SIZE:
         del data_cache[list(data_cache.keys())[0]]
@@ -2081,36 +2207,44 @@ def analyze():
                 # Try model_path first (from database), then fallback to model_id.pt
                 model_path = data.get('model_path', '')
                 print(f"DEBUG: Received model_path: {model_path}")
-                if model_path and storage_exists(model_path):
+                if model_path and storage_exists(model_path, user_id=user_id):
                     ft_path = model_path
                 elif model_path:
-                    # Try relative path
                     ft_path = model_path if model_path.startswith('../') else f'../checkpoints/{model_path}'
                 else:
                     ft_path = f'../checkpoints/{model_id}.pt'
                 
-                # Also try model_id.pt as fallback
-                if not storage_exists(ft_path):
+                if not storage_exists(ft_path, user_id=user_id):
                     ft_path = f'../checkpoints/{model_id}.pt'
                 
                 print(f"DEBUG: Loading checkpoint from: {ft_path}")
-                resolved_ckpt = storage_resolve(ft_path)
+                resolved_ckpt = storage_resolve(ft_path, user_id=user_id)
                 if resolved_ckpt:
                     ft_ckpt = torch.load(resolved_ckpt, map_location='cpu', weights_only=False)
                     source_file_id = ft_ckpt.get('source_file_id', '')
-                    if source_file_id and 'merged' in source_file_id:
-                        # Use merged file directly
-                        merged_path = os.path.join(uploads_dir, source_file_id)
-                        if storage_exists(merged_path):
-                            file_path = merged_path
-                            print(f"Using merged file from model: {file_path}")
-                        else:
-                            # Try to find by prefix
-                            for f in storage_listdir(uploads_dir):
-                                if source_file_id[:8] in f and 'merged' in f:
-                                    file_path = os.path.join(uploads_dir, f)
-                                    print(f"Found merged file: {file_path}")
+                    if source_file_id:
+                        if '/' in source_file_id:
+                            if storage_exists(source_file_id, user_id=user_id):
+                                file_path = source_file_id
+                                print(f"[GCS] Using source_file_id GCS key: {file_path}")
+                        if not file_path and 'merged' in source_file_id:
+                            basename_src = os.path.basename(source_file_id)
+                            for search_prefix in ['uploads/', 'users/system/uploads/']:
+                                candidate = search_prefix + basename_src
+                                if storage_exists(candidate, user_id=user_id):
+                                    file_path = candidate
+                                    print(f"[GCS] Found merged file at: {file_path}")
                                     break
+                            if not file_path and user_id:
+                                candidate = f'users/{user_id}/uploads/{basename_src}'
+                                if storage_exists(candidate, user_id=user_id):
+                                    file_path = candidate
+                                    print(f"[GCS] Found merged file in user dir: {file_path}")
+                        if not file_path and source_file_id:
+                            merged_path = os.path.join(uploads_dir, os.path.basename(source_file_id))
+                            if storage_exists(merged_path, user_id=user_id):
+                                file_path = merged_path
+                                print(f"[GCS] Fallback merged path: {file_path}")
             except Exception as e:
                 print(f"Could not load model for source_file_id: {e}")
         
@@ -2131,11 +2265,11 @@ def analyze():
                     # Try direct source_name match
                     if src_name:
                         direct_path = os.path.join(uploads_dir, src_name)
-                        if storage_exists(direct_path):
+                        if storage_exists(direct_path, user_id=user_id):
                             file_path = direct_path
                             print(f"[FILE SEARCH] Method 1a: DB source_name direct: {file_path}")
                         else:
-                            for fname in storage_listdir(uploads_dir):
+                            for fname in storage_listdir(uploads_dir, user_id=user_id):
                                 if src_name in fname:
                                     file_path = os.path.join(uploads_dir, fname)
                                     print(f"[FILE SEARCH] Method 1b: DB source_name partial: {file_path}")
@@ -2155,20 +2289,27 @@ def analyze():
                                         os.path.join(uploads_dir, uf_filename) if uf_filename else None,
                                         os.path.join('..', uf_path) if uf_path else None,
                                     ]:
-                                        if try_path and storage_exists(try_path):
+                                        if try_path and storage_exists(try_path, user_id=user_id):
                                             try:
-                                                resolved_try = storage_resolve(try_path) or try_path
+                                                resolved_try = storage_resolve(try_path, user_id=user_id) or try_path
                                                 df = pd.read_csv(resolved_try, low_memory=False)
                                                 multi_dfs.append(df)
                                             except: pass
                                             break
                             if multi_dfs:
-                                import tempfile
                                 merged_df = pd.concat(multi_dfs, axis=0, ignore_index=True).fillna(0)
-                                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".csv", dir=uploads_dir)
+                                import tempfile
+                                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".csv", dir="/tmp")
                                 merged_df.to_csv(tmp.name, index=False)
-                                file_path = tmp.name
-                                print(f"[FILE SEARCH] Method 2-multi: merged {len(multi_dfs)} files -> {merged_df.shape}")
+                                merge_key = f'uploads/query_merged_{model_id[:8]}.csv'
+                                try:
+                                    cloud_storage.upload(merge_key, tmp.name)
+                                    file_path = merge_key
+                                    print(f"[FILE SEARCH] Method 2-multi: merged {len(multi_dfs)} files -> {merged_df.shape}, uploaded to GCS: {merge_key}")
+                                    os.unlink(tmp.name)
+                                except:
+                                    file_path = tmp.name
+                                    print(f"[FILE SEARCH] Method 2-multi: merged {len(multi_dfs)} files -> {merged_df.shape} (local tmp)")
                         else:
                             cur.execute("SELECT filename, path FROM uploaded_files WHERE id=%s", (src_file_id,))
                             frow = cur.fetchone()
@@ -2178,12 +2319,12 @@ def analyze():
                                     os.path.join('..', uf_path) if uf_path else None,
                                     os.path.join(uploads_dir, uf_filename) if uf_filename else None,
                                 ]:
-                                    if try_path and storage_exists(try_path):
+                                    if try_path and storage_exists(try_path, user_id=user_id):
                                         file_path = try_path
                                         print(f"[FILE SEARCH] Method 2: uploaded_files table: {file_path}")
                                         break
                                 if not file_path and uf_filename:
-                                    for fname in storage_listdir(uploads_dir):
+                                    for fname in storage_listdir(uploads_dir, user_id=user_id):
                                         if uf_filename in fname or fname in uf_filename:
                                             file_path = os.path.join(uploads_dir, fname)
                                             print(f"[FILE SEARCH] Method 2b: uploaded_files partial: {file_path}")
@@ -2196,19 +2337,19 @@ def analyze():
         # Method 3: file_id prefix match in uploads dir
         if not file_path and storage_exists(uploads_dir):
             matching_files = []
-            for f in storage_listdir(uploads_dir):
+            for f in storage_listdir(uploads_dir, user_id=user_id):
                 # Exact match with full file_id
                 if file_id and (f.startswith(file_id + "_") or f.startswith(file_id + ".")):
                     full_path = os.path.join(uploads_dir, f)
-                    matching_files.append((full_path, os.path.getmtime(full_path), 'exact'))
+                    matching_files.append((full_path, 0, 'exact'))
                 # Prefix match with first 8 chars
                 elif file_id and len(file_id) >= 8 and f.startswith(file_id[:8]):
                     full_path = os.path.join(uploads_dir, f)
-                    matching_files.append((full_path, os.path.getmtime(full_path), 'prefix'))
+                    matching_files.append((full_path, 0, 'prefix'))
                 # Method 4: file_id anywhere in filename
                 elif file_id and file_id in f:
                     full_path = os.path.join(uploads_dir, f)
-                    matching_files.append((full_path, os.path.getmtime(full_path), 'contains'))
+                    matching_files.append((full_path, 0, 'contains'))
             
             if matching_files:
                 exact = [m for m in matching_files if m[2] == 'exact']
@@ -2223,7 +2364,7 @@ def analyze():
         if not file_path:
             return jsonify({'analysis': 'File not found.', 'status': 'error'})
         
-        resolved_path = storage_resolve(file_path) or file_path
+        resolved_path = storage_resolve(file_path, user_id=user_id) or storage_resolve(file_path) or file_path
         if file_path.endswith(('.xlsx', '.xls')):
             df = pd.read_excel(resolved_path)
         elif file_path.endswith(".json"):
@@ -2231,30 +2372,27 @@ def analyze():
         elif file_path.endswith(".parquet"):
             df = pd.read_parquet(resolved_path)
         else:
-            df = get_cached_dataframe(file_path)
+            df = get_cached_dataframe(file_path, user_id=user_id)
         
         # === FINE-TUNED MODEL PREDICTION ===
         ft_prediction_text = ""
         ft_structured = None
         if model_id and model_id != "none":
             try:
-                # Try model_path first (from database), then fallback to model_id.pt
                 model_path = data.get('model_path', '')
                 print(f"DEBUG: Received model_path: {model_path}")
-                if model_path and storage_exists(model_path):
+                if model_path and storage_exists(model_path, user_id=user_id):
                     ft_path = model_path
                 elif model_path:
-                    # Try relative path
                     ft_path = model_path if model_path.startswith('../') else f'../checkpoints/{model_path}'
                 else:
                     ft_path = f'../checkpoints/{model_id}.pt'
                 
-                # Also try model_id.pt as fallback
-                if not storage_exists(ft_path):
+                if not storage_exists(ft_path, user_id=user_id):
                     ft_path = f'../checkpoints/{model_id}.pt'
                 
                 print(f"DEBUG: Loading checkpoint from: {ft_path}")
-                resolved_ckpt = storage_resolve(ft_path)
+                resolved_ckpt = storage_resolve(ft_path, user_id=user_id)
                 if resolved_ckpt:
                     ft_ckpt = torch.load(resolved_ckpt, map_location='cpu', weights_only=False)
                     
@@ -2279,7 +2417,7 @@ def analyze():
                         config['n_classes'] = n_classes
                     
                     # Get model from cache or load
-                    cached = get_cached_finetuned_model(model_id, config, data.get("model_path", ""))
+                    cached = get_cached_finetuned_model(model_id, config, data.get("model_path", ""), user_id=user_id)
                     ft_model = cached['model']
                     ft_ckpt = cached['ckpt']  # Update with cached checkpoint
                     
@@ -2310,71 +2448,81 @@ def analyze():
                     
                     X_pred = np.nan_to_num(X_pred, nan=0.0).astype(np.float32)
                     
-                    # Run prediction in batches to avoid OOM
-                    batch_size = 1000  # Process 1000 rows at a time
+                    batch_size = 1000
                     all_preds = []
                     all_confs = []
+                    _is_sv1_ft = HAS_SCHEMA_V1 and hasattr(ft_model, 'backbone') and hasattr(ft_model, 'ft_head')
                     
                     with torch.no_grad():
-                        for i in range(0, len(X_pred), batch_size):
-                            batch = torch.FloatTensor(X_pred[i:i+batch_size]).to(device)
-                            output = ft_model(batch)
-                            
-                            if isinstance(output, dict):
-                                logits = output.get('sector', output.get('logits', None))
-                                if logits is None:
-                                    logits = list(output.values())[0]
-                            else:
-                                logits = output
-                            
-                            probs = torch.softmax(logits, dim=-1)
-                            all_preds.extend(probs.argmax(dim=-1).cpu().numpy().tolist())
-                            all_confs.extend(probs.max(dim=-1).values.cpu().numpy().tolist())
+                        if _is_sv1_ft:
+                            from schema_v1 import SchemaV1Adapter, SchemaV1PrecomputedDataset
+                            sv1_task_type_q = ft_ckpt.get('task_type', 'classification')
+                            sv1_adapter_q = SchemaV1Adapter(cfg=ft_model.backbone.cfg, device=str(device))
+                            query_df = df_sample.copy()
+                            if target_col in query_df.columns:
+                                query_df = query_df.drop(columns=[target_col]) if False else query_df
+                            pseudo_target = query_df.columns[0]
+                            qds = SchemaV1PrecomputedDataset(query_df, pseudo_target, ft_model.backbone.cfg, sv1_adapter_q, label_encoder=None)
+                            from torch.utils.data import DataLoader as _DL
+                            qloader = _DL(qds, batch_size=min(64, len(qds)), shuffle=False)
+                            for qbatch in qloader:
+                                ce_q, cm_q, dfp_q, cv_q, cmask_q, cin_q, _ = qbatch
+                                ce_q=ce_q.to(device); cm_q=cm_q.to(device); dfp_q=dfp_q.to(device)
+                                cv_q=cv_q.to(device); cmask_q=cmask_q.to(device); cin_q=cin_q.to(device)
+                                logits_q = ft_model(ce_q, cm_q, dfp_q, cv_q, cmask_q, cin_q)
+                                if sv1_task_type_q == 'regression':
+                                    preds_q = logits_q.squeeze(-1).cpu().numpy().tolist()
+                                    all_preds.extend([int(round(p)) if not isinstance(p, float) or p == p else 0 for p in preds_q])
+                                    all_confs.extend([1.0] * len(preds_q))
+                                else:
+                                    probs_q = torch.softmax(logits_q, dim=-1)
+                                    all_preds.extend(probs_q.argmax(dim=-1).cpu().numpy().tolist())
+                                    all_confs.extend(probs_q.max(dim=-1).values.cpu().numpy().tolist())
+                        else:
+                            for i in range(0, len(X_pred), batch_size):
+                                batch = torch.FloatTensor(X_pred[i:i+batch_size]).to(device)
+                                output = ft_model(batch)
+                                if isinstance(output, dict):
+                                    logits = output.get('sector', output.get('logits', None))
+                                    if logits is None:
+                                        logits = list(output.values())[0]
+                                else:
+                                    logits = output
+                                probs = torch.softmax(logits, dim=-1)
+                                all_preds.extend(probs.argmax(dim=-1).cpu().numpy().tolist())
+                                all_confs.extend(probs.max(dim=-1).values.cpu().numpy().tolist())
                     
                     preds = np.array(all_preds)
                     confs = np.array(all_confs)
                     
-                    # Model is cached, no cleanup needed
-                    # torch.cuda.empty_cache() called only when cache is full
+                    _is_regression_task = _is_sv1_ft and ft_ckpt.get('task_type', 'classification') == 'regression'
                     
-                    # Skip the old single-batch code
-                    output = None
-                        
-                    # Batch processing already done above
-                    if output is not None:
-                        if isinstance(output, dict):
-                            logits = output.get('sector', output.get('logits', None))
-                            if logits is None:
-                                logits = list(output.values())[0]
-                        else:
-                            logits = output
-                        
-                        probs = torch.softmax(logits, dim=-1)
-                        preds = probs.argmax(dim=-1).numpy()
-                        confs = probs.max(dim=-1).values.numpy()
-                    
-                    # Build structured prediction data
                     from collections import Counter
-                    pred_counts = Counter(preds)
-                    
-                    # Structured predictions list
                     structured_predictions = []
-                    for i in range(min(100, len(preds))):  # First 100 rows
-                        cls_name = class_names[preds[i]] if preds[i] < len(class_names) else f"class_{preds[i]}"
-                        structured_predictions.append({
-                            "row": i + 1,
-                            "label": cls_name,
-                            "confidence": round(float(confs[i]), 4)
-                        })
-                    
-                    # Class distribution
                     class_distribution = {}
-                    for cls_idx, count in pred_counts.most_common():
-                        cls_name = class_names[cls_idx] if cls_idx < len(class_names) else f"class_{cls_idx}"
-                        class_distribution[cls_name] = {
-                            "count": int(count),
-                            "percentage": round(count / len(preds) * 100, 2)
-                        }
+                    
+                    if _is_regression_task:
+                        for i in range(min(100, len(preds))):
+                            structured_predictions.append({
+                                "row": i + 1,
+                                "value": float(preds[i]),
+                                "confidence": round(float(confs[i]), 4)
+                            })
+                    else:
+                        pred_counts = Counter(preds)
+                        for i in range(min(100, len(preds))):
+                            cls_name = class_names[preds[i]] if preds[i] < len(class_names) else f"class_{preds[i]}"
+                            structured_predictions.append({
+                                "row": i + 1,
+                                "label": cls_name,
+                                "confidence": round(float(confs[i]), 4)
+                            })
+                        for cls_idx, count in pred_counts.most_common():
+                            cls_name = class_names[cls_idx] if cls_idx < len(class_names) else f"class_{cls_idx}"
+                            class_distribution[cls_name] = {
+                                "count": int(count),
+                                "percentage": round(count / len(preds) * 100, 2)
+                            }
                     
                     # Store structured data for response
                     ft_structured = {
@@ -2813,6 +2961,10 @@ def finetune(bypass_queue=False):
         target_column = request.form.get('target_column', None)
         query_id = request.form.get('query_id', 'default')
         analyze_only = request.form.get('analyze_only', 'false').lower() == 'true'
+        base_model_name = request.form.get('base_model', os.getenv('BASE_MODEL', 'schema-v1'))
+        base_model_version = 'v0' if 'v0' in base_model_name.lower() else 'v1'
+        print(f"[FINETUNE] base_model={base_model_name} version={base_model_version}")
+        load_base_model(version=base_model_version)
         
         session = get_session(query_id)
         # print(f"DEBUG FINETUNE START: query_id={query_id}, epochs_req={epochs_req}, analyze_only={analyze_only}")
@@ -2826,10 +2978,10 @@ def finetune(bypass_queue=False):
         spark_merged_path = request.form.get('spark_merged_path', None)
         
         # Spark pre-merged CSV varsa direkt oku, smart_merge atla
-        if spark_merged_path and storage_exists(spark_merged_path):
+        if spark_merged_path and storage_exists(spark_merged_path, user_id=request.headers.get("X-User-ID", "")):
             print(f"[SPARK] Using pre-merged CSV: {spark_merged_path}")
             try:
-                df = pd.read_csv(storage_resolve(spark_merged_path) or spark_merged_path)
+                df = pd.read_csv(storage_resolve(spark_merged_path, user_id=request.headers.get("X-User-ID", "")) or spark_merged_path)
                 print(f"[SPARK] Loaded: {df.shape[0]} rows x {df.shape[1]} cols")
                 target_col = auto_select_target(df, target_column)
                 if not spark_preprocessed:
@@ -2838,7 +2990,7 @@ def finetune(bypass_queue=False):
                 else:
                     print("[SPARK] Skipping smart_data_cleaning - already preprocessed by Spark")
                 merged_file_id = None
-                merged_filename = os.path.basename(spark_merged_path) if spark_merged_path else None
+                merged_filename = spark_merged_path if spark_merged_path else None
                 # Training'e direkt git
                 goto_training = True
             except Exception as e:
@@ -2858,7 +3010,7 @@ def finetune(bypass_queue=False):
                     if not fp:
                         continue
                     try:
-                        resolved = storage_resolve(fp)
+                        resolved = storage_resolve(fp, user_id=request.headers.get("X-User-ID", ""))
                         if resolved is None:
                             print(f"[GCS-DIRECT] Could not resolve: {fp}")
                             continue
@@ -2925,12 +3077,14 @@ def finetune(bypass_queue=False):
                 merged_filename = f"{merged_file_id[:8]}_merged_all_{timestamp}.csv"
                 merged_path = os.path.join('../uploads', merged_filename)
                 df.to_csv(merged_path, index=False)
-                # Upload merged file to GCS
                 try:
                     user_id = request.headers.get("X-User-ID", "system")
                     gcs_key = cloud_storage.user_key(user_id, "uploads", merged_filename)
                     cloud_storage.upload(gcs_key, merged_path)
+                    merged_filename = gcs_key
                     print(f"[STORAGE] Merged file uploaded: {gcs_key}")
+                    try: os.unlink(merged_path)
+                    except: pass
                 except Exception as me:
                     print(f"[STORAGE] Merged upload failed: {me}")
             else:
@@ -3025,6 +3179,8 @@ def finetune(bypass_queue=False):
         dyn_cfg = get_dynamic_config(len(X), input_dim, n_classes)
         dyn_cfg = get_dynamic_config(len(X), input_dim, n_classes)
         session["lr"] = dyn_cfg['lr']
+        session["learningRate"] = dyn_cfg['lr']
+        session["learning_rate"] = dyn_cfg['lr']
         save_session(query_id, session)
         
         ft_config = {
@@ -3064,11 +3220,23 @@ def finetune(bypass_queue=False):
             for m in ft_model.modules():
                 if isinstance(m, nn.BatchNorm1d):
                     m.momentum = 0.01
-            if hasattr(torch, "compile") and not torch.cuda.is_available():
+            
+            _use_schema_v1 = HAS_SCHEMA_V1 and base_model is not None and isinstance(base_model, SchemaV1)
+            if _use_schema_v1:
+                print("[SCHEMA_V1] Fine-tuning on SchemaV1 base model")
+                from schema_v1 import SchemaV1FineTuneWrapper, SchemaV1Adapter, detect_task_type
+                sv1_task_type, sv1_n_out = detect_task_type(df, target_col)
+                print(f"[SCHEMA_V1] Task type: {sv1_task_type}, output dim: {sv1_n_out}")
+                if sv1_task_type == 'classification':
+                    sv1_n_out = n_classes
+                ft_model = SchemaV1FineTuneWrapper(base_model, n_classes=sv1_n_out, task_type=sv1_task_type, freeze_backbone=True).to(device)
+                sv1_adapter = SchemaV1Adapter(cfg=base_model.cfg, device=str(device))
+            if hasattr(torch, "compile") and torch.cuda.is_available():
                 try:
-                    ft_model = torch.compile(ft_model, mode="default", backend="eager")
-                except:
-                    pass
+                    ft_model = torch.compile(ft_model, mode="reduce-overhead", backend="inductor")
+                    print("[SPEED] torch.compile inductor active")
+                except Exception as _e:
+                    print(f"[SPEED] torch.compile failed ({_e}), eager mode")
                 try:
                     ft_model = torch.quantization.quantize_dynamic(ft_model, {nn.Linear}, dtype=torch.qint8)
                 except:
@@ -3083,7 +3251,15 @@ def finetune(bypass_queue=False):
         batch_size = batch_size_req if batch_size_req > 0 else dyn_cfg['batch_size']
         epochs = epochs_req if epochs_req > 0 else dyn_cfg['epochs']
         
-        optimizer = AdamW(ft_model.parameters(), lr=dyn_cfg['lr'], weight_decay=0.01)
+        _sv1_lr_boost = 20.0 if _use_schema_v1 else 1.0
+        _effective_lr = dyn_cfg['lr'] * _sv1_lr_boost
+        if _use_schema_v1:
+            print(f"[SCHEMA_V1] LR boosted: {dyn_cfg['lr']:.4f} -> {_effective_lr:.4f} (head-only training)")
+            session['lr'] = _effective_lr
+            session['learningRate'] = _effective_lr
+            session['learning_rate'] = _effective_lr
+            save_session(query_id, session)
+        optimizer = AdamW([p for p in ft_model.parameters() if p.requires_grad], lr=_effective_lr, weight_decay=0.01)
         warmup_epochs = min(3, epochs // 5)
         def warmup_lambda(epoch):
             if epoch < warmup_epochs:
@@ -3146,13 +3322,19 @@ def finetune(bypass_queue=False):
         training_timeout = time.time() + 1800  # 30 min max
         current_epoch = 0
         
-        # DataLoader ile paralel data loading
         from torch.utils.data import TensorDataset, DataLoader
-        dataset = TensorDataset(torch.FloatTensor(X[:max_samples_per_epoch]), torch.LongTensor(y[:max_samples_per_epoch]))
-        num_workers = 4 if torch.cuda.is_available() else 0
-        pin_mem = torch.cuda.is_available()
+        if _use_schema_v1:
+            from schema_v1 import precompute_embeddings
+            sv1_train_df = df.head(max_samples_per_epoch).reset_index(drop=True)
+            print(f"[SCHEMA_V1] Precomputing embeddings on frozen backbone...")
+            dataset = precompute_embeddings(base_model, sv1_train_df, target_col, sv1_adapter, label_encoder=le if sv1_task_type == 'classification' else None, device=str(device), batch_size=128)
+            print(f"[SCHEMA_V1] Embedding cache ready. Training head only.")
+        else:
+            dataset = TensorDataset(torch.FloatTensor(X[:max_samples_per_epoch]), torch.LongTensor(y[:max_samples_per_epoch]))
+        num_workers = 0 if _use_schema_v1 else (4 if torch.cuda.is_available() else 0)
+        pin_mem = torch.cuda.is_available() and not _use_schema_v1
         prefetch = 2 if num_workers > 0 else None
-        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=pin_mem, prefetch_factor=prefetch)
+        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=pin_mem, prefetch_factor=prefetch, persistent_workers=(num_workers > 0))
         
         # Akilli epoch tahmini: data ozellikleri + ogrenme zorlugu
         import math
@@ -3189,7 +3371,32 @@ def finetune(bypass_queue=False):
             all_preds = []
             all_labels = []
             
-            for batch_idx, (batch_X, batch_y) in enumerate(dataloader):
+            for batch_idx, batch in enumerate(dataloader):
+                if _use_schema_v1:
+                    emb_b, batch_y = batch
+                    emb_b = emb_b.to(device)
+                    batch_y = batch_y.to(device)
+                    logits = ft_model(emb_b)
+                    if sv1_task_type == 'regression':
+                        loss = F.mse_loss(logits.squeeze(-1), batch_y.float())
+                        preds_for_acc = logits.squeeze(-1).detach()
+                        correct += ((preds_for_acc - batch_y.float()).abs() < (batch_y.float().abs() * 0.1 + 1e-6)).sum().item()
+                    else:
+                        loss = loss_fn(logits, batch_y)
+                        correct += (logits.argmax(1) == batch_y).sum().item()
+                        all_preds.extend(logits.argmax(1).cpu().tolist())
+                        all_labels.extend(batch_y.cpu().tolist())
+                    loss = loss / gradient_accumulation_steps
+                    loss.backward()
+                    if (batch_idx + 1) % gradient_accumulation_steps == 0:
+                        torch.nn.utils.clip_grad_norm_([p for p in ft_model.parameters() if p.requires_grad], 1.0)
+                        optimizer.step()
+                        optimizer.zero_grad()
+                    total_loss += loss.item() * gradient_accumulation_steps
+                    batches += 1
+                    continue
+                
+                batch_X, batch_y = batch
                 batch_X, batch_y = batch_X.to(device), batch_y.to(device)
                 
                 if np.random.random() > 0.5:
@@ -3197,8 +3404,6 @@ def finetune(bypass_queue=False):
                     batch_X = batch_X + noise
                     batch_X = batch_X.contiguous()
                 
-                
-                # Forward pass
                 if use_amp:
                     with autocast():
                         out = ft_model(batch_X)
@@ -3227,10 +3432,7 @@ def finetune(bypass_queue=False):
                     miras_loss = out.get('miras_loss', torch.tensor(0.0, device=device))
                     loss = loss_fn(logits, batch_y) + sector_loss + 0.1 * mcm_loss + 0.05 * miras_loss
                     loss = loss / gradient_accumulation_steps
-                    if True:
-                        loss.backward()
-                    else:
-                        continue
+                    loss.backward()
                     if (batch_idx + 1) % gradient_accumulation_steps == 0:
                         torch.nn.utils.clip_grad_norm_(ft_model.parameters(), 0.5 if not torch.cuda.is_available() else 1.0)
                         optimizer.step()
@@ -3288,9 +3490,12 @@ def finetune(bypass_queue=False):
             if current_epoch >= session["epochs"]:
                 session["epochs"] = current_epoch + 1
             session["accuracy"] = acc
-            session["loss"] = avg_loss
+            if not math.isnan(float(avg_loss)): session["loss"] = avg_loss
             session["eta"] = eta
-            session["lr"] = optimizer.param_groups[0]["lr"] if optimizer else session.get("lr", 0.001)
+            _current_lr = optimizer.param_groups[0]["lr"] if optimizer else session.get("lr", 0.001)
+            session["lr"] = _current_lr
+            session["learningRate"] = _current_lr
+            session["learning_rate"] = _current_lr
             if "query_id" in dir() and query_id:
                 save_session(query_id, session)
             else:
@@ -3311,12 +3516,16 @@ def finetune(bypass_queue=False):
                     training_progress.update(session)
                 break
             
-            if best_acc >= 99.0 and no_improve >= patience:  # %99 hedef
-                print(f"✅ Early stop at {best_acc:.1f}% (no improve for {patience} epochs)")
+            if best_acc >= 95.0 and no_improve >= patience:
+                print(f"✅ Early stop at {best_acc:.1f}% (plateau after {patience} epochs)")
                 break
             
-            if best_acc < 95.0 and no_improve >= patience * 2:
-                print(f"⚠️ Early stop at {best_acc:.1f}% (no improve for {patience * 3} epochs, < 95%)")
+            if best_acc >= 85.0 and no_improve >= patience * 2:
+                print(f"✅ Early stop at {best_acc:.1f}% (extended plateau after {patience * 2} epochs)")
+                break
+            
+            if no_improve >= patience * 3:
+                print(f"⚠️ Early stop at {best_acc:.1f}% (max patience {patience * 3} exhausted)")
                 break
             
             if current_epoch >= max_epochs:
@@ -3369,25 +3578,32 @@ def finetune(bypass_queue=False):
         
         import tempfile
         tmp_ckpt = tempfile.NamedTemporaryFile(delete=False, suffix='.pt')
-        torch.save({
+        _ckpt_payload = {
             'model_state_dict': ft_model.state_dict(),
-            'model_type': 'v1_finetune',
-            'encoder': le,
-            'class_names': [str(c) for c in le.classes_],
+            'model_type': 'schema_v1_finetune' if _use_schema_v1 else 'v1_finetune',
+            'encoder': le if not _use_schema_v1 or sv1_task_type == 'classification' else None,
+            'class_names': [str(c) for c in le.classes_] if not _use_schema_v1 or sv1_task_type == 'classification' else [],
             'feature_cols': numeric_cols,
-            'n_classes': n_classes,
+            'n_classes': n_classes if not _use_schema_v1 else (sv1_n_out if sv1_task_type == 'classification' else 1),
             'input_dim': input_dim,
-            'n_sectors': ft_model.n_sectors,
             'target_col': target_col,
             'accuracy': best_acc,
             'config': ft_config,
-            'source_file_id': merged_filename_for_ckpt
-        }, tmp_ckpt.name)
+            'source_file_id': merged_filename_for_ckpt,
+            'scaler': scaler if not _use_schema_v1 else None,
+        }
+        if _use_schema_v1:
+            _ckpt_payload['task_type'] = sv1_task_type
+            _ckpt_payload['sv1_config'] = {k: getattr(base_model.cfg, k) for k in dir(base_model.cfg) if not k.startswith('_') and not callable(getattr(base_model.cfg, k))}
+        else:
+            _ckpt_payload['n_sectors'] = ft_model.n_sectors
+        torch.save(_ckpt_payload, tmp_ckpt.name)
         tmp_ckpt.close()
         ft_storage_key = cloud_storage.user_key('system', 'checkpoints', f'model_finetuned_{timestamp}.pt')
         try:
             cloud_storage.upload(ft_storage_key, tmp_ckpt.name)
             print(f"[STORAGE] Checkpoint uploaded: {ft_storage_key}")
+            ft_path = ft_storage_key
         except Exception as se:
             print(f"[STORAGE] Checkpoint upload failed: {se}")
             import shutil
@@ -3411,14 +3627,72 @@ def finetune(bypass_queue=False):
         else:
             training_progress.update(session)
         
-        # Sector tahmini yap
         ft_model.eval()
         with torch.inference_mode():
-            sample_X = torch.FloatTensor(X[:min(100, len(X))]).to(device)
-            out = ft_model(sample_X)
-            sector_probs = torch.softmax(out['sector'], dim=1)
-            sector_conf = sector_probs.max(1).values.mean().item() * 100
-            dominant_sector = sector_probs.mean(0).argmax().item()
+            if _use_schema_v1:
+                try:
+                    sample_df = df.head(min(base_model.cfg.max_rows, len(df))).reset_index(drop=True)
+                    if target_col in sample_df.columns:
+                        sample_df_features = sample_df.drop(columns=[target_col])
+                    else:
+                        sample_df_features = sample_df
+                    ce_t, cm_t, dfp_t, cv_t, cmask_t, cin_t = sv1_adapter.df_to_tensors(sample_df_features)
+                    ce_t = ce_t.to(device); cm_t = cm_t.to(device); dfp_t = dfp_t.to(device)
+                    cv_t = cv_t.to(device); cmask_t = cmask_t.to(device); cin_t = cin_t.to(device)
+                    bb_out = base_model.forward_from_tensors(ce_t, cm_t, dfp_t, cv_t, cmask_t, cin_t, training=False)
+                    sector_logits = bb_out.get('sector_logits')
+                    cls_logits = bb_out.get('cls_logits')
+                    chosen = None
+                    if sector_logits is not None and sector_logits.shape[-1] > 1:
+                        chosen = sector_logits[0]
+                    elif cls_logits is not None and cls_logits.shape[-1] > 1:
+                        chosen = cls_logits[0]
+                    if chosen is not None:
+                        probs = torch.softmax(chosen, dim=-1)
+                        sv1_top1_idx = int(probs.argmax().item())
+                        sv1_top1_conf = float(probs.max().item()) * 100
+                        sv1_top1_name = None
+                        if hasattr(base_model, '_sector_names') and base_model._sector_names and sv1_top1_idx < len(base_model._sector_names):
+                            sv1_top1_name = base_model._sector_names[sv1_top1_idx]
+                        print(f"[SCHEMA_V1] Top1: {sv1_top1_name} (idx={sv1_top1_idx}, conf={sv1_top1_conf:.1f}%)")
+                    else:
+                        sv1_top1_idx = 0
+                        sv1_top1_conf = 0.0
+                        sv1_top1_name = None
+                    llm_sector = None
+                    try:
+                        llm_sector = detect_sector_with_llm(list(df.columns))
+                        print(f"[SECTOR] LLM detected: {llm_sector}")
+                    except Exception as _le:
+                        print(f"[SECTOR] LLM error: {_le}")
+                    if sv1_top1_conf >= 50.0 and sv1_top1_name and llm_sector and llm_sector.lower() in sv1_top1_name.lower():
+                        dominant_sector = sv1_top1_idx
+                        sector_conf = sv1_top1_conf
+                        session['sv1_sector_name'] = sv1_top1_name
+                        session['sv1_sector_source'] = 'schema_v1_match'
+                        print(f"[SECTOR] MATCH: SchemaV1 = {sv1_top1_name}")
+                    elif llm_sector:
+                        dominant_sector = 0
+                        sector_conf = 95.0
+                        session['sv1_sector_name'] = llm_sector
+                        session['sv1_sector_source'] = 'llm_fallback'
+                        print(f"[SECTOR] FALLBACK: LLM = {llm_sector}")
+                    else:
+                        dominant_sector = sv1_top1_idx
+                        sector_conf = sv1_top1_conf
+                        session['sv1_sector_name'] = sv1_top1_name or 'unknown'
+                        session['sv1_sector_source'] = 'schema_v1_only'
+                    session['sv1_sector_conf'] = sector_conf
+                except Exception as _se:
+                    print(f"[SCHEMA_V1] sector eval error: {_se}")
+                    sector_conf = 0.0
+                    dominant_sector = 0
+            else:
+                sample_X = torch.FloatTensor(X[:min(100, len(X))]).to(device)
+                out = ft_model(sample_X)
+                sector_probs = torch.softmax(out['sector'], dim=1)
+                sector_conf = sector_probs.max(1).values.mean().item() * 100
+                dominant_sector = sector_probs.mean(0).argmax().item()
         
         # Calculate training duration
         training_duration = 0
@@ -3429,7 +3703,7 @@ def finetune(bypass_queue=False):
         return jsonify({
             "status": "success",
             "accuracy": float(best_acc),
-            "loss": float(avg_loss) if not math.isnan(float(avg_loss)) else None,
+            "loss": float(session.get("loss", avg_loss)) if not math.isnan(float(session.get("loss", avg_loss) or 0)) else None,
             "precision": session.get("precision", 0),
             "recall": session.get("recall", 0),
             "f1_score": session.get("f1_score", 0),
@@ -3444,7 +3718,9 @@ def finetune(bypass_queue=False):
             "sector": {
                 "id": dominant_sector,
                 "confidence": round(sector_conf, 1),
-                "description": f"Data cluster {dominant_sector}"
+                "description": session.get('sv1_sector_name') or f"Data cluster {dominant_sector}",
+                "name": session.get('sv1_sector_name'),
+                "source": session.get('sv1_sector_source', 'cluster')
             },
             "target_column": target_col,
             "miras_enabled": use_miras if 'use_miras' in dir() else False,
@@ -3519,20 +3795,39 @@ def get_training_progress_by_id(query_id):
 @app.route('/files', methods=['GET'])
 def list_files():
     try:
-        upload_dir = Path('../uploads')
         files = []
-        if upload_dir.exists():
-            for f in upload_dir.glob('*'):
-                if f.is_file():
-                    parts = f.name.split('_', 1)
-                    file_id = parts[0] if len(parts) > 1 else f.stem
-                    filename = parts[1] if len(parts) > 1 else f.name
-                    files.append({
-                        "file_id": file_id,
-                        "filename": filename,
-                        "path": str(f),
-                        "size": f.stat().st_size
-                    })
+        if cloud_storage.STORAGE_BACKEND == 'gcs':
+            client = cloud_storage._get_gcs_client()
+            bucket = client.bucket(cloud_storage.GCS_BUCKET)
+            seen = set()
+            for pfx in ['uploads/', 'users/system/uploads/']:
+                for b in bucket.list_blobs(prefix=pfx):
+                    fname = os.path.basename(b.name)
+                    if fname and not b.name.endswith('/') and fname not in seen:
+                        seen.add(fname)
+                        parts = fname.split('_', 1)
+                        file_id = parts[0] if len(parts) > 1 else fname.rsplit('.', 1)[0]
+                        filename = parts[1] if len(parts) > 1 else fname
+                        files.append({
+                            "file_id": file_id,
+                            "filename": filename,
+                            "path": b.name,
+                            "size": b.size or 0
+                        })
+        else:
+            upload_dir = Path('../uploads')
+            if upload_dir.exists():
+                for f in upload_dir.glob('*'):
+                    if f.is_file():
+                        parts = f.name.split('_', 1)
+                        file_id = parts[0] if len(parts) > 1 else f.stem
+                        filename = parts[1] if len(parts) > 1 else f.name
+                        files.append({
+                            "file_id": file_id,
+                            "filename": filename,
+                            "path": str(f),
+                            "size": f.stat().st_size
+                        })
         return jsonify({"files": files, "status": "success"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -3786,12 +4081,9 @@ def analyze_file():
                         import numpy as np
                         row = np.nan_to_num(row, nan=0.0, posinf=0.0, neginf=0.0)
                         
-                        # Pad/truncate to 64 features (model expects n_features=64)
                         row = list(row)
-                        if len(row) < 64:
-                            row = row + [0] * (64 - len(row))
-                        elif len(row) > 64:
-                            row = row[:64]
+                        n_feat = len(row)
+                        row = row[:1024]
                         
                         X = torch.FloatTensor([row]).to(device)
                         
@@ -4442,7 +4734,7 @@ def predict_single():
         df = pd.DataFrame([row_data])
         
         # Get model config
-        model_config = get_cached_finetuned_model(model_id, None, model_path=model_path)
+        model_config = get_cached_finetuned_model(model_id, None, model_path=model_path, user_id=user_id)
         if model_config is None:
             return jsonify({"status": "error", "error": f"Model {model_id} not found"}), 404
         

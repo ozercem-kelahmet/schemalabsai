@@ -1,9 +1,9 @@
 // Core types for SchemaLabs
 
-export type DataSource = "uploaded-files" | "databricks" | "supabase" | "api" | "google-drive" | "postgresql" | "mysql" | "mongodb" | "snowflake" | "pinecone" | "weaviate" | "chroma" | "lancedb" | "gcs" | "aws-s3" | "graphql" | "rest" | "upload" | "generated" | "excel"
+export type DataSource = "uploaded-files" | "databricks" | "supabase" | "api" | "google-drive" | "postgresql" | "mysql" | "mongodb" | "snowflake" | "pinecone" | "weaviate" | "chroma" | "lancedb" | "gcs" | "aws-s3" | "graphql" | "rest" | "upload" | "generated" | "excel" | "csv" | "json"
 export type Vertical = "finance" | "healthcare" | "e-commerce" | "marketing" | "hr" | "operations"
-export type Complexity = "simple" | "medium" | "advanced"
-export type RowCount = "small" | "medium" | "large"
+export type Complexity = "simple" | "medium" | "high" | "advanced"
+export type RowCount = "simple" | "medium" | "high" | "advanced"
 
 export type SyncMode = "real-time" | "scheduled" | "manual"
 

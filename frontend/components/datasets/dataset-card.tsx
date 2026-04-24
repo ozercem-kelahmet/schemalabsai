@@ -22,7 +22,7 @@ const verticalLabels: Record<string, string> = {
   operations: "Operations",
 }
 
-const uploadSources = ["upload", "google-drive", "generated"]
+const uploadSources = ["upload", "google-drive", "generated", "csv", "json", "excel"]
 
 export function DatasetCard({ dataset, onViewSchema, onEdit, onDelete }: DatasetCardProps) {
   const [isEditing, setIsEditing] = useState(false)

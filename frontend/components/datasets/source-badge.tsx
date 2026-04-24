@@ -101,6 +101,21 @@ const sourceConfig: Record<DataSource, { label: string; color: string; icon: Rea
     color: "bg-purple-500/20 text-purple-400 border-purple-500/30",
     icon: <Sparkles className="h-3.5 w-3.5" />,
   },
+  csv: {
+    label: "CSV",
+    color: "bg-green-500/20 text-green-400 border-green-500/30",
+    icon: <Upload className="h-3.5 w-3.5" />,
+  },
+  json: {
+    label: "JSON",
+    color: "bg-amber-500/20 text-amber-400 border-amber-500/30",
+    icon: <Upload className="h-3.5 w-3.5" />,
+  },
+  excel: {
+    label: "Excel",
+    color: "bg-emerald-600/20 text-emerald-500 border-emerald-600/30",
+    icon: <Upload className="h-3.5 w-3.5" />,
+  },
 }
 
 export function SourceBadge({ source, size = "md", showLabel = true }: SourceBadgeProps) {

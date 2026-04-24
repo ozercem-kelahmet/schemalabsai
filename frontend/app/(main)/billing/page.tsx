@@ -1,9 +1,14 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { useSearchParams, useRouter } from "next/navigation"
+import { useAuth } from "@/lib/auth"
+import { DedicatedDeployments } from "@/components/billing/dedicated-deployments"
+import { toast } from "sonner"
+import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Progress } from "@/components/ui/progress"
 import {
   Dialog,
   DialogContent,
@@ -12,377 +17,948 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import { Label } from "@/components/ui/label"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import {
   CreditCard,
-  Gift,
   Check,
-  Calendar,
   Loader2,
-  Receipt,
-  Plus,
-  MoreHorizontal,
   ExternalLink,
-  AlertCircle,
-  Trash2,
+  Zap,
+  Users,
+  HardDrive,
+  Headphones,
+  Shield,
+  Sparkles,
+  ArrowRight,
+  Info,
+  Gift,
+  AlertTriangle,
 } from "lucide-react"
 
-interface QuotaData {
-  plan: string
-  credits_total: number
-  credits_used: number
-  credits_remaining: number
-  models_limit: number
-  models_used: number
-  queries_daily: number
-  queries_used: number
-  storage_limit_mb: number
-  storage_used_mb: number
-  reset_date: string
-  days_until_reset: number
-  datasets_connected: number
+// Plan types based on pricing MD
+type PlanType = "free" | "plus" | "pro" | "enterprise"
+type RawPlanType = PlanType | "alpha_unlimited" | "unlimited" | "limitless" | "beta_unlimited"
+
+interface PlanData {
+  name: string
+  price: number
+  priceLabel: string
+  description: string
+  features: { label: string; value: string; tooltip?: string }[]
+  highlighted?: boolean
+}
+
+const plans: Record<PlanType, PlanData> = {
+  free: {
+    name: "Free",
+    price: 0,
+    priceLabel: "$0/month",
+    description: "Explore Schema with daily credits",
+    features: [
+      { label: "Daily Credits", value: "$2/day", tooltip: "Resets every 24 hours, no carryover" },
+      { label: "Seats", value: "1" },
+      { label: "Storage", value: "50 MB" },
+      { label: "Schema DLM", value: "Not available", tooltip: "Schema DLM access requires PLUS or higher" },
+      { label: "Nota RPM", value: "10", tooltip: "10 requests per minute on Nota conversational layer" },
+      { label: "Fine-Tuning", value: "1 queued", tooltip: "No concurrent jobs, 1 in queue; 1,000 rows max, 1 job/day" },
+      { label: "Support", value: "Docs & Community" },
+      { label: "SLA", value: "None" },
+    ],
+  },
+  plus: {
+    name: "PLUS",
+    price: 50,
+    priceLabel: "$50/month",
+    description: "For individuals and small teams",
+    features: [
+      { label: "Add-on Credits", value: "$10-$500/mo", tooltip: "Purchase credits as needed, min $10 per purchase" },
+      { label: "Seats", value: "1" },
+      { label: "Storage", value: "5 GB" },
+      { label: "Schema DLM RPM", value: "60", tooltip: "60 requests per minute on Schema DLM" },
+      { label: "Nota RPM", value: "60", tooltip: "60 requests per minute on Nota" },
+      { label: "Fine-Tuning", value: "1 concurrent + 3 queued", tooltip: "1 job running, up to 3 in queue" },
+      { label: "Spend Controls", value: "Soft limit + email", tooltip: "Soft spending limit with email alert when threshold is approached" },
+      { label: "Support", value: "Email" },
+      { label: "SLA", value: "Best Effort" },
+    ],
+  },
+  pro: {
+    name: "PRO",
+    price: 600,
+    priceLabel: "$600/month",
+    description: "For growing teams with production needs",
+    highlighted: true,
+    features: [
+      { label: "Add-on Credits", value: "$10-$5,000/mo", tooltip: "Purchase credits as needed, min $10 per purchase" },
+      { label: "Seats", value: "3" },
+      { label: "Storage", value: "50 GB" },
+      { label: "Schema DLM RPM", value: "300", tooltip: "300 requests per minute on Schema DLM" },
+      { label: "Nota RPM", value: "300", tooltip: "300 requests per minute on Nota" },
+      { label: "Fine-Tuning", value: "3 concurrent + 10 queued", tooltip: "3 jobs running, up to 10 in queue" },
+      { label: "Spend Controls", value: "Configurable threshold + alert", tooltip: "Customer-configurable spend threshold with automated alerts" },
+      { label: "Support", value: "Priority Email" },
+      { label: "SLA", value: "99.9% uptime" },
+    ],
+  },
+  enterprise: {
+    name: "Enterprise",
+    price: -1,
+    priceLabel: "Custom",
+    description: "For organizations with advanced needs",
+    features: [
+      { label: "Add-on Credits", value: "Unlimited" },
+      { label: "Seats", value: "Custom" },
+      { label: "Storage", value: "Custom" },
+      { label: "Fine-Tuning", value: "Custom" },
+      { label: "Support", value: "Dedicated CSM" },
+      { label: "SLA", value: "Up to 99.99%" },
+    ],
+  },
+}
+
+interface UserBillingData {
+  plan: RawPlanType
+  creditsRemaining: number
+  creditsUsed: number
+  creditsPurchased: number
+  dailyCreditCap?: number
+  dailyCreditsUsed?: number
+  storageUsedMb: number
+  storageLimitMb: number
+  nextResetDate: string
+  usageTier: number
+  cumulativeSpend: number
+}
+
+interface GiftCode {
+  id: string
+  code: string
+  provider: string
+  totalCredits: number
+  usedCredits: number
+  remainingCredits: number
+  validUntil: string
+  redeemedAt: string
 }
 
 export default function BillingPage() {
-  const [quota, setQuota] = useState<QuotaData | null>(null)
   const [loading, setLoading] = useState(true)
-  const [redeemCode, setRedeemCode] = useState("")
-  const [redeemCodeOpen, setRedeemCodeOpen] = useState(false)
+  const [userData, setUserData] = useState<UserBillingData>({
+    plan: "free",
+    creditsRemaining: 1.45,
+    creditsUsed: 0.55,
+    creditsPurchased: 0,
+    dailyCreditCap: 2.00,
+    dailyCreditsUsed: 0.55,
+    storageUsedMb: 12,
+    storageLimitMb: 50,
+    nextResetDate: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
+    usageTier: 1,
+    cumulativeSpend: 45,
+  })
+  
   const [viewPlansOpen, setViewPlansOpen] = useState(false)
-  const [cancelPlanOpen, setCancelPlanOpen] = useState(false)
+  const [billingCycle, setBillingCycle] = useState<"monthly" | "yearly">("monthly")
+  const [selectedPlan, setSelectedPlan] = useState<PlanType | null>("pro")
   const [buyCreditsOpen, setBuyCreditsOpen] = useState(false)
-  const [addPaymentOpen, setAddPaymentOpen] = useState(false)
-  const [deletePaymentOpen, setDeletePaymentOpen] = useState(false)
   const [creditAmount, setCreditAmount] = useState("25")
-  const [cardNumber, setCardNumber] = useState("")
-  const [cardExpiry, setCardExpiry] = useState("")
-  const [cardCvc, setCardCvc] = useState("")
-  const [paymentMethod, setPaymentMethod] = useState<{ type: string; last4: string; expiry: string; brand: string } | null>(null)
+  const [upgradingPlan, setUpgradingPlan] = useState<string | null>(null)
+  const [purchasing, setPurchasing] = useState(false)
+  const [contactSending, setContactSending] = useState(false)
+  const [redeeming, setRedeeming] = useState(false)
+  const [portalLoading, setPortalLoading] = useState(false)
+  const [redeemCode, setRedeemCode] = useState("")
+  const [redeemOpen, setRedeemOpen] = useState(false)
+  const [contactOpen, setContactOpen] = useState(false)
+  const [contactEmail, setContactEmail] = useState("")
+  const [giftCodes, setGiftCodes] = useState<GiftCode[]>([])
 
-  const handleDeletePayment = () => { setPaymentMethod(null); setDeletePaymentOpen(false) }
-  const handleAddPayment = () => {
-    if (cardNumber && cardExpiry && cardCvc) {
-      setPaymentMethod({ type: "card", last4: cardNumber.slice(-4), expiry: cardExpiry, brand: "Visa" })
-      setCardNumber(""); setCardExpiry(""); setCardCvc(""); setAddPaymentOpen(false)
-    }
-  }
+  const { user } = useAuth()
+  const searchParams = useSearchParams()
+  const router = useRouter()
 
   useEffect(() => {
-    fetchQuota()
+    const success = searchParams.get("success")
+    const credits = searchParams.get("credits")
+    const canceled = searchParams.get("canceled")
+    if (success === "1") {
+      toast.success("Plan upgraded successfully! It may take a moment to reflect.")
+      router.replace("/billing")
+    } else if (credits === "1") {
+      toast.success("Credits added to your account.")
+      router.replace("/billing")
+    } else if (canceled === "1") {
+      toast.info("Payment canceled.")
+      router.replace("/billing")
+    }
+  }, [searchParams, router])
+
+  useEffect(() => {
+    const fetchAll = async () => {
+      try {
+        const [billingRes, giftRes] = await Promise.all([
+          fetch("/api/billing/me", { credentials: "include" }),
+          fetch("/api/billing/gift-codes", { credentials: "include" }),
+        ])
+        if (billingRes.ok) {
+          const data = await billingRes.json()
+          setUserData(prev => ({ ...prev, ...data }))
+        }
+        if (giftRes.ok) {
+          const data = await giftRes.json()
+          setGiftCodes(data)
+        }
+      } catch (err) {
+        console.error("billing fetch failed", err)
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetchAll()
   }, [])
 
-  const fetchQuota = async () => {
-    try {
-      const res = await fetch("/api/quota", { credentials: "include" })
-      if (res.ok) {
-        const data = await res.json()
-        setQuota(data)
-      }
-    } catch (e) {
-      console.error("Failed to fetch quota:", e)
-    } finally {
-      setLoading(false)
-    }
+  const normalizedPlan: PlanType = (userData.plan === "alpha_unlimited" || userData.plan === "unlimited" || userData.plan === "limitless" || userData.plan === "beta_unlimited") ? "plus" : (userData.plan as PlanType)
+  const currentPlan = plans[normalizedPlan] || plans.free
+  const isFree = normalizedPlan === "free"
+  const hoursUntilReset = isFree ? Math.max(0, Math.floor((new Date(userData.nextResetDate).getTime() - Date.now()) / (1000 * 60 * 60))) : 0
+  const storagePercent = (userData.storageUsedMb / userData.storageLimitMb) * 100
+
+  // Calculate next tier info
+  const tierThresholds = [0, 500, 5000]
+  const nextTierSpend = userData.usageTier < 3 ? tierThresholds[userData.usageTier] : null
+  const tierProgress = nextTierSpend ? (userData.cumulativeSpend / nextTierSpend) * 100 : 100
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64 text-muted-foreground">
+        <Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading...
+      </div>
+    )
   }
 
-  const isUnlimited = quota?.plan === "alpha_unlimited"
-  const planName = isUnlimited ? "Alpha (Unlimited)" : "Alpha"
-  const creditsTotal = isUnlimited ? quota?.credits_used || 0 : quota?.credits_total || 5
-  const creditsRemaining = isUnlimited ? 0 : quota?.credits_remaining || 5
-  const resetDate = quota?.reset_date ? new Date(quota.reset_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"
-  const daysUntilReset = quota?.days_until_reset || 0
-
-  const features = isUnlimited
-    ? ["Unlimited credits", "Unlimited models", "Unlimited queries", "API access", "10 GB storage"]
-    : [`$${quota?.credits_total || 5} monthly credits`, `${quota?.models_limit || 5} AI models`, `${quota?.queries_daily || 10} queries/day`, "API access"]
-
-  if (loading) return <div className="flex items-center justify-center h-64 text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading...</div>
-
   return (
-    <div className="space-y-4">
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#0052CC]/10 dark:bg-[#0052CC]/20">
-          <CreditCard className="h-4 w-4 text-[#0052CC] dark:text-[#2684FF]" />
+    <TooltipProvider delayDuration={200}>
+      <div className="space-y-6 max-w-5xl">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#0052CC]/10 dark:bg-[#0052CC]/20">
+              <CreditCard className="h-5 w-5 text-[#0052CC] dark:text-[#2684FF]" />
+            </div>
+            <div>
+              <h1 className="text-xl font-semibold text-foreground">Billing</h1>
+              <p className="text-sm text-muted-foreground">Manage your subscription and credits</p>
+            </div>
+          </div>
+          <Button variant="outline" size="sm" className="gap-2" disabled={portalLoading} onClick={async () => {
+            setPortalLoading(true)
+            try {
+              const res = await fetch("/api/billing/portal", { method: "POST", credentials: "include" })
+              if (res.ok) {
+                const data = await res.json()
+                window.location.href = data.url
+              } else {
+                const err = await res.text()
+                toast.error("Unable to open billing portal: " + err)
+                setPortalLoading(false)
+              }
+            } catch (e) { toast.error("Network error"); setPortalLoading(false) }
+          }}>
+            <ExternalLink className="h-4 w-4" />
+            {portalLoading ? "Opening..." : "Manage in Stripe"}
+          </Button>
         </div>
-        <div>
-          <h1 className="text-lg font-semibold text-foreground">Billing</h1>
-          <p className="text-xs text-muted-foreground">Manage subscription and credits</p>
-        </div>
-      </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        {/* Current Plan Card */}
-        <Card className="border-border bg-card">
-          <CardContent className="p-4">
-            <div className="flex items-start justify-between mb-3">
-              <div>
-                <p className="text-xs text-muted-foreground">Current Plan</p>
-                <div className="flex items-baseline gap-2 mt-0.5">
-                  <span className="text-xl font-bold text-foreground">{planName}</span>
-                </div>
-              </div>
-              <span className="rounded-full bg-[#0052CC]/10 px-2 py-0.5 text-xs font-medium text-[#0052CC] dark:text-[#2684FF]">Active</span>
-            </div>
-            
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-3">
-              <Calendar className="h-3 w-3" />
-              <span>Renews {resetDate}</span>
-            </div>
-
-            <div className="flex flex-wrap gap-1.5 mb-3">
-              {features.map((feature, i) => (
-                <span key={i} className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                  <Check className="h-3 w-3 text-green-500" />
-                  {feature}
-                </span>
-              ))}
-            </div>
-
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" className="flex-1 bg-transparent text-xs" onClick={() => setViewPlansOpen(true)}>
-                View Plans
-              </Button>
-              <Button variant="outline" size="sm" className="bg-transparent text-xs text-red-500 hover:text-red-500 hover:bg-red-500/10" onClick={() => setCancelPlanOpen(true)}>
-                Cancel
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Credit Balance Card */}
-        <Card className="border-border bg-card">
-          <CardContent className="p-4">
-            <div className="flex items-start justify-between mb-3">
-              <div>
-                <p className="text-xs text-muted-foreground">Credit Balance · Resets in <span className="font-medium text-foreground">{daysUntilReset}d</span></p>
-              </div>
-              <Button size="sm" onClick={() => setBuyCreditsOpen(true)} className="h-7 text-xs bg-[#0052CC] text-white hover:bg-[#003D99]">
-                Buy Credits
-              </Button>
-            </div>
-            
-            <div className="flex gap-3">
-              <div className="relative w-24 h-16 rounded-lg bg-gradient-to-br from-gray-700 to-gray-900 dark:from-gray-600 dark:to-gray-800 p-2 flex flex-col justify-between shrink-0">
-                <div className="flex justify-end">
-                  <div className="w-5 h-3 rounded-sm bg-amber-400/80" />
-                </div>
+        {/* Current Plan + Credits Row */}
+        <div className="grid gap-4 md:grid-cols-2">
+          {/* Current Plan Card */}
+          <Card className="border-border bg-card">
+            <CardContent className="p-5">
+              <div className="flex items-start justify-between mb-4">
                 <div>
-                  <div className="text-base font-bold text-white">
-                    {isUnlimited ? "∞" : `$${creditsRemaining.toFixed(2)}`}
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Current Plan</p>
+                  <h2 className="text-2xl font-bold text-foreground">{currentPlan.name}</h2>
+                  <p className="text-sm text-muted-foreground mt-0.5">{currentPlan.priceLabel}</p>
+                </div>
+                <span className="rounded-full bg-[#36B37E]/15 px-2.5 py-1 text-xs font-medium text-[#36B37E]">Active</span>
+              </div>
+              
+              <div className="space-y-2 mb-4">
+                {currentPlan.features.slice(0, 4).map((feature, i) => (
+                  <div key={i} className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">{feature.label}</span>
+                    <span className="font-medium text-foreground">{feature.value}</span>
                   </div>
-                  <div className="text-[8px] text-gray-400">sch-{quota?.plan?.slice(0,4) || "alpha"}</div>
-                </div>
+                ))}
               </div>
 
-              <div className="flex-1 space-y-1 text-xs">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Gifted</span>
-                  <span className="text-foreground">{isUnlimited ? "∞" : `$${(quota?.credits_total || 5).toFixed(2)}`}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Used</span>
-                  <span className="text-foreground">${(quota?.credits_used || 0).toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Purchased</span>
-                  <span className="text-foreground">$0.00</span>
-                </div>
-                <div className="flex justify-between font-medium border-t border-border pt-1">
-                  <span className="text-foreground">Remaining</span>
-                  <span className="text-foreground">{isUnlimited ? "∞" : `$${creditsRemaining.toFixed(2)}`}</span>
-                </div>
+              <div className="flex gap-2">
+                <Button className="flex-1 bg-[#0052CC] hover:bg-[#003D99] text-white" onClick={() => setViewPlansOpen(true)}>
+                  {isFree ? "Upgrade Plan" : "Change Plan"}
+                </Button>
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
 
-        {/* Redeem Code Card */}
-        <Card className="border-border bg-card lg:col-span-2">
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2 mb-2">
-              <Gift className="h-4 w-4 text-[#0052CC] dark:text-[#2684FF]" />
-              <p className="text-xs text-muted-foreground">Redeem gifted credits</p>
+          {/* Credit Balance Card */}
+          <Card className="border-border bg-card">
+            <CardContent className="p-5">
+              <div className="flex items-start justify-between mb-4">
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">
+                    {isFree ? "Daily Credits" : "Credit Balance"}
+                  </p>
+                  <div className="flex items-baseline gap-2">
+                    <h2 className="text-2xl font-bold text-foreground">${userData.creditsRemaining.toFixed(2)}</h2>
+                    {isFree && (
+                      <span className="text-sm text-muted-foreground">/ ${userData.dailyCreditCap?.toFixed(2)}</span>
+                    )}
+                  </div>
+                  {isFree && (
+                    <p className="text-xs text-muted-foreground mt-1">Resets in {hoursUntilReset}h</p>
+                  )}
+                </div>
+                {!isFree && (
+                  <Button size="sm" className="bg-[#0052CC] hover:bg-[#003D99] text-white" onClick={() => setBuyCreditsOpen(true)}>
+                    <Zap className="h-4 w-4 mr-1.5" />
+                    Buy Credits
+                  </Button>
+                )}
+              </div>
+
+              {isFree ? (
+                <div className="space-y-3">
+                  <Progress value={(userData.dailyCreditsUsed! / userData.dailyCreditCap!) * 100} className="h-2" />
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>Used: ${userData.dailyCreditsUsed?.toFixed(2)}</span>
+                    <span>Remaining: ${userData.creditsRemaining.toFixed(2)}</span>
+                  </div>
+                  <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="text-xs font-medium text-amber-600 dark:text-amber-400">Free tier daily limit</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">Upgrade to Starter for add-on credits with no daily cap</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Used this month</span>
+                    <span className="font-medium text-foreground">${userData.creditsUsed.toFixed(2)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Purchased</span>
+                    <span className="font-medium text-foreground">${userData.creditsPurchased.toFixed(2)}</span>
+                  </div>
+                  <div className="border-t border-border pt-2 mt-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="font-medium text-foreground">Available</span>
+                      <span className="font-bold text-foreground">${userData.creditsRemaining.toFixed(2)}</span>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground pt-2 border-t border-border">
+                    <Info className="h-3 w-3 inline mr-1 -mt-0.5" />
+                    You'll receive an email alert when balance falls below 20% and again at zero. Credits expire at end of calendar month.
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Usage Tier + Storage Row */}
+        {!isFree && (
+          <div className="grid gap-4 md:grid-cols-2">
+            {/* Usage Tier Card */}
+            <Card className="border-border bg-card">
+              <CardContent className="p-5">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Usage Tier</p>
+                    <Tooltip>
+                      <TooltipTrigger>
+                        <Info className="h-3.5 w-3.5 text-muted-foreground" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-[250px]">
+                        <p className="text-xs">Higher tiers unlock lower fine-tuning rates. Tiers are based on cumulative compute spend.</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-[#2684FF]/15 text-[#2684FF]">Tier {userData.usageTier}</span>
+                </div>
+                
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">Fine-tuning rate</span>
+                    <span className="font-mono text-sm font-medium text-foreground">
+                      ${userData.usageTier === 1 ? "6.00" : userData.usageTier === 2 ? "4.50" : "3.00"}/1M tokens
+                    </span>
+                  </div>
+                  
+                  {nextTierSpend && (
+                    <>
+                      <Progress value={tierProgress} className="h-1.5" />
+                      <div className="flex justify-between text-xs text-muted-foreground">
+                        <span>${userData.cumulativeSpend} spent</span>
+                        <span>${nextTierSpend} for Tier {userData.usageTier + 1}</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Storage Card */}
+            <Card className="border-border bg-card">
+              <CardContent className="p-5">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Storage</p>
+                <div className="space-y-3">
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-2xl font-bold text-foreground">{userData.storageUsedMb >= 1024 ? `${(userData.storageUsedMb / 1024).toFixed(2)} GB` : `${userData.storageUsedMb.toFixed(1)} MB`}</span>
+                    <span className="text-sm text-muted-foreground">of {userData.storageLimitMb >= 1024 ? `${(userData.storageLimitMb / 1024).toFixed(0)} GB` : `${userData.storageLimitMb} MB`}</span>
+                  </div>
+                  <Progress value={storagePercent} className="h-2" />
+                  <p className="text-xs text-muted-foreground">
+                    {storagePercent < 80 
+                      ? `${(100 - storagePercent).toFixed(0)}% available` 
+                      : "Consider upgrading for more storage"}
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* Redeem Code */}
+        <Card className="border-border bg-card">
+          <CardContent className="p-5">
+            <div className="flex items-center gap-3 mb-3">
+              <Gift className="h-5 w-5 text-[#2684FF]" />
+              <div>
+                <p className="text-sm font-medium text-foreground">Redeem Credits</p>
+                <p className="text-xs text-muted-foreground">Have a promo or gift code? Redeem it here.</p>
+              </div>
             </div>
             <div className="flex gap-2">
               <Input
                 placeholder="Enter code"
                 value={redeemCode}
-                onChange={(e) => setRedeemCode(e.target.value)}
-                className="h-8 text-xs border-border bg-background"
+                onChange={(e) => setRedeemCode(e.target.value.toUpperCase())}
+                className="flex-1 font-mono border-border bg-background"
               />
-              <Button size="sm" onClick={() => setRedeemCodeOpen(true)} disabled={!redeemCode.trim()} className="h-8 text-xs bg-[#0052CC] text-white hover:bg-[#003D99]">
-                Redeem
+              <Button 
+                onClick={() => setRedeemOpen(true)} 
+                disabled={!redeemCode.trim()}
+                className="bg-[#0052CC] hover:bg-[#003D99] text-white"
+              >
+                {redeeming ? "Redeeming..." : "Redeem"}
               </Button>
             </div>
           </CardContent>
         </Card>
 
-        {/* Payment Method Card */}
-        <Card className="border-border bg-card">
-          <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground mb-2">Payment Method</p>
-            {paymentMethod ? (
-              <div className="flex items-center justify-between rounded border border-border bg-muted/30 p-2">
-                <div className="flex items-center gap-2">
-                  <div className="flex h-8 w-10 items-center justify-center rounded bg-white dark:bg-gray-800 border border-border">
-                    <span className="text-[10px] font-bold text-blue-600">VISA</span>
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-foreground">{paymentMethod.brand} •••• {paymentMethod.last4}</p>
-                    <p className="text-xs text-muted-foreground">Exp {paymentMethod.expiry}</p>
-                  </div>
-                </div>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0"><MoreHorizontal className="h-4 w-4" /></Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem className="gap-2 cursor-pointer text-xs"><ExternalLink className="h-3 w-3" />Manage on Stripe</DropdownMenuItem>
-                    <DropdownMenuItem className="gap-2 cursor-pointer text-xs text-red-500 focus:text-red-500" onClick={() => setDeletePaymentOpen(true)}><Trash2 className="h-3 w-3" />Remove</DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            ) : (
-              <Button variant="outline" size="sm" className="w-full gap-2 bg-transparent text-xs" onClick={() => setAddPaymentOpen(true)}>
-                <Plus className="h-3 w-3" />Add Payment Method
-              </Button>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Invoices Card */}
-        <Card className="border-border bg-card lg:col-span-2">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Receipt className="h-4 w-4 text-[#0052CC] dark:text-[#2684FF]" />
+        {/* Redeemed Gift Codes */}
+        {giftCodes.length > 0 && (
+          <Card className="border-border bg-card">
+            <CardContent className="p-5">
+              <div className="flex items-center justify-between mb-4">
                 <div>
-                  <p className="text-sm font-medium text-foreground">Invoices</p>
-                  <p className="text-xs text-muted-foreground">Managed on Stripe</p>
+                  <p className="text-sm font-medium text-foreground">Redeemed Codes</p>
+                  <p className="text-xs text-muted-foreground">Your promotional and gift code credits</p>
+                </div>
+                <span className="text-xs text-muted-foreground">{giftCodes.length} code{giftCodes.length !== 1 ? "s" : ""}</span>
+              </div>
+              
+              <div className="space-y-3">
+                {giftCodes.map((code) => {
+                  const isExpired = new Date(code.validUntil) < new Date()
+                  const isFullyUsed = code.remainingCredits === 0
+                  const usagePercent = (code.usedCredits / code.totalCredits) * 100
+                  
+                  return (
+                    <div 
+                      key={code.id} 
+                      className={`p-4 rounded-lg border ${isExpired || isFullyUsed ? "border-border bg-muted/30 opacity-60" : "border-border bg-muted/10"}`}
+                    >
+                      <div className="flex items-start justify-between gap-4 mb-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="font-mono text-sm font-medium text-foreground">{code.code}</span>
+                            {isFullyUsed && (
+                              <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-muted text-muted-foreground">Used</span>
+                            )}
+                            {isExpired && !isFullyUsed && (
+                              <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-red-500/10 text-red-500">Expired</span>
+                            )}
+                            {!isExpired && !isFullyUsed && (
+                              <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-[#36B37E]/10 text-[#36B37E]">Active</span>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground">{code.provider}</p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="text-sm font-semibold text-foreground">${code.remainingCredits.toFixed(2)}</p>
+                          <p className="text-[10px] text-muted-foreground">of ${code.totalCredits.toFixed(2)}</p>
+                        </div>
+                      </div>
+                      
+                      <Progress value={usagePercent} className="h-1.5 mb-2" />
+                      
+                      <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                        <span>Redeemed {new Date(code.redeemedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
+                        <span>Valid until {new Date(code.validUntil).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Pricing Reference */}
+        <Card className="border-border bg-card">
+          <CardContent className="p-5">
+            <div className="flex items-center gap-3 mb-4">
+              <Sparkles className="h-5 w-5 text-[#2684FF]" />
+              <div>
+                <p className="text-sm font-medium text-foreground">Pricing Reference</p>
+                <p className="text-xs text-muted-foreground">Per-unit rates for compute, storage, and third-party models</p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <p className="text-xs font-semibold text-foreground uppercase tracking-wider mb-2">Schema DLM Inference</p>
+                <div className="rounded-lg border border-border overflow-hidden">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted/40">
+                      <tr><th className="text-left px-3 py-2 font-medium text-muted-foreground">Model</th><th className="text-right px-3 py-2 font-medium text-muted-foreground">Input / 1M</th><th className="text-right px-3 py-2 font-medium text-muted-foreground">Output / 1M</th></tr>
+                    </thead>
+                    <tbody>
+                      <tr className="border-t border-border"><td className="px-3 py-2 text-foreground font-mono">schema-0</td><td className="px-3 py-2 text-right text-foreground">$1.00</td><td className="px-3 py-2 text-right text-foreground">$3.00</td></tr>
+                      <tr className="border-t border-border"><td className="px-3 py-2 text-foreground font-mono">schema-1</td><td className="px-3 py-2 text-right text-foreground">$2.00</td><td className="px-3 py-2 text-right text-foreground">$6.00</td></tr>
+                    </tbody>
+                  </table>
                 </div>
               </div>
-              <Button variant="outline" size="sm" className="gap-2 bg-transparent text-xs">
-                <ExternalLink className="h-3 w-3" />Open Stripe
-              </Button>
+
+              <div>
+                <p className="text-xs font-semibold text-foreground uppercase tracking-wider mb-2">Endpoint (Fine-tuned)</p>
+                <div className="rounded-lg border border-border overflow-hidden">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted/40">
+                      <tr><th className="text-left px-3 py-2 font-medium text-muted-foreground">Model</th><th className="text-right px-3 py-2 font-medium text-muted-foreground">Input / 1M</th><th className="text-right px-3 py-2 font-medium text-muted-foreground">Output / 1M</th></tr>
+                    </thead>
+                    <tbody>
+                      <tr className="border-t border-border"><td className="px-3 py-2 text-foreground font-mono">schema-0 Endpoint</td><td className="px-3 py-2 text-right text-foreground">$2.00</td><td className="px-3 py-2 text-right text-foreground">$4.00</td></tr>
+                      <tr className="border-t border-border"><td className="px-3 py-2 text-foreground font-mono">schema-1 Endpoint</td><td className="px-3 py-2 text-right text-foreground">$3.00</td><td className="px-3 py-2 text-right text-foreground">$7.00</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold text-foreground uppercase tracking-wider mb-2">Nota (Conversational Layer)</p>
+                <div className="rounded-lg border border-border overflow-hidden">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted/40">
+                      <tr><th className="text-left px-3 py-2 font-medium text-muted-foreground">Model</th><th className="text-right px-3 py-2 font-medium text-muted-foreground">Input / 1M</th><th className="text-right px-3 py-2 font-medium text-muted-foreground">Output / 1M</th></tr>
+                    </thead>
+                    <tbody>
+                      <tr className="border-t border-border"><td className="px-3 py-2 text-foreground font-mono">Nota</td><td className="px-3 py-2 text-right text-foreground">$1.00</td><td className="px-3 py-2 text-right text-foreground">$4.00</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-1.5">Flat pricing. Not subject to fine-tuning usage tiers.</p>
+              </div>
+
+              <div>
+                <p className="text-xs font-semibold text-foreground uppercase tracking-wider mb-2">Frontier Models (OpenAI, Anthropic, Google)</p>
+                <div className="rounded-lg border border-border overflow-hidden">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted/40">
+                      <tr><th className="text-left px-3 py-2 font-medium text-muted-foreground">Tier</th><th className="text-right px-3 py-2 font-medium text-muted-foreground">Markup</th></tr>
+                    </thead>
+                    <tbody>
+                      <tr className="border-t border-border"><td className="px-3 py-2 text-foreground">Free / PLUS / PRO / Enterprise T1</td><td className="px-3 py-2 text-right text-foreground">+20%</td></tr>
+                      <tr className="border-t border-border"><td className="px-3 py-2 text-foreground">Enterprise T2</td><td className="px-3 py-2 text-right text-foreground">+15%</td></tr>
+                      <tr className="border-t border-border"><td className="px-3 py-2 text-foreground">Enterprise T3</td><td className="px-3 py-2 text-right text-foreground">+10%</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-1.5">Provider pricing pulled daily. UI reflects marked-up rate, updates within 24 hours of provider change.</p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="rounded-lg border border-border p-3">
+                  <p className="text-xs font-semibold text-foreground uppercase tracking-wider mb-1">Synthetic Data</p>
+                  <p className="text-lg font-bold text-foreground">$1.50 <span className="text-xs font-normal text-muted-foreground">/ 1M cells</span></p>
+                  <p className="text-[11px] text-muted-foreground mt-1">1 cell = 1 row × column value. 10K × 50 dataset = 500K cells = $0.75.</p>
+                </div>
+                <div className="rounded-lg border border-border p-3">
+                  <p className="text-xs font-semibold text-foreground uppercase tracking-wider mb-1">Storage Overage</p>
+                  <p className="text-lg font-bold text-foreground">$0.25 <span className="text-xs font-normal text-muted-foreground">/ GB / month</span></p>
+                  <p className="text-[11px] text-muted-foreground mt-1">Billed beyond tier allowance. Blocks new uploads if no credit balance.</p>
+                </div>
+              </div>
             </div>
           </CardContent>
         </Card>
-      </div>
 
-      {/* View Plans Modal */}
-      <Dialog open={viewPlansOpen} onOpenChange={setViewPlansOpen}>
-        <DialogContent className="border-border bg-card sm:max-w-[550px]">
-          <DialogHeader><DialogTitle className="text-foreground">Available Plans</DialogTitle></DialogHeader>
-          <div className="grid gap-3 sm:grid-cols-3">
-            {[
-              { name: "Starter", price: 0, credits: "5K", features: ["5 models", "Community support"] },
-              { name: "Pro", price: 49, credits: "50K", features: ["Unlimited models", "Priority support"], current: planName.includes("Alpha") },
-              { name: "Enterprise", price: 199, credits: "Unlimited", features: ["Custom models", "Dedicated support"] },
-            ].map((plan) => (
-              <div key={plan.name} className={`rounded-lg border p-3 ${plan.current ? "border-[#0052CC] bg-[#0052CC]/5" : "border-border"}`}>
-                <h3 className="font-medium text-foreground text-sm">{plan.name}</h3>
-                <div className="mt-1"><span className="text-xl font-bold text-foreground">${plan.price}</span><span className="text-xs text-muted-foreground">/mo</span></div>
-                <p className="text-xs text-muted-foreground">{plan.credits} credits</p>
-                <ul className="mt-2 space-y-1">{plan.features.map((f, i) => (<li key={i} className="flex items-center gap-1 text-xs text-muted-foreground"><Check className="h-3 w-3 text-green-500" />{f}</li>))}</ul>
-                <Button className={`w-full mt-3 h-7 text-xs ${plan.current ? "bg-muted text-muted-foreground" : "bg-[#0052CC] text-white hover:bg-[#003D99]"}`} disabled={plan.current}>{plan.current ? "Current" : "Upgrade"}</Button>
-              </div>
-            ))}
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Cancel Plan Modal */}
-      <Dialog open={cancelPlanOpen} onOpenChange={setCancelPlanOpen}>
-        <DialogContent className="border-border bg-card sm:max-w-[400px]">
-          <DialogHeader>
-            <DialogTitle className="text-foreground">Cancel Subscription</DialogTitle>
-            <DialogDescription className="text-sm">Cancel your subscription? Access ends on {resetDate}.</DialogDescription>
-          </DialogHeader>
-          <div className="rounded border border-amber-500/20 bg-amber-500/10 p-2 text-xs text-amber-600 dark:text-amber-400 flex items-start gap-2">
-            <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" /><span>No refunds for the current billing period.</span>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setCancelPlanOpen(false)} className="bg-transparent">Keep</Button>
-            <Button variant="destructive" size="sm">Cancel Plan</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Buy Credits Modal */}
-      <Dialog open={buyCreditsOpen} onOpenChange={setBuyCreditsOpen}>
-        <DialogContent className="border-border bg-card sm:max-w-[350px]">
-          <DialogHeader><DialogTitle className="text-foreground">Buy Credits</DialogTitle></DialogHeader>
-          <div className="space-y-3">
-            <div className="grid grid-cols-3 gap-2">
-              {["10", "25", "50", "100", "250", "500"].map((amount) => (
-                <Button key={amount} variant={creditAmount === amount ? "default" : "outline"} size="sm" className={creditAmount === amount ? "bg-[#0052CC] text-white" : "bg-transparent"} onClick={() => setCreditAmount(amount)}>${amount}</Button>
+        {/* View Plans Modal */}
+        <Dialog open={viewPlansOpen} onOpenChange={setViewPlansOpen}>
+          <DialogContent className="border-border bg-card sm:max-w-[800px]">
+            <DialogHeader>
+              <DialogTitle className="text-xl text-foreground">Choose Your Plan</DialogTitle>
+              <DialogDescription>All plans include platform access. Compute is billed separately via credits.</DialogDescription>
+            </DialogHeader>
+            
+            <div className="flex items-center justify-center gap-1 p-1 mt-4 mx-auto w-fit rounded-lg border border-border bg-muted/30">
+              <button
+                onClick={() => setBillingCycle("monthly")}
+                className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${billingCycle === "monthly" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+              >
+                Monthly
+              </button>
+              <button
+                onClick={() => setBillingCycle("yearly")}
+                className={`px-3 py-1.5 text-xs font-medium rounded transition-colors flex items-center gap-1.5 ${billingCycle === "yearly" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+              >
+                Yearly
+                <span className="rounded-full bg-[#36B37E]/15 px-1.5 py-0.5 text-[9px] font-semibold text-[#36B37E]">SAVE 15%</span>
+              </button>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mt-4">
+              {(Object.entries(plans) as [PlanType, PlanData][]).map(([key, plan]) => (
+                <div 
+                  key={key} 
+                  onClick={() => userData.plan !== key && setSelectedPlan(key)}
+                  className={`relative rounded-xl border p-4 transition-all flex flex-col ${userData.plan !== key ? "cursor-pointer" : ""} ${
+                    selectedPlan === key
+                      ? "border-[#0052CC] bg-[#0052CC]/10 ring-2 ring-[#0052CC] dark:border-[#2684FF] dark:ring-[#2684FF]"
+                      : "border-border hover:border-muted-foreground/50"
+                  } ${normalizedPlan === key ? "ring-2 ring-[#36B37E] opacity-70" : ""}`}
+                >
+                  {plan.highlighted && selectedPlan !== key && userData.plan !== key && (
+                    <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 rounded-full bg-[#0052CC] dark:bg-[#2684FF] px-2.5 py-0.5 text-[10px] font-medium text-white">
+                      Popular
+                    </span>
+                  )}
+                  {selectedPlan === key && (
+                    <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 rounded-full bg-[#0052CC] dark:bg-[#2684FF] px-2.5 py-0.5 text-[10px] font-medium text-white">
+                      Selected
+                    </span>
+                  )}
+                  {normalizedPlan === key && (
+                    <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 rounded-full bg-[#36B37E] px-2.5 py-0.5 text-[10px] font-medium text-white">
+                      Current
+                    </span>
+                  )}
+                  
+                  <h3 className="font-semibold text-foreground">{plan.name}</h3>
+                  <div className="mt-2 mb-3">
+                    {plan.price >= 0 ? (
+                      <>
+                        {billingCycle === "yearly" && plan.price > 0 ? (
+                          <>
+                            <span className="text-2xl font-bold text-foreground">${(plan.price * 12 * 0.85).toFixed(0)}</span>
+                            <span className="text-sm text-muted-foreground">/yr</span>
+                            <div className="text-[11px] text-[#36B37E] mt-0.5">Save 15% (${plan.price}/mo effective ${(plan.price * 0.85).toFixed(2)})</div>
+                          </>
+                        ) : (
+                          <>
+                            <span className="text-2xl font-bold text-foreground">${plan.price}</span>
+                            <span className="text-sm text-muted-foreground">/mo</span>
+                          </>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-2xl font-bold text-foreground">Custom</span>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground mb-4">{plan.description}</p>
+                  
+                  <ul className="space-y-2 mb-4 flex-1">
+                    {plan.features.map((feature, i) => (
+                      <li key={i} className="flex items-start gap-2 text-xs">
+                        <Check className="h-3.5 w-3.5 text-[#36B37E] mt-0.5 shrink-0" />
+                        <span className="text-muted-foreground">
+                          <span className="text-foreground font-medium">{feature.value}</span> {feature.label.toLowerCase()}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  
+                  {key === "enterprise" ? (
+                    <Button 
+                      variant="outline" 
+                      className="w-full" 
+                      disabled={selectedPlan !== key}
+                      onClick={(e) => { e.stopPropagation(); setViewPlansOpen(false); setContactOpen(true) }}
+                    >
+                      Contact Us
+                    </Button>
+                  ) : normalizedPlan === key ? (
+                    <Button variant="outline" className="w-full" disabled>
+                      Current Plan
+                    </Button>
+                  ) : (
+                    <Button 
+                      className={`w-full ${selectedPlan === key ? "bg-[#0052CC] hover:bg-[#003D99] text-white" : ""}`}
+                      variant={selectedPlan === key ? "default" : "outline"}
+                      disabled={selectedPlan !== key || upgradingPlan !== null}
+                      onClick={async (e) => {
+                        e.stopPropagation()
+                        setUpgradingPlan(key)
+                        try {
+                          const res = await fetch("/api/billing/checkout", {
+                            method: "POST",
+                            credentials: "include",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ plan: key, billing_cycle: billingCycle }),
+                          })
+                          if (res.ok) {
+                            const data = await res.json()
+                            window.location.href = data.url
+                          } else {
+                            const err = await res.text()
+                            toast.error("Checkout failed: " + err)
+                            setUpgradingPlan(null)
+                          }
+                        } catch (e) { toast.error("Network error"); setUpgradingPlan(null) }
+                      }}
+                    >
+                      {upgradingPlan === key ? "Redirecting..." : ((plans[normalizedPlan]?.price ?? 0) < plan.price ? "Upgrade" : "Switch")}
+                    </Button>
+                  )}
+                </div>
               ))}
             </div>
-            <Input type="number" placeholder="Custom amount" value={creditAmount} onChange={(e) => setCreditAmount(e.target.value)} className="h-8 text-sm border-border bg-background" />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setBuyCreditsOpen(false)} className="bg-transparent">Cancel</Button>
-            <Button size="sm" className="bg-[#0052CC] text-white hover:bg-[#003D99]">Purchase ${creditAmount}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            
+            <p className="text-xs text-muted-foreground text-center mt-4">
+              Annual billing saves 15%. All prices in USD.
+            </p>
+          </DialogContent>
+        </Dialog>
 
-      {/* Add Payment Modal */}
-      <Dialog open={addPaymentOpen} onOpenChange={setAddPaymentOpen}>
-        <DialogContent className="border-border bg-card sm:max-w-[350px]">
-          <DialogHeader><DialogTitle className="text-foreground">Add Payment Method</DialogTitle></DialogHeader>
-          <div className="space-y-3">
-            <div><Label className="text-xs">Card Number</Label><Input placeholder="4242 4242 4242 4242" value={cardNumber} onChange={(e) => setCardNumber(e.target.value)} className="h-8 text-sm mt-1 border-border bg-background" /></div>
-            <div className="grid grid-cols-2 gap-2">
-              <div><Label className="text-xs">Expiry</Label><Input placeholder="MM/YY" value={cardExpiry} onChange={(e) => setCardExpiry(e.target.value)} className="h-8 text-sm mt-1 border-border bg-background" /></div>
-              <div><Label className="text-xs">CVC</Label><Input placeholder="123" value={cardCvc} onChange={(e) => setCardCvc(e.target.value)} className="h-8 text-sm mt-1 border-border bg-background" /></div>
+        {/* Buy Credits Modal */}
+        <Dialog open={buyCreditsOpen} onOpenChange={setBuyCreditsOpen}>
+          <DialogContent className="border-border bg-card sm:max-w-[400px]">
+            <DialogHeader>
+              <DialogTitle className="text-foreground">Buy Credits</DialogTitle>
+              <DialogDescription>
+                Add compute credits to your account. Credits expire at month end.
+              </DialogDescription>
+            </DialogHeader>
+            
+            <div className="space-y-4 mt-2">
+              <div>
+                <Label className="text-xs text-muted-foreground mb-2 block">Quick Select</Label>
+                <div className="grid grid-cols-3 gap-2">
+                  {["10", "25", "50", "100", "250", "500"].map((amount) => (
+                    <Button 
+                      key={amount} 
+                      variant={creditAmount === amount ? "default" : "outline"} 
+                      size="sm"
+                      className={creditAmount === amount ? "bg-[#0052CC] text-white" : ""}
+                      onClick={() => setCreditAmount(amount)}
+                    >
+                      ${amount}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+              
+              <div>
+                <Label className="text-xs text-muted-foreground mb-2 block">Custom Amount</Label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
+                  <Input 
+                    type="number" 
+                    min={10}
+                    max={normalizedPlan === "plus" ? 500 : 5000}
+                    value={creditAmount} 
+                    onChange={(e) => setCreditAmount(e.target.value)} 
+                    className="pl-7 border-border bg-background" 
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Min $10 {normalizedPlan === "plus" ? "• Max $500/month" : "• Max $5,000/month"}
+                </p>
+              </div>
+              
+              <div className="p-3 rounded-lg bg-muted/50 border border-border">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Current balance</span>
+                  <span className="font-medium text-foreground">${userData.creditsRemaining.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-sm mt-1">
+                  <span className="text-muted-foreground">After purchase</span>
+                  <span className="font-medium text-[#36B37E]">${(userData.creditsRemaining + parseFloat(creditAmount || "0")).toFixed(2)}</span>
+                </div>
+              </div>
             </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setAddPaymentOpen(false)} className="bg-transparent">Cancel</Button>
-            <Button size="sm" onClick={handleAddPayment} disabled={!cardNumber || !cardExpiry || !cardCvc} className="bg-[#0052CC] text-white hover:bg-[#003D99]">Add Card</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            
+            <DialogFooter className="mt-4">
+              <Button variant="outline" onClick={() => setBuyCreditsOpen(false)}>Cancel</Button>
+              <Button 
+                className="bg-[#0052CC] hover:bg-[#003D99] text-white gap-2"
+                disabled={purchasing || !creditAmount || parseFloat(creditAmount) < 10 || parseFloat(creditAmount) > (normalizedPlan === "pro" ? 5000 : normalizedPlan === "plus" ? 500 : 100000)}
+                onClick={async () => {
+                  setPurchasing(true)
+                  try {
+                    const res = await fetch("/api/billing/credits/purchase", {
+                      method: "POST",
+                      credentials: "include",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ amount_usd: parseFloat(creditAmount) }),
+                    })
+                    if (res.ok) {
+                      const data = await res.json()
+                      window.location.href = data.url
+                    } else {
+                      const err = await res.text()
+                      toast.error("Purchase failed: " + err)
+                      setPurchasing(false)
+                    }
+                  } catch (e) { toast.error("Network error"); setPurchasing(false) }
+                }}
+              >
+                {purchasing ? "Processing..." : `Purchase $${creditAmount || "0"}`}
+                {!purchasing && <ArrowRight className="h-4 w-4" />}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
-      {/* Delete Payment Modal */}
-      <Dialog open={deletePaymentOpen} onOpenChange={setDeletePaymentOpen}>
-        <DialogContent className="border-border bg-card sm:max-w-[350px]">
-          <DialogHeader>
-            <DialogTitle className="text-foreground">Remove Payment Method</DialogTitle>
-            <DialogDescription className="text-sm">Remove this card from your account?</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setDeletePaymentOpen(false)} className="bg-transparent">Cancel</Button>
-            <Button variant="destructive" size="sm" onClick={handleDeletePayment}>Remove</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        {/* Redeem Code Modal */}
+        <Dialog open={redeemOpen} onOpenChange={setRedeemOpen}>
+          <DialogContent className="border-border bg-card sm:max-w-[350px]">
+            <DialogHeader>
+              <DialogTitle className="text-foreground">Redeem Code</DialogTitle>
+              <DialogDescription>Confirm redemption of this code.</DialogDescription>
+            </DialogHeader>
+            <div className="p-4 rounded-lg bg-muted/50 border border-border text-center">
+              <p className="font-mono text-lg font-bold text-foreground">{redeemCode}</p>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => { setRedeemOpen(false); setRedeemCode("") }}>Cancel</Button>
+              <Button 
+                className="bg-[#0052CC] hover:bg-[#003D99] text-white" 
+                disabled={redeeming || !redeemCode}
+                onClick={async () => {
+                  setRedeeming(true)
+                  try {
+                    const res = await fetch("/api/billing/redeem", {
+                      method: "POST",
+                      credentials: "include",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ code: redeemCode }),
+                    })
+                    if (res.ok) {
+                      const data = await res.json()
+                      toast.success(`$${data.credits_added} credits added. New balance: $${data.new_balance.toFixed(2)}`)
+                      setRedeemOpen(false)
+                      setRedeemCode("")
+                      const [billingRes, giftRes] = await Promise.all([
+                        fetch("/api/billing/me", { credentials: "include" }),
+                        fetch("/api/billing/gift-codes", { credentials: "include" }),
+                      ])
+                      if (billingRes.ok) { const d = await billingRes.json(); setUserData(prev => ({ ...prev, ...d })) }
+                      if (giftRes.ok) setGiftCodes(await giftRes.json() as GiftCode[])
+                    } else {
+                      const err = await res.text()
+                      toast.error("Redeem failed: " + err)
+                    }
+                  } catch (e) { toast.error("Network error") }
+                  finally { setRedeeming(false) }
+                }}
+              >
+                Confirm
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
-      {/* Redeem Code Modal */}
-      <Dialog open={redeemCodeOpen} onOpenChange={setRedeemCodeOpen}>
-        <DialogContent className="border-border bg-card sm:max-w-[350px]">
-          <DialogHeader>
-            <DialogTitle className="text-foreground">Redeem Code</DialogTitle>
-            <DialogDescription className="text-sm">Add credits to your account?</DialogDescription>
-          </DialogHeader>
-          <div className="rounded border border-border bg-muted/50 p-3 text-center">
-            <p className="text-xs text-muted-foreground">Code</p>
-            <p className="font-mono font-medium text-foreground">{redeemCode}</p>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => { setRedeemCodeOpen(false); setRedeemCode("") }} className="bg-transparent">Cancel</Button>
-            <Button size="sm" onClick={() => { setRedeemCodeOpen(false); setRedeemCode("") }} className="bg-[#0052CC] text-white hover:bg-[#003D99]">Confirm</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+        {normalizedPlan === "enterprise" && <DedicatedDeployments />}
+
+        {/* Contact Enterprise Modal */}
+        <Dialog open={contactOpen} onOpenChange={setContactOpen}>
+          <DialogContent className="border-border bg-card sm:max-w-[700px]">
+            <DialogHeader>
+              <DialogTitle className="text-foreground">Contact Sales</DialogTitle>
+              <DialogDescription>Get in touch for custom enterprise pricing.</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 mt-2">
+              <div>
+                <p className="text-xs font-semibold text-foreground uppercase tracking-wider mb-2">Enterprise Pricing Framework</p>
+                <div className="rounded-lg border border-border overflow-hidden">
+                  <table className="w-full text-[11px]">
+                    <thead className="bg-muted/40">
+                      <tr>
+                        <th className="text-left px-2 py-1.5 font-medium text-muted-foreground">Dimension</th>
+                        <th className="text-center px-2 py-1.5 font-medium text-muted-foreground">T1 ICP Core</th>
+                        <th className="text-center px-2 py-1.5 font-medium text-muted-foreground">T2 Mid-Market</th>
+                        <th className="text-center px-2 py-1.5 font-medium text-muted-foreground">T3 Strategic</th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-foreground">
+                      <tr className="border-t border-border"><td className="px-2 py-1.5 text-muted-foreground">Profile</td><td className="px-2 py-1.5 text-center">10–100 ppl</td><td className="px-2 py-1.5 text-center">100–500 ppl</td><td className="px-2 py-1.5 text-center">500+ ppl</td></tr>
+                      <tr className="border-t border-border"><td className="px-2 py-1.5 text-muted-foreground">Seats</td><td className="px-2 py-1.5 text-center">10</td><td className="px-2 py-1.5 text-center">25</td><td className="px-2 py-1.5 text-center">Unlimited</td></tr>
+                      <tr className="border-t border-border"><td className="px-2 py-1.5 text-muted-foreground">Storage</td><td className="px-2 py-1.5 text-center">100 GB</td><td className="px-2 py-1.5 text-center">500 GB</td><td className="px-2 py-1.5 text-center">2 TB</td></tr>
+                      <tr className="border-t border-border"><td className="px-2 py-1.5 text-muted-foreground">Overage ≤5TB</td><td className="px-2 py-1.5 text-center">$0.15/GB</td><td className="px-2 py-1.5 text-center">$0.10/GB</td><td className="px-2 py-1.5 text-center">$0.06/GB</td></tr>
+                      <tr className="border-t border-border"><td className="px-2 py-1.5 text-muted-foreground">Overage &gt;5TB</td><td className="px-2 py-1.5 text-center">$0.10/GB</td><td className="px-2 py-1.5 text-center">$0.07/GB</td><td className="px-2 py-1.5 text-center">Negotiated</td></tr>
+                      <tr className="border-t border-border"><td className="px-2 py-1.5 text-muted-foreground">SLA</td><td className="px-2 py-1.5 text-center">99.9%</td><td className="px-2 py-1.5 text-center">99.95%</td><td className="px-2 py-1.5 text-center">99.99%</td></tr>
+                      <tr className="border-t border-border"><td className="px-2 py-1.5 text-muted-foreground">Annual discount</td><td className="px-2 py-1.5 text-center">15%</td><td className="px-2 py-1.5 text-center">20%</td><td className="px-2 py-1.5 text-center">25%</td></tr>
+                      <tr className="border-t border-border"><td className="px-2 py-1.5 text-muted-foreground">Frontier markup</td><td className="px-2 py-1.5 text-center">+20%</td><td className="px-2 py-1.5 text-center">+15%</td><td className="px-2 py-1.5 text-center">+10%</td></tr>
+                      <tr className="border-t border-border"><td className="px-2 py-1.5 text-muted-foreground">Support</td><td className="px-2 py-1.5 text-center">Priority + Slack</td><td className="px-2 py-1.5 text-center">Named + Slack</td><td className="px-2 py-1.5 text-center">CSM 24/7</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div>
+                <Label className="text-xs text-muted-foreground mb-1.5 block">Work Email</Label>
+                <Input placeholder="you@company.com" className="border-border bg-background" value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} />
+              </div>
+            </div>
+            <DialogFooter className="mt-4">
+              <Button variant="outline" onClick={() => { setContactOpen(false); setContactEmail("") }}>Cancel</Button>
+              <Button 
+                className="bg-[#0052CC] hover:bg-[#003D99] text-white"
+                disabled={contactSending || !contactEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail.trim()) || contactEmail.length > 254}
+                onClick={async () => {
+                  setContactSending(true)
+                  try {
+                    const res = await fetch("/api/billing/contact", {
+                      method: "POST",
+                      credentials: "include",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ email: contactEmail }),
+                    })
+                    if (res.ok) {
+                      toast.success("Request received. Our sales team will contact you shortly.")
+                      setContactOpen(false)
+                      setContactEmail("")
+                    } else {
+                      const err = await res.text()
+                      toast.error("Send failed: " + err)
+                    }
+                  } catch (e) { toast.error("Network error") }
+                  finally { setContactSending(false) }
+                }}
+              >
+                {contactSending ? "Sending..." : "Request Demo"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </TooltipProvider>
   )
 }

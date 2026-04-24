@@ -118,17 +118,13 @@ os.Remove(destPath)
 		sf.Close()
 	}
 
-	creditCost = math.Round((0.50+float64(req.Rows)/1000.0*0.10+float64(req.Columns)/10.0*0.05)*100) / 100
-	if creditCost < 0.50 { creditCost = 0.50 }
-	if creditCost > 10.0 { creditCost = 10.0 }
-
+	cellCount := int64(rowCount) * int64(len(strings.Split(colNames, ",")))
 	if DB != nil {
 		DB.Create(&UploadedFile{ID: fileID, Filename: filename, Path: storageKey, Size: size, UserID: userID, CreatedAt: time.Now(), Columns: colNames, RowCount: rowCount, Vertical: req.Vertical, Source: "generated"})
-		var q UserQuota
-		if DB.Where("user_id = ?", userID).First(&q).Error == nil { q.CreditsUsed += creditCost; DB.Save(&q) }
-		genTokens := rowCount * len(strings.Split(colNames, ",")) * 3
-		if genTokens < 500 { genTokens = 500 }
-		DB.Create(&UsageLog{ID: uuid.New().String(), UserID: userID, EventType: "generate", EventName: "Synthetic Data Generation", ResourceID: fileID, ResourceName: filename, CreditsUsed: creditCost, TokensUsed: genTokens, ModelUsed: "synthetic", CreatedAt: time.Now()})
+		if err := TrackSyntheticGen(userID, cellCount); err != nil {
+			log.Printf("[GENERATE] TrackSyntheticGen failed for user %s: %v", userID, err)
+		}
+		DB.Create(&UsageLog{ID: uuid.New().String(), UserID: userID, EventType: "generate", EventName: "Synthetic Data Generation", ResourceID: fileID, ResourceName: filename, CreditsUsed: 0, TokensUsed: int(cellCount), ModelUsed: "synthetic", CreatedAt: time.Now()})
 	}
 
 	w.Header().Set("Content-Type", "application/json")

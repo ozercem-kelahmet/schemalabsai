@@ -66,11 +66,25 @@ const sources: { id: DataSource; label: string; icon: React.ReactNode }[] = [
     icon: <FileSpreadsheet className="h-4 w-4 text-[#217346]" />,
   },
   {
-    id: "upload",
-    label: "Uploaded Files",
+    id: "csv",
+    label: "CSV",
     icon: (
       <svg viewBox="0 0 24 24" className="h-4 w-4 text-[#10B981]" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+        <polyline points="14 2 14 8 20 8" />
+        <line x1="16" y1="13" x2="8" y2="13" />
+        <line x1="16" y1="17" x2="8" y2="17" />
+        <polyline points="10 9 9 9 8 9" />
+      </svg>
+    ),
+  },
+  {
+    id: "json",
+    label: "JSON",
+    icon: (
+      <svg viewBox="0 0 24 24" className="h-4 w-4 text-[#F59E0B]" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M4 6h2a2 2 0 0 1 2 2v2a2 2 0 0 0 2 2 2 2 0 0 0-2 2v2a2 2 0 0 1-2 2H4" />
+        <path d="M20 6h-2a2 2 0 0 0-2 2v2a2 2 0 0 1-2 2 2 2 0 0 1 2 2v2a2 2 0 0 0 2 2h2" />
       </svg>
     ),
   },
@@ -155,15 +169,17 @@ const verticals: { id: Vertical; label: string }[] = [
 ]
 
 const complexityOptions: { id: Complexity; label: string; description: string }[] = [
-  { id: "simple", label: "Simple", description: "5-10 columns" },
-  { id: "medium", label: "Medium", description: "10-25 columns" },
-  { id: "advanced", label: "Advanced", description: "25+ columns" },
+  { id: "simple", label: "Simple", description: "< 1K cols" },
+  { id: "medium", label: "Medium", description: "1K-10K cols" },
+  { id: "high", label: "High", description: "10K-100K cols" },
+  { id: "advanced", label: "Advanced", description: "100K+ cols" },
 ]
 
 const rowCountOptions: { id: RowCount; label: string; description: string }[] = [
-  { id: "small", label: "Small", description: "< 1K rows" },
+  { id: "simple", label: "Simple", description: "< 1K rows" },
   { id: "medium", label: "Medium", description: "1K-10K rows" },
-  { id: "large", label: "Large", description: "10K+ rows" },
+  { id: "high", label: "High", description: "10K-100K rows" },
+  { id: "advanced", label: "Advanced", description: "100K+ rows" },
 ]
 
 export function DatasetFilters({

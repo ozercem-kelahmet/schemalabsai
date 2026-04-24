@@ -67,6 +67,8 @@ export default function UsagePage() {
   const [usageLogs, setUsageLogs] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [quota, setQuota] = useState<any>(null)
+  const [billing, setBilling] = useState<any>(null)
+  const [rateLimits, setRateLimits] = useState<any>(null)
   
   const [dateFrom, setDateFrom] = useState("2024-01-01")
   const [dateTo, setDateTo] = useState(new Date().toISOString().split("T")[0])
@@ -80,7 +82,7 @@ export default function UsagePage() {
 
   const fetchData = async () => {
     try {
-      const [modelsRes, queriesRes, endpointsRes, quotaRes, datasetsRes, connectionsRes, logsRes] = await Promise.all([
+      const [modelsRes, queriesRes, endpointsRes, quotaRes, datasetsRes, connectionsRes, logsRes, billingRes, rateLimitsRes] = await Promise.all([
         fetch("/api/models/finetuned", { credentials: "include" }),
         fetch("/api/queries", { credentials: "include" }),
         fetch("/api/endpoints", { credentials: "include" }),
@@ -88,6 +90,8 @@ export default function UsagePage() {
         fetch("/api/files", { credentials: "include" }),
         fetch("/api/connections", { credentials: "include" }),
         fetch("/api/usage/logs", { credentials: "include" }),
+        fetch("/api/billing/me", { credentials: "include" }),
+        fetch("/api/usage/rate-limits", { credentials: "include" }),
       ])
       if (modelsRes.ok) setModels((await modelsRes.json()).models || [])
       if (queriesRes.ok) setQueries((await queriesRes.json()).queries || [])
@@ -105,6 +109,8 @@ export default function UsagePage() {
         const logs = (await logsRes.json()).logs || []
         setUsageLogs(logs)
       }
+      if (billingRes.ok) setBilling(await billingRes.json())
+      if (rateLimitsRes.ok) setRateLimits(await rateLimitsRes.json())
     } catch (e) { console.error("Failed to fetch:", e) }
     finally { setLoading(false) }
   }
@@ -137,7 +143,7 @@ export default function UsagePage() {
         time: d.toTimeString().split(" ")[0],
         event: "Model training completed",
         kind: "train",
-        model: process.env.NEXT_PUBLIC_BASE_MODEL || "schema-v0",
+        model: process.env.NEXT_PUBLIC_BASE_MODEL || "schema-v1",
         builtModel: m.name,
         credits: modelUsage.credits,
         baseTokens: modelUsage.tokens,
@@ -154,7 +160,7 @@ export default function UsagePage() {
         time: d.toTimeString().split(" ")[0],
         event: l.event_name || "Chat Query",
         kind: "chat",
-        model: process.env.NEXT_PUBLIC_BASE_MODEL || "schema-v0",
+        model: process.env.NEXT_PUBLIC_BASE_MODEL || "schema-v1",
         builtModel: (() => { if (!l.resource_name || l.resource_name === "") return "-"; const m = models.find(m => m.id === l.resource_name || m.name === l.resource_name); if (m) return m.name; const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}/.test(l.resource_name); return isUUID ? "-" : l.resource_name; })(),
         credits: l.credits_used || 0,
         baseTokens: l.tokens_used || 0,
@@ -488,6 +494,109 @@ export default function UsagePage() {
       </div>
 
 
+      {billing && (billing.plan === "plus" || billing.plan === "pro") && billing.nextTierThreshold > 0 && (
+        <div className="rounded-xl border border-border bg-card p-5">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Fine-tuning Usage Tier</div>
+              <div className="text-lg font-semibold text-foreground mt-0.5">Tier {billing.usageTier} — ${billing.cumulativeSpend.toFixed(2)} lifetime spend</div>
+            </div>
+            <div className="text-right">
+              <div className="text-xs text-muted-foreground">Next tier at</div>
+              <div className="text-sm font-medium text-foreground">${billing.nextTierThreshold.toFixed(0)}</div>
+            </div>
+          </div>
+          <div className="h-2 rounded-full bg-muted overflow-hidden">
+            <div className="h-full bg-[#0052CC] rounded-full" style={{ width: `${Math.min((billing.cumulativeSpend / billing.nextTierThreshold) * 100, 100)}%` }} />
+          </div>
+          {billing.monthlyTierCeiling > 0 && (
+            <div className="mt-3 text-xs text-muted-foreground">
+              Monthly tier ceiling: ${billing.monthlyTierSpend.toFixed(2)} / ${billing.monthlyTierCeiling.toFixed(0)}
+            </div>
+          )}
+        </div>
+      )}
+
+      {billing && (
+        <div>
+          <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Token Breakdown</div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="rounded-xl border border-border bg-card p-4">
+              <div className="text-xs text-muted-foreground">Schema DLM</div>
+              <div className="text-lg font-semibold text-foreground mt-1">{(billing.schemaTokensInput + billing.schemaTokensOutput).toLocaleString()}</div>
+              <div className="text-[11px] text-muted-foreground mt-1">in {billing.schemaTokensInput.toLocaleString()} · out {billing.schemaTokensOutput.toLocaleString()}</div>
+            </div>
+            <div className="rounded-xl border border-border bg-card p-4">
+              <div className="text-xs text-muted-foreground">Nota / Frontier</div>
+              <div className="text-lg font-semibold text-foreground mt-1">{(billing.notaTokensInput + billing.notaTokensOutput).toLocaleString()}</div>
+              <div className="text-[11px] text-muted-foreground mt-1">in {billing.notaTokensInput.toLocaleString()} · out {billing.notaTokensOutput.toLocaleString()}</div>
+            </div>
+            <div className="rounded-xl border border-border bg-card p-4">
+              <div className="text-xs text-muted-foreground">Fine-tune</div>
+              <div className="text-lg font-semibold text-foreground mt-1">{billing.fineTuneTokens.toLocaleString()}</div>
+              <div className="text-[11px] text-muted-foreground mt-1">tokens processed</div>
+            </div>
+            <div className="rounded-xl border border-border bg-card p-4">
+              <div className="text-xs text-muted-foreground">Synthetic Data</div>
+              <div className="text-lg font-semibold text-foreground mt-1">{billing.syntheticCellsGenerated.toLocaleString()}</div>
+              <div className="text-[11px] text-muted-foreground mt-1">cells generated</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {rateLimits && (rateLimits.schema?.rpm_limit > 0 || rateLimits.nota?.rpm_limit > 0) && (
+        <div>
+          <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Rate Limits (per minute)</div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {rateLimits.schema?.rpm_limit > 0 && (
+              <div className="rounded-xl border border-border bg-card p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-sm font-medium text-foreground">Schema</div>
+                  <div className="text-[11px] text-muted-foreground">{rateLimits.plan.toUpperCase()}</div>
+                </div>
+                <div className="space-y-2">
+                  <div>
+                    <div className="flex justify-between text-[11px] text-muted-foreground"><span>RPM</span><span>{rateLimits.schema.rpm} / {rateLimits.schema.rpm_limit}</span></div>
+                    <div className="h-1.5 rounded-full bg-muted overflow-hidden mt-0.5"><div className={`h-full ${(rateLimits.schema.rpm / rateLimits.schema.rpm_limit) >= 0.80 ? "bg-amber-500" : "bg-[#0052CC]"}`} style={{ width: `${Math.min((rateLimits.schema.rpm / rateLimits.schema.rpm_limit) * 100, 100)}%` }} /></div>
+                  </div>
+                  <div>
+                    <div className="flex justify-between text-[11px] text-muted-foreground"><span>ITPM</span><span>{(rateLimits.schema.itpm/1000).toFixed(0)}K / {(rateLimits.schema.itpm_limit/1000).toFixed(0)}K</span></div>
+                    <div className="h-1.5 rounded-full bg-muted overflow-hidden mt-0.5"><div className={`h-full ${(rateLimits.schema.itpm / rateLimits.schema.itpm_limit) >= 0.80 ? "bg-amber-500" : "bg-[#0052CC]"}`} style={{ width: `${Math.min((rateLimits.schema.itpm / rateLimits.schema.itpm_limit) * 100, 100)}%` }} /></div>
+                  </div>
+                  <div>
+                    <div className="flex justify-between text-[11px] text-muted-foreground"><span>OTPM</span><span>{(rateLimits.schema.otpm/1000).toFixed(0)}K / {(rateLimits.schema.otpm_limit/1000).toFixed(0)}K</span></div>
+                    <div className="h-1.5 rounded-full bg-muted overflow-hidden mt-0.5"><div className={`h-full ${(rateLimits.schema.otpm / rateLimits.schema.otpm_limit) >= 0.80 ? "bg-amber-500" : "bg-[#0052CC]"}`} style={{ width: `${Math.min((rateLimits.schema.otpm / rateLimits.schema.otpm_limit) * 100, 100)}%` }} /></div>
+                  </div>
+                </div>
+              </div>
+            )}
+            {rateLimits.nota?.rpm_limit > 0 && (
+              <div className="rounded-xl border border-border bg-card p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-sm font-medium text-foreground">Nota</div>
+                  <div className="text-[11px] text-muted-foreground">{rateLimits.plan.toUpperCase()}</div>
+                </div>
+                <div className="space-y-2">
+                  <div>
+                    <div className="flex justify-between text-[11px] text-muted-foreground"><span>RPM</span><span>{rateLimits.nota.rpm} / {rateLimits.nota.rpm_limit}</span></div>
+                    <div className="h-1.5 rounded-full bg-muted overflow-hidden mt-0.5"><div className={`h-full ${(rateLimits.nota.rpm / rateLimits.nota.rpm_limit) >= 0.80 ? "bg-amber-500" : "bg-[#36B37E]"}`} style={{ width: `${Math.min((rateLimits.nota.rpm / rateLimits.nota.rpm_limit) * 100, 100)}%` }} /></div>
+                  </div>
+                  <div>
+                    <div className="flex justify-between text-[11px] text-muted-foreground"><span>ITPM</span><span>{(rateLimits.nota.itpm/1000).toFixed(0)}K / {(rateLimits.nota.itpm_limit/1000).toFixed(0)}K</span></div>
+                    <div className="h-1.5 rounded-full bg-muted overflow-hidden mt-0.5"><div className={`h-full ${(rateLimits.nota.itpm / rateLimits.nota.itpm_limit) >= 0.80 ? "bg-amber-500" : "bg-[#36B37E]"}`} style={{ width: `${Math.min((rateLimits.nota.itpm / rateLimits.nota.itpm_limit) * 100, 100)}%` }} /></div>
+                  </div>
+                  <div>
+                    <div className="flex justify-between text-[11px] text-muted-foreground"><span>OTPM</span><span>{(rateLimits.nota.otpm/1000).toFixed(0)}K / {(rateLimits.nota.otpm_limit/1000).toFixed(0)}K</span></div>
+                    <div className="h-1.5 rounded-full bg-muted overflow-hidden mt-0.5"><div className={`h-full ${(rateLimits.nota.otpm / rateLimits.nota.otpm_limit) >= 0.80 ? "bg-amber-500" : "bg-[#36B37E]"}`} style={{ width: `${Math.min((rateLimits.nota.otpm / rateLimits.nota.otpm_limit) * 100, 100)}%` }} /></div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Credits & Storage Overview */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Monthly Credits */}
@@ -497,8 +606,8 @@ export default function UsagePage() {
               <div>
                 <p className="text-sm text-muted-foreground">Monthly Credits</p>
                 <p className="text-2xl font-semibold text-foreground mt-1">
-                  {quota?.plan === "alpha_unlimited" ? "\u221e" : (quota?.credits_used || 0).toFixed(1)}
-                  {quota?.plan !== "alpha_unlimited" && <span className="text-sm font-normal text-muted-foreground"> / {quota?.credits_total || 5}</span>}
+                  {quota?.plan === "beta_unlimited" ? "\u221e" : (quota?.credits_used || 0).toFixed(1)}
+                  {quota?.plan !== "beta_unlimited" && <span className="text-sm font-normal text-muted-foreground"> / {quota?.credits_total || 5}</span>}
                 </p>
                 <p className="text-xs text-muted-foreground">{(quota?.credits_used || 0).toFixed(2)} credits used</p>
               </div>
@@ -508,9 +617,9 @@ export default function UsagePage() {
             </div>
             <div className="mt-3">
               <div className="h-2 rounded-full bg-muted overflow-hidden">
-                <div className="h-full bg-[#0052CC] rounded-full" style={{ width: quota?.plan === "alpha_unlimited" ? "5%" : `${Math.min(((quota?.credits_used || 0) / (quota?.credits_total || 5)) * 100, 100)}%` }} />
+                <div className="h-full bg-[#0052CC] rounded-full" style={{ width: quota?.plan === "beta_unlimited" ? "5%" : `${Math.min(((quota?.credits_used || 0) / (quota?.credits_total || 5)) * 100, 100)}%` }} />
               </div>
-              <p className="text-xs text-muted-foreground mt-1">{quota?.plan === "alpha_unlimited" ? "Unlimited" : `${Math.min(100, Math.round(((quota?.credits_used || 0) / (quota?.credits_total || 5)) * 100))}% used`} · Resets in {quota?.days_until_reset || 0} days · {totalTokens >= 1000000 ? (totalTokens/1000000).toFixed(1)+"M" : totalTokens >= 1000 ? (totalTokens/1000).toFixed(1)+"K" : totalTokens} tokens</p>
+              <p className="text-xs text-muted-foreground mt-1">{quota?.plan === "beta_unlimited" ? "Unlimited" : `${Math.min(100, Math.round(((quota?.credits_used || 0) / (quota?.credits_total || 5)) * 100))}% used`} · Resets in {quota?.days_until_reset || 0} days · {totalTokens >= 1000000 ? (totalTokens/1000000).toFixed(1)+"M" : totalTokens >= 1000 ? (totalTokens/1000).toFixed(1)+"K" : totalTokens} tokens</p>
             </div>
           </CardContent>
         </Card>
@@ -523,7 +632,7 @@ export default function UsagePage() {
                 <p className="text-sm text-muted-foreground">Models Built</p>
                 <p className="text-2xl font-semibold text-foreground mt-1">
                   {quota?.models_used || 0}
-                  {quota?.plan !== "alpha_unlimited" && <span className="text-sm font-normal text-muted-foreground"> / {quota?.models_limit || 5}</span>}
+                  {quota?.plan !== "beta_unlimited" && <span className="text-sm font-normal text-muted-foreground"> / {quota?.models_limit || 5}</span>}
                 </p>
               </div>
               <div className="h-10 w-10 rounded-full bg-green-500/10 flex items-center justify-center">
@@ -532,9 +641,9 @@ export default function UsagePage() {
             </div>
             <div className="mt-3">
               <div className="h-2 rounded-full bg-muted overflow-hidden">
-                <div className="h-full bg-green-500 rounded-full" style={{ width: quota?.plan === "alpha_unlimited" ? "5%" : `${Math.min(((quota?.models_used || 0) / (quota?.models_limit || 5)) * 100, 100)}%` }} />
+                <div className="h-full bg-green-500 rounded-full" style={{ width: quota?.plan === "beta_unlimited" ? "5%" : `${Math.min(((quota?.models_used || 0) / (quota?.models_limit || 5)) * 100, 100)}%` }} />
               </div>
-              <p className="text-xs text-muted-foreground mt-1">{quota?.plan === "alpha_unlimited" ? "Unlimited" : `${Math.max(0, (quota?.models_limit || 5) - (quota?.models_used || 0))} remaining`}</p>
+              <p className="text-xs text-muted-foreground mt-1">{quota?.plan === "beta_unlimited" ? "Unlimited" : `${Math.max(0, (quota?.models_limit || 5) - (quota?.models_used || 0))} remaining`}</p>
             </div>
           </CardContent>
         </Card>
@@ -585,7 +694,7 @@ export default function UsagePage() {
                 <p className="text-sm text-muted-foreground">Queries Today</p>
                 <p className="text-2xl font-semibold text-foreground mt-1">
                   {quota?.queries_used || 0}
-                  {quota?.plan !== "alpha_unlimited" && <span className="text-sm font-normal text-muted-foreground"> / {quota?.queries_daily || 10}</span>}
+                  {quota?.plan !== "beta_unlimited" && <span className="text-sm font-normal text-muted-foreground"> / {quota?.queries_daily || 10}</span>}
                 </p>
               </div>
               <div className="h-10 w-10 rounded-full bg-orange-500/10 flex items-center justify-center">
@@ -594,9 +703,9 @@ export default function UsagePage() {
             </div>
             <div className="mt-3">
               <div className="h-2 rounded-full bg-muted overflow-hidden">
-                <div className="h-full bg-orange-500 rounded-full" style={{ width: quota?.plan === "alpha_unlimited" ? "5%" : `${Math.min(((quota?.queries_used || 0) / (quota?.queries_daily || 10)) * 100, 100)}%` }} />
+                <div className="h-full bg-orange-500 rounded-full" style={{ width: quota?.plan === "beta_unlimited" ? "5%" : `${Math.min(((quota?.queries_used || 0) / (quota?.queries_daily || 10)) * 100, 100)}%` }} />
               </div>
-              <p className="text-xs text-muted-foreground mt-1">{quota?.plan === "alpha_unlimited" ? "Unlimited" : `${Math.max(0, (quota?.queries_daily || 10) - (quota?.queries_used || 0))} remaining today`}</p>
+              <p className="text-xs text-muted-foreground mt-1">{quota?.plan === "beta_unlimited" ? "Unlimited" : `${Math.max(0, (quota?.queries_daily || 10) - (quota?.queries_used || 0))} remaining today`}</p>
             </div>
           </CardContent>
         </Card>

@@ -241,13 +241,25 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
             api_key: connection.config?.authToken || connection.config?.apiKey || "",
             bucket: connection.config?.bucket || connection.config?.endpoint || "",
             region: connection.config?.region || "",
-            ssl: connection.config?.ssl || false,
+            ssl: (connection.config?.ssl as unknown) === true || (connection.config?.ssl as unknown) === "true",
           }),
         })
+        if (!createRes.ok) {
+          const errText = await createRes.text().catch(() => createRes.statusText)
+          toast.error("Connection failed: " + errText)
+          setIsLoadingTables(false)
+          return
+        }
         const createData = await createRes.json()
         if (createData.id) {
           setConnectionId(createData.id)
           const tablesRes = await fetch(`/api/connections/tables?connection_id=${createData.id}`, { credentials: "include" })
+          if (!tablesRes.ok) {
+            const errText = await tablesRes.text().catch(() => tablesRes.statusText)
+            toast.error("Failed to load tables: " + errText)
+            setIsLoadingTables(false)
+            return
+          }
           const tablesData = await tablesRes.json()
           const tables = tablesData.table_details || tablesData.tables?.map((t: string) => ({ name: t, rows: 0, columns: 0 })) || []
           if (tables.length > 0) {
@@ -270,7 +282,7 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
     // Non-multi-table: create here too
     setIsLoadingTables(true)
     try {
-      await fetch("/api/connections/create", {
+      const nonMultiRes = await fetch("/api/connections/create", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -287,10 +299,16 @@ export function ConnectModal({ open, onOpenChange, onConnect }: ConnectModalProp
           api_key: connection.config?.authToken || connection.config?.apiKey || "",
           bucket: connection.config?.bucket || "",
           region: connection.config?.region || "",
-          ssl: connection.config?.ssl || false,
+          ssl: (connection.config?.ssl as unknown) === true || (connection.config?.ssl as unknown) === "true",
         }),
       })
-    } catch {}
+      if (!nonMultiRes.ok) {
+        const errText = await nonMultiRes.text().catch(() => nonMultiRes.statusText)
+        toast.error("Connection failed: " + errText)
+        setIsLoadingTables(false)
+        return
+      }
+    } catch (e) { console.error("create failed", e) }
     setIsLoadingTables(false)
     onConnect?.({ type: "skip", name: "", config: {} } as any)
     handleClose()

@@ -51,6 +51,14 @@ predErrors = append(predErrors, reason)
 if ok, reason := CheckCredits(userID, 0.05); !ok {
 predErrors = append(predErrors, reason)
 }
+estInRows := len(req.Values)
+estInCols := 0
+if estInRows > 0 {
+estInCols = len(req.Values[0])
+}
+if ok, reason := CheckRateLimit(userID, RateLimitSchema, int64(estInRows*estInCols), int64(estInRows)); !ok {
+predErrors = append(predErrors, reason)
+}
 if len(predErrors) > 0 {
 w.Header().Set("Content-Type", "application/json")
 w.WriteHeader(http.StatusForbidden)
@@ -95,17 +103,20 @@ return
 	InferenceRequestsTotal.WithLabelValues("success").Inc()
 	InferenceDuration.Observe(time.Since(predictStart).Seconds())
 
-	// Deduct credits and log usage
 	userID = r.Header.Get("X-User-ID")
 	if userID != "" && DB != nil {
-		var quota UserQuota
-		if DB.Where("user_id = ?", userID).First(&quota).Error == nil {
-			quota.CreditsUsed += 0.05
-			DB.Save(&quota)
+		rows := len(req.Values)
+		cols := 0
+		if rows > 0 {
+			cols = len(req.Values[0])
+		}
+		outputRows := rows
+		if err := TrackSchemaCall(userID, rows, cols, outputRows, getBaseModelVersion(), false); err != nil {
+			log.Printf("[PREDICT] TrackSchemaCall failed for user %s: %v", userID, err)
 		}
 		DB.Create(&UsageLog{
 			ID: uuid.New().String(), UserID: userID, EventType: "predict", EventName: "Prediction",
-			CreditsUsed: 0.05, ModelUsed: "schema-v0", CreatedAt: time.Now(),
+			CreditsUsed: 0, ModelUsed: getBaseModelID(), CreatedAt: time.Now(),
 		})
 	}
 }

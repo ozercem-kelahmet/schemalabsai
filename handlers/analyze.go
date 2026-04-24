@@ -1,7 +1,8 @@
 package handlers
 
 import (
-"strings"
+"log"
+	"strings"
 	"bytes"
 	"encoding/json"
 	"io"
@@ -42,6 +43,9 @@ analyzeErrors = append(analyzeErrors, reason)
 if ok, reason := CheckCredits(userID, 0.10); !ok {
 analyzeErrors = append(analyzeErrors, reason)
 }
+if ok, reason := CheckRateLimit(userID, RateLimitNota, 0, 0); !ok {
+analyzeErrors = append(analyzeErrors, reason)
+}
 if len(analyzeErrors) > 0 {
 w.Header().Set("Content-Type", "application/json")
 w.WriteHeader(http.StatusForbidden)
@@ -72,7 +76,7 @@ return
 
 	// Query ve model_id ekle
 	writer.WriteField("query", query)
-	writer.WriteField("model_id", "schema-v0")
+	writer.WriteField("model_id", getBaseModelID())
 	writer.WriteField("user_id", userID)
 
 	writer.Close()
@@ -104,7 +108,7 @@ return
 		}
 		DB.Create(&UsageLog{
 			ID: uuid.New().String(), UserID: userID, EventType: "analyze", EventName: "Data Analysis",
-			CreditsUsed: 0.10, ModelUsed: "schema-v0", CreatedAt: time.Now(),
+			CreditsUsed: 0.10, ModelUsed: getBaseModelID(), CreatedAt: time.Now(),
 		})
 	}
 }
@@ -172,7 +176,7 @@ func AnalyzeEndpointHandler(w http.ResponseWriter, r *http.Request) {
 	part, _ := mw.CreateFormFile("file", header.Filename)
 	io.Copy(part, file)
 	mw.WriteField("query", query)
-	mw.WriteField("model_id", "schema-v0")
+	mw.WriteField("model_id", getBaseModelID())
 	mw.WriteField("user_id", endpoint.UserID)
 	if endpoint.VerticalConfigID != "" {
 		mw.WriteField("vertical_config_id", endpoint.VerticalConfigID)
@@ -235,17 +239,31 @@ func AnalyzeEndpointHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
 
-	// Credits
+	// Token-based tracking via TrackSchemaCall (doc §2.1 Endpoint pricing)
 	if DB != nil {
-		var quota UserQuota
-		if DB.Where("user_id = ?", key.UserID).First(&quota).Error == nil {
-			quota.CreditsUsed += 0.10
-			DB.Save(&quota)
+		rows := 1
+		cols := 0
+		if metaRows, ok := flaskResponse["rows"].(float64); ok {
+			rows = int(metaRows)
+		}
+		if metaCols, ok := flaskResponse["cols"].(float64); ok {
+			cols = int(metaCols)
+		}
+		outputRows := rows
+		if preds, ok := flaskResponse["predictions"].([]interface{}); ok {
+			outputRows = len(preds)
+		}
+		version := getBaseModelVersion()
+		if mv, ok := flaskResponse["model_version"].(string); ok && strings.Contains(mv, "v1") {
+			version = "v1"
+		}
+		if err := TrackSchemaCall(key.UserID, rows, cols, outputRows, version, true); err != nil {
+			log.Printf("[ANALYZE_ENDPOINT] TrackSchemaCall failed for user %s: %v", key.UserID, err)
 		}
 		DB.Create(&UsageLog{
 			ID: uuid.New().String(), UserID: key.UserID, EventType: "analyze_endpoint",
-			EventName: "Analyze Endpoint: " + endpoint.Name, CreditsUsed: 0.10,
-			ModelUsed: "schema-v0", CreatedAt: time.Now(),
+			EventName: "Analyze Endpoint: " + endpoint.Name,
+			ResourceID: endpoint.ID, ModelUsed: getBaseModelID(), CreatedAt: time.Now(),
 		})
 	}
 }

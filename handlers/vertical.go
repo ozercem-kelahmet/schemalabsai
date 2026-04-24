@@ -54,6 +54,7 @@ type LLMSecret struct {
 	Provider       string    `json:"provider"`
 	SecretName     string    `json:"secret_name"`
 	EncryptedValue string    `json:"encrypted_value" gorm:"type:text"`
+	SelectedModels string    `json:"-" gorm:"column:selected_models;type:text"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }

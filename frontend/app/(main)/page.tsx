@@ -143,24 +143,28 @@ export default function DashboardPage() {
       <Card className="border-[#0052CC]/20 bg-gradient-to-br from-[#0052CC]/10 to-transparent">
         <CardContent className="p-6">
           <h3 className="text-lg font-semibold text-foreground">Getting Started with Schema</h3>
-          <p className="mt-2 text-sm text-muted-foreground">Build your first AI model in four simple steps</p>
-          <div className="mt-4 grid gap-4 md:grid-cols-4">
-            <div className="flex gap-3">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#0052CC]/20 font-mono text-sm font-bold text-[#2684FF]">1</div>
-              <div><p className="font-medium text-foreground">Connect Data</p><p className="text-sm text-muted-foreground">Link multiple data sources</p></div>
-            </div>
-            <div className="flex gap-3">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#0052CC]/20 font-mono text-sm font-bold text-[#2684FF]">2</div>
-              <div><p className="font-medium text-foreground">Build Model</p><p className="text-sm text-muted-foreground">Configure AI capabilities</p></div>
-            </div>
-            <div className="flex gap-3">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#0052CC]/20 font-mono text-sm font-bold text-[#2684FF]">3</div>
-              <div><p className="font-medium text-foreground">Evaluate & Chat</p><p className="text-sm text-muted-foreground">Test in the playground</p></div>
-            </div>
-            <div className="flex gap-3">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#0052CC]/20 font-mono text-sm font-bold text-[#2684FF]">4</div>
-              <div><p className="font-medium text-foreground">Deploy</p><p className="text-sm text-muted-foreground">Ship to production via API</p></div>
-            </div>
+          <p className="mt-2 text-sm text-muted-foreground">Build your first AI model in five simple steps</p>
+          <div className="mt-4 grid gap-4 md:grid-cols-5">
+            <Link href="/datasets" className="flex gap-3 group cursor-pointer">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#0052CC]/20 font-mono text-sm font-bold text-[#2684FF] group-hover:bg-[#0052CC]/30 transition-colors">1</div>
+              <div><p className="font-medium text-foreground group-hover:text-[#2684FF] transition-colors">Connect Data</p><p className="text-sm text-muted-foreground">Link multiple data sources</p></div>
+            </Link>
+            <Link href="/build" className="flex gap-3 group cursor-pointer">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#0052CC]/20 font-mono text-sm font-bold text-[#2684FF] group-hover:bg-[#0052CC]/30 transition-colors">2</div>
+              <div><p className="font-medium text-foreground group-hover:text-[#2684FF] transition-colors">Build Model</p><p className="text-sm text-muted-foreground">Configure AI capabilities</p></div>
+            </Link>
+            <Link href="/models" className="flex gap-3 group cursor-pointer">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#0052CC]/20 font-mono text-sm font-bold text-[#2684FF] group-hover:bg-[#0052CC]/30 transition-colors">3</div>
+              <div><p className="font-medium text-foreground group-hover:text-[#2684FF] transition-colors">Enhance Model</p><p className="text-sm text-muted-foreground">Add agents & tools</p></div>
+            </Link>
+            <Link href="/playground" className="flex gap-3 group cursor-pointer">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#0052CC]/20 font-mono text-sm font-bold text-[#2684FF] group-hover:bg-[#0052CC]/30 transition-colors">4</div>
+              <div><p className="font-medium text-foreground group-hover:text-[#2684FF] transition-colors">Evaluate & Chat</p><p className="text-sm text-muted-foreground">Test in playground</p></div>
+            </Link>
+            <Link href="/configuration" className="flex gap-3 group cursor-pointer">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#0052CC]/20 font-mono text-sm font-bold text-[#2684FF] group-hover:bg-[#0052CC]/30 transition-colors">5</div>
+              <div><p className="font-medium text-foreground group-hover:text-[#2684FF] transition-colors">Deploy</p><p className="text-sm text-muted-foreground">Ship to production</p></div>
+            </Link>
           </div>
         </CardContent>
       </Card>

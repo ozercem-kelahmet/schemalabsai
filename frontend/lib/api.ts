@@ -70,22 +70,22 @@ export const api = {
     return res.json()
   },
 
-  train: async (fileId: string, filename: string, epochs: number = 5, batchSize: number = 64, targetColumn?: string) => {
+  train: async (fileId: string, filename: string, epochs: number = 5, batchSize: number = 64, targetColumn?: string, baseModel?: string) => {
     const res = await fetch(API_BASE + '/api/train', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file_id: fileId, filename, epochs, batch_size: batchSize, target_column: targetColumn })
+      body: JSON.stringify({ file_id: fileId, filename, epochs, batch_size: batchSize, target_column: targetColumn, base_model: baseModel })
     })
     return res.json()
   },
 
-  multiTrain: async (fileIds: string[], modelName: string, epochs: number = 5, batchSize: number = 64, learningRate: number = 0.001, warmupSteps: number = 100, queryId?: string, syncMode?: string, scheduleCron?: string, scheduleDesc?: string, connectionIds?: string, selectedTables?: string) => {
+  multiTrain: async (fileIds: string[], modelName: string, epochs: number = 5, batchSize: number = 64, learningRate: number = 0.001, warmupSteps: number = 100, queryId?: string, syncMode?: string, scheduleCron?: string, scheduleDesc?: string, connectionIds?: string, selectedTables?: string, baseModel?: string) => {
     const res = await fetch(API_BASE + '/api/train/multi', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file_ids: fileIds, model_name: modelName, epochs, batch_size: batchSize, learning_rate: learningRate, warmup_steps: warmupSteps, query_id: queryId, sync_mode: syncMode || "manual", schedule_cron: scheduleCron || "", schedule_desc: scheduleDesc || "", connection_ids: connectionIds || "", selected_tables: selectedTables || "" })
+      body: JSON.stringify({ file_ids: fileIds, model_name: modelName, epochs, batch_size: batchSize, learning_rate: learningRate, warmup_steps: warmupSteps, query_id: queryId, sync_mode: syncMode || "manual", schedule_cron: scheduleCron || "", schedule_desc: scheduleDesc || "", connection_ids: connectionIds || "", selected_tables: selectedTables || "", base_model: baseModel })
     })
     return res.json()
   },

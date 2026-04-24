@@ -79,9 +79,14 @@ func SSEHandler(w http.ResponseWriter, r *http.Request) {
 
 	defer func() {
 		sseClientsMu.Lock()
-		delete(sseClients, key)
+		if sseClients[key] == client {
+			delete(sseClients, key)
+		}
 		sseClientsMu.Unlock()
-		close(client.ch)
+		func() {
+			defer func() { recover() }()
+			close(client.ch)
+		}()
 		log.Printf("[SSE] Client disconnected: %s", key)
 	}()
 

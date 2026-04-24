@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react"
 import { toast } from "sonner"
+import { useSidebar } from "@/components/layout/sidebar"
 import { useSearchParams, useRouter } from "next/navigation"
 import { ConfigStep } from "@/components/build/config-step"
 import { TrainingStep } from "@/components/build/training-step"
@@ -20,7 +21,10 @@ const steps = [
 ]
 
 export function BuildWizard() {
+  const { buildingJobs } = useSidebar()
+
   const searchParams = useSearchParams()
+  const currentQid = searchParams.get("qid")
   const router = useRouter()
 
   const [selectedDatasets, setSelectedDatasets] = useState<Dataset[]>([])
@@ -31,7 +35,7 @@ export function BuildWizard() {
   const [scheduleCron, setScheduleCron] = useState("")
   const [scheduleDesc, setScheduleDesc] = useState("")
   const [connectionIDs, setConnectionIDs] = useState("")
-  const [baseModel, setBaseModel] = useState<string>("schema-v0")
+  const [baseModel, setBaseModel] = useState<string>(process.env.NEXT_PUBLIC_BASE_MODEL || "schema-v1")
 
   const [trainingStatus, setTrainingStatus] = useState<TrainingStatus>("initializing")
   const [trainingError, setTrainingError] = useState<string>("")
@@ -45,6 +49,8 @@ export function BuildWizard() {
   const [builtModel, setBuiltModel] = useState<Model | null>(null)
   
   const [totalEpochs, setTotalEpochs] = useState(0)
+  const [existingModelNames, setExistingModelNames] = useState<string[]>([])
+  const [modelNameError, setModelNameError] = useState<string>("")
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
   const trainingQueryIdRef = useRef<string>("")
   const timerRef = useRef<NodeJS.Timeout | null>(null)
@@ -74,13 +80,23 @@ export function BuildWizard() {
             const status = data.status || "training"
 
             if (status === "completed") {
-              pollProgress() // Tamamlandığında Redis'ten tam veriyi al
+              api.getTrainingProgress(queryId).then((progress) => {
+                if (progress.status === "completed") {
+                  const acc = (progress.accuracy > 1 ? progress.accuracy / 100 : progress.accuracy) || 0
+                  setEvalMetrics({ accuracy: acc, precision: progress.precision || acc * 0.98, recall: progress.recall || acc * 0.97, f1Score: progress.f1_score || acc * 0.975 })
+                  const mid = progress.model_id || queryId
+                  setBuiltModel({ id: mid, modelId: mid, name: progress.model_name || modelName || "", description: "", datasets: [], syncMode, baseModel, accuracy: acc, createdAt: progress.start_time ? new Date(progress.start_time * 1000) : new Date(), updatedAt: new Date(), status: "completed", apiRequests: 0, tokensUsed: 0 })
+                  if (progress.start_time) setElapsedTime(Math.max(0, Math.floor(Date.now() / 1000 - progress.start_time)))
+                  completedByPollingRef.current = true
+                  setCurrentStep("evaluate")
+                }
+              }).catch(() => {})
               return
             }
 
             // İlk SSE event'inde polling'i de bir kez tetikle (UI state sync için)
             if (epoch <= 2) {
-              pollProgress()
+              api.getTrainingProgress(queryId).catch(() => {})
             }
 
             setTotalEpochs(prev => Math.max(prev, epochs))
@@ -114,101 +130,119 @@ export function BuildWizard() {
   }
 
 
+  // Fetch existing model names on mount for validation
+  useEffect(() => {
+    const fetchModelNames = async () => {
+      try {
+        const res = await fetch("/api/models/finetuned", { credentials: "include" })
+        if (res.ok) {
+          const data = await res.json()
+          const names = (data.models || []).map((m: any) => m.name.toLowerCase().trim())
+          setExistingModelNames(names)
+        }
+      } catch (e) { console.error("Failed to fetch model names", e) }
+    }
+    fetchModelNames()
+  }, [])
+
+  // Validate model name when it changes
+  useEffect(() => {
+    if (!modelName.trim()) {
+      setModelNameError("")
+      return
+    }
+    const nameLower = modelName.toLowerCase().trim()
+    if (existingModelNames.includes(nameLower)) {
+      setModelNameError("A model with this name already exists. Please choose a different name.")
+    } else {
+      setModelNameError("")
+    }
+  }, [modelName, existingModelNames])
+
   // Check for ongoing training on mount (e.g. after page refresh)
   useEffect(() => {
     const checkOngoingTraining = async () => {
       try {
         const urlQid = new URLSearchParams(window.location.search).get("qid")
-        const savedQueryId = urlQid || sessionStorage.getItem("trainingQueryId")
-        if (savedQueryId) { trainingQueryIdRef.current = savedQueryId }
-        const url = savedQueryId ? "/api/train/progress?query_id=" + savedQueryId : "/api/train/progress"
-        const res = await fetch(url, { credentials: "include" })
+        if (!urlQid) return
+        trainingQueryIdRef.current = urlQid
+        const savedInitLogs = sessionStorage.getItem("trainingInitLogs")
+        const res = await fetch("/api/train/progress?query_id=" + urlQid, { credentials: "include" })
         const progress = await res.json()
         if (progress.status === "failed") {
-          stopPolling()
-          trainingStartedRef.current = false
-          setTrainingError(progress.error || "An error occurred during training.")
+          setCurrentStep("training")
           setTrainingStatus("failed")
+          setTrainingError(progress.error || "An error occurred during training.")
+          if (progress.model_name) setModelName(progress.model_name)
           addLog("Training failed: " + (progress.error || "Unknown error"))
-          toast.error("Training Failed", { description: progress.error || "An error occurred during training.", duration: 10000 })
           return
         }
-        if (progress.status === "training" && (progress.model_id || progress.epoch > 0)) {
-          // Stale check: 5dk + epoch=0 = dead training
-          const _st = progress.start_time || 0
-          const _el = _st > 0 ? Math.floor(Date.now() / 1000 - _st) : 0
-          if (_el > 300 && progress.epoch === 0) {
-            console.log("Stale training detected (>5min, epoch=0)")
-            localStorage.removeItem("trainingMetricsHistory")
-            localStorage.removeItem("trainingLogs")
-            localStorage.removeItem("trainingCurrentMetrics")
-            localStorage.removeItem("trainingTotalEpochs")
-            localStorage.removeItem("trainingStartTime")
-            return
-          }
-          // Stale check: start_time 5dk'dan eski ve epoch hala 0 ise stale
-          const startTime = progress.start_time || 0
-          const elapsed = startTime > 0 ? Math.floor(Date.now() / 1000 - startTime) : 0
-          if (elapsed > 300 && progress.epoch === 0) {
-            console.log("Stale training detected (>5min, epoch=0), ignoring")
-            localStorage.removeItem("trainingMetricsHistory")
-            localStorage.removeItem("trainingLogs")
-            localStorage.removeItem("trainingCurrentMetrics")
-            localStorage.removeItem("trainingTotalEpochs")
-            localStorage.removeItem("trainingStartTime")
-            return
-          }
-          trainingStartedRef.current = true
-          // Restore history from Redis data for charts after refresh
-          if (progress.history && progress.history.length > 0) {
-            const restored = progress.history.map((h: any) => ({
-              epoch: h.epoch,
-              totalEpochs: progress.epochs || h.epoch + 1,
-              loss: h.loss || 0,
-              accuracy: (h.accuracy > 1 ? h.accuracy / 100 : h.accuracy) || 0,
-              learningRate: progress?.learning_rate || 0.001,
+        if (progress.status === "completed") {
+          completedByPollingRef.current = true
+          const acc = (progress.accuracy > 1 ? progress.accuracy / 100 : progress.accuracy) || 0
+          setEvalMetrics({
+            accuracy: acc,
+            precision: progress.precision || acc * 0.98,
+            recall: progress.recall || acc * 0.97,
+            f1Score: progress.f1_score || acc * 0.975,
+          })
+          setBuiltModel({
+            id: progress.model_id || urlQid,
+            modelId: progress.model_id || urlQid,
+            name: progress.model_name || modelName || "",
+            description: "", datasets: [],
+            syncMode, baseModel,
+            accuracy: acc,
+            createdAt: progress.start_time ? new Date(progress.start_time * 1000) : new Date(),
+            updatedAt: new Date(),
+            status: "completed", apiRequests: 0, tokensUsed: 0,
+          })
+          if (progress.start_time) setElapsedTime(Math.max(0, Math.floor(Date.now() / 1000 - progress.start_time)))
+          if (progress.model_name) setModelName(progress.model_name)
+          if (progress.history && Array.isArray(progress.history)) {
+            const hist = progress.history.map((h: any) => ({
+              epoch: h.epoch, totalEpochs: progress.epochs || h.epoch,
+              loss: h.loss || 0, accuracy: (h.accuracy > 1 ? h.accuracy / 100 : h.accuracy) || 0,
+              learningRate: progress.learning_rate || 0.001,
             }))
-            setMetricsHistory(restored)
-            restored.forEach((m: any) => {
-              addLog(`Epoch ${m.epoch}/${m.totalEpochs} - Loss: ${m.loss.toFixed(4)}, Accuracy: ${(m.accuracy * 100).toFixed(1)}%`)
-            })
+            setMetricsHistory(hist)
           }
-          // Restore metrics from localStorage FIRST to avoid flash
-          const savedM = localStorage.getItem("trainingCurrentMetrics")
-          if (savedM) {
-            try { setCurrentMetrics(JSON.parse(savedM)) } catch(e) {}
-          }
-          const savedTE = localStorage.getItem("trainingTotalEpochs")
-          // totalEpochs localStorage restore disabled - causes 0 of 5 issue
-          const savedST = localStorage.getItem("trainingStartTime")
-          if (savedST) {
-            const el = Math.floor((Date.now() - parseInt(savedST)) / 1000)
-            if (el > 0 && el < 86400) setElapsedTime(el)
-          }
-          // Then set server values (will override if newer)
+          setCurrentStep("evaluate")
+          return
+        }
+        if (progress.status === "training" || progress.status === "initializing") {
+          const st = progress.start_time || 0
+          const el = st > 0 ? Math.floor(Date.now() / 1000 - st) : 0
+          if (el > 300 && progress.epoch === 0) return
+          trainingStartedRef.current = true
           setCurrentStep("training")
           setTrainingStatus("training")
+          if (savedInitLogs) {
+            try { setLogs(JSON.parse(savedInitLogs)) } catch {}
+          } else if (progress.init_logs && Array.isArray(progress.init_logs)) {
+            const ts = new Date().toLocaleTimeString("en-US", { hour12: false })
+            setLogs(progress.init_logs.map((l: string) => l.startsWith("[") ? l : "[" + ts + "] " + l))
+          }
+          if (progress.history && progress.history.length > 0) {
+            const restored = progress.history.map((h: any) => ({
+              epoch: h.epoch, totalEpochs: progress.epochs || h.epoch + 1,
+              loss: h.loss || 0, accuracy: (h.accuracy > 1 ? h.accuracy / 100 : h.accuracy) || 0,
+              learningRate: progress.learning_rate || 0.001,
+            }))
+            setMetricsHistory(restored)
+            restored.forEach((rm: any) => addLog("Epoch " + rm.epoch + "/" + rm.totalEpochs + " - Loss: " + rm.loss.toFixed(4) + ", Accuracy: " + (rm.accuracy * 100).toFixed(1) + "%"))
+          }
           if (progress.model_name) setModelName(progress.model_name)
           if (progress.epochs) setTotalEpochs(progress.epochs)
           const acc = progress.accuracy > 1 ? progress.accuracy / 100 : progress.accuracy
-          setCurrentMetrics(prev => {
-            const serverMetrics = { epoch: progress.epoch, totalEpochs: progress.epochs || 0, loss: progress.loss || 0, accuracy: acc || 0, learningRate: progress?.learning_rate || 0.001 }
-            if (prev && prev.epoch > serverMetrics.epoch) return prev
-            return serverMetrics
-          })
+          setCurrentMetrics({ epoch: progress.epoch, totalEpochs: progress.epochs || 0, loss: progress.loss || 0, accuracy: acc || 0, learningRate: progress.learning_rate || 0.001 })
           if (progress.start_time) {
             const elapsed = Math.floor(Date.now() / 1000 - progress.start_time)
             if (elapsed > 0) setElapsedTime(elapsed)
           }
-        } else {
-          // No active training - clear stale localStorage
-          localStorage.removeItem("trainingMetricsHistory")
-          localStorage.removeItem("trainingLogs")
-          localStorage.removeItem("trainingCurrentMetrics")
-          localStorage.removeItem("trainingTotalEpochs")
-          localStorage.removeItem("trainingStartTime")
         }
       } catch (e) {
+        console.error("[checkOngoingTraining]", e)
       }
     }
     checkOngoingTraining()
@@ -216,41 +250,99 @@ export function BuildWizard() {
 
   // localStorage restore removed - checkOngoingTraining handles it
 
-  // Save metrics history to localStorage when it changes
   useEffect(() => {
-    if (metricsHistory.length > 0) {
-      localStorage.setItem("trainingMetricsHistory", JSON.stringify(metricsHistory))
+    if (!currentQid) return
+    if (trainingQueryIdRef.current === currentQid) return
+    if (sseRef.current) { sseRef.current.close(); sseRef.current = null }
+    if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null }
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
+    setMetricsHistory([])
+    setCurrentMetrics(null)
+    setLogs([])
+    setEvalMetrics(null)
+    setBuiltModel(null)
+    setTrainingError("")
+    setElapsedTime(0)
+    setIsPaused(false)
+    completedByPollingRef.current = false
+    trainCancelledRef.current = false
+    trainingQueryIdRef.current = currentQid
+    trainingStartedRef.current = true
+    const loadTraining = async () => {
+      try {
+        const res = await fetch("/api/train/progress?query_id=" + currentQid, { credentials: "include" })
+        const progress = await res.json()
+        if (progress.status === "completed") {
+          completedByPollingRef.current = true
+          const acc = (progress.accuracy > 1 ? progress.accuracy / 100 : progress.accuracy) || 0
+          setEvalMetrics({ accuracy: acc, precision: progress.precision || acc * 0.98, recall: progress.recall || acc * 0.97, f1Score: progress.f1_score || acc * 0.975 })
+          setBuiltModel({ id: progress.model_id || currentQid, modelId: progress.model_id || currentQid, name: progress.model_name || modelName || "", description: "", datasets: [], syncMode, baseModel, accuracy: acc, createdAt: progress.start_time ? new Date(progress.start_time * 1000) : new Date(), updatedAt: new Date(), status: "completed", apiRequests: 0, tokensUsed: 0 })
+          if (progress.start_time) setElapsedTime(Math.max(0, Math.floor(Date.now() / 1000 - progress.start_time)))
+          if (progress.history && Array.isArray(progress.history)) {
+            setMetricsHistory(progress.history.map((h: any) => ({ epoch: h.epoch, totalEpochs: progress.epochs || h.epoch, loss: h.loss || 0, accuracy: (h.accuracy > 1 ? h.accuracy / 100 : h.accuracy) || 0, learningRate: progress.learning_rate || 0.001 })))
+          }
+          setCurrentStep("evaluate")
+        } else if (progress.status === "failed") {
+          setCurrentStep("training")
+          setTrainingStatus("failed")
+          setTrainingError(progress.error || "An error occurred during training.")
+        } else if (progress.status === "training" || progress.status === "initializing") {
+          setCurrentStep("training")
+          setTrainingStatus("training")
+          if (progress.history && progress.history.length > 0) {
+            setMetricsHistory(progress.history.map((h: any) => ({ epoch: h.epoch, totalEpochs: progress.epochs || h.epoch + 1, loss: h.loss || 0, accuracy: (h.accuracy > 1 ? h.accuracy / 100 : h.accuracy) || 0, learningRate: progress.learning_rate || 0.001 })))
+          }
+          if (progress.start_time) setElapsedTime(Math.max(0, Math.floor(Date.now() / 1000 - progress.start_time)))
+          setCurrentMetrics({ epoch: progress.epoch, totalEpochs: progress.epochs || 0, loss: progress.loss || 0, accuracy: (progress.accuracy > 1 ? progress.accuracy / 100 : progress.accuracy) || 0, learningRate: progress.learning_rate || 0.001 })
+          connectSSE(currentQid)
+        }
+      } catch {}
     }
-  }, [metricsHistory])
+    loadTraining()
+  }, [currentQid])
 
-  // Save currentMetrics to localStorage
-  useEffect(() => {
-    if (currentMetrics && currentMetrics.epoch > 0) {
-      localStorage.setItem("trainingCurrentMetrics", JSON.stringify(currentMetrics))
-    }
-  }, [currentMetrics])
 
-  // Save totalEpochs
   useEffect(() => {
-    if (totalEpochs > 0) {
-      localStorage.setItem("trainingTotalEpochs", totalEpochs.toString())
+    if (currentStep !== "training") return
+    const qid = trainingQueryIdRef.current
+    if (!qid) return
+    const j = buildingJobs.find(b => b.id === qid || b.queryId === qid)
+    if (j && j.status === "completed") {
+      stopPolling()
+      completedByPollingRef.current = true
+      api.getTrainingProgress(qid).then((progress) => {
+        const acc = (progress.accuracy > 1 ? progress.accuracy / 100 : progress.accuracy) || 0
+        setEvalMetrics({
+          accuracy: acc,
+          precision: progress.precision || acc * 0.98,
+          recall: progress.recall || acc * 0.97,
+          f1Score: progress.f1_score || acc * 0.975,
+        })
+        const mid = progress.model_id || j.id
+        setBuiltModel({
+          id: mid, modelId: mid,
+          name: j.name || modelName || "Trained Model",
+          description: "", datasets: [],
+          syncMode, baseModel,
+          accuracy: acc,
+          createdAt: new Date(), updatedAt: new Date(),
+          status: "completed", apiRequests: 0, tokensUsed: 0,
+        })
+        if (progress.start_time) {
+          setElapsedTime(Math.max(0, Math.floor(Date.now() / 1000 - progress.start_time)))
+        }
+        setCurrentStep("evaluate")
+      }).catch(() => {})
     }
-  }, [totalEpochs])
-
-  // Save logs to localStorage when they change
-  useEffect(() => {
-    if (logs.length > 0) {
-      localStorage.setItem("trainingLogs", JSON.stringify(logs))
-    }
-  }, [logs])
+  }, [buildingJobs, currentStep])
 
   // Clear localStorage when training completes
   const clearTrainingStorage = () => {
-    localStorage.removeItem("trainingMetricsHistory")
-    localStorage.removeItem("trainingLogs")
-    localStorage.removeItem("trainingCurrentMetrics")
-    localStorage.removeItem("trainingTotalEpochs")
-    localStorage.removeItem("trainingStartTime")
+    
+    
+    
+    
+    
     sessionStorage.removeItem("trainingQueryId")
   }
 
@@ -277,6 +369,11 @@ export function BuildWizard() {
 
     if (!modelName.trim()) {
       toast.error("Model Name Required", { description: "Please enter a name for your model.", duration: 5000 })
+      return
+    }
+
+    if (modelNameError) {
+      toast.error("Model Name Not Available", { description: modelNameError, duration: 5000 })
       return
     }
 
@@ -314,6 +411,11 @@ export function BuildWizard() {
       const trainingQueryId = `train-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       trainingQueryIdRef.current = trainingQueryId
       sessionStorage.setItem("trainingQueryId", trainingQueryId)
+      const _active = JSON.parse(sessionStorage.getItem("activeTrainings") || "[]")
+      if (!_active.includes(trainingQueryId)) {
+        _active.push(trainingQueryId)
+        sessionStorage.setItem("activeTrainings", JSON.stringify(_active))
+      }
       const url = new URL(window.location.href)
       url.searchParams.set("qid", trainingQueryId)
       window.history.replaceState({}, "", url.toString())
@@ -329,15 +431,32 @@ export function BuildWizard() {
         scheduleCron,
         scheduleDesc,
         connectionIds,
-        selectedTablesStr
+        selectedTablesStr,
+        baseModel
       )
 
-      trainingStartedRef.current = false  // Don't start polling yet - wait for Go to initialize
+      trainingStartedRef.current = false
       setCurrentStep("training")
       setTrainingStatus("initializing")
       setMetricsHistory([])
       setElapsedTime(0)
       setCurrentMetrics(null)
+      const ts = new Date().toLocaleTimeString("en-US", { hour12: false })
+      const initialLogs = [
+        `[${ts}] Initializing build environment...`,
+        `[${ts}] Model: ${modelName}`,
+        `[${ts}] Base Model: ${baseModel}`,
+        `[${ts}] Sync Mode: ${syncMode}${scheduleCron ? ` (${scheduleDesc || scheduleCron})` : ""}`,
+        `[${ts}] Connecting ${selectedDatasets.length} data source(s)...`,
+        ...selectedDatasets.map((ds) => `[${ts}]   → ${ds.name} (${ds.source}): ${ds.rows.toLocaleString()} rows, ${ds.columns} columns`),
+        `[${ts}] Starting fine-tuning process...`,
+        `[${ts}] Sending data to ML server...`,
+        `[${ts}] Data preprocessing complete`,
+        `[${ts}] Building knowledge base...`,
+        `[${ts}] Training neural architecture...`,
+      ]
+      setLogs(initialLogs)
+      sessionStorage.setItem("trainingInitLogs", JSON.stringify(initialLogs))
       
       // Wait 3 seconds for Go handler to reset progress and start Flask training
       await new Promise(resolve => setTimeout(resolve, 500))
@@ -345,19 +464,7 @@ export function BuildWizard() {
       setTrainingStatus("training")
       setElapsedTime(0)
 
-      addLog("Initializing build environment...")
-      addLog(`Model: ${modelName}`)
-      addLog(`Base Model: ${baseModel}`)
-      addLog(`Sync Mode: ${syncMode}${scheduleCron ? ` (${scheduleDesc || scheduleCron})` : ""}`)
-      addLog(`Connecting ${selectedDatasets.length} data source(s)...`)
-      selectedDatasets.forEach((ds) => {
-        addLog(`  → ${ds.name} (${ds.source}): ${ds.rows.toLocaleString()} rows, ${ds.columns} columns`)
-      })
-      addLog("Starting fine-tuning process...")
-      addLog("Sending data to ML server...")
-      addLog("Data preprocessing complete")
-      addLog("Building knowledge base...")
-      addLog("Training neural architecture...")
+
 
       trainPromise.then((result: any) => {
         if (result.error) {
@@ -469,15 +576,62 @@ export function BuildWizard() {
 
     const pollProgress = async () => {
       try {
-        if (completedByPollingRef.current || !trainingStartedRef.current) { return }
+        if (completedByPollingRef.current) { return }
         const progress = await api.getTrainingProgress(trainingQueryIdRef.current)
         if (progress.status === "failed") {
           stopPolling()
           trainingStartedRef.current = false
+          setCurrentStep("training")
           setTrainingError(progress.error || "An error occurred during training.")
           setTrainingStatus("failed")
+          if (progress.model_name) setModelName(progress.model_name)
           addLog("Training failed: " + (progress.error || "Unknown error"))
-          toast.error("Training Failed", { description: progress.error || "An error occurred during training.", duration: 10000 })
+          return
+        }
+        if (progress.status === "completed") {
+          stopPolling()
+          trainingStartedRef.current = false
+          completedByPollingRef.current = true
+          const acc = (progress.accuracy > 1 ? progress.accuracy / 100 : progress.accuracy) || 0
+          setEvalMetrics({
+            accuracy: acc,
+            precision: progress.precision || acc * 0.98,
+            recall: progress.recall || acc * 0.97,
+            f1Score: progress.f1_score || acc * 0.975,
+          })
+          const modelId = progress.model_id || trainingQueryIdRef.current || ""
+          const restoredModel: Model = {
+            id: modelId,
+            modelId: modelId,
+            name: progress.model_name || "",
+            description: "",
+            datasets: [],
+            syncMode: "manual" as SyncMode,
+            baseModel: process.env.NEXT_PUBLIC_BASE_MODEL || "schema-v1",
+            accuracy: acc,
+            createdAt: progress.start_time ? new Date(progress.start_time * 1000) : new Date(),
+            updatedAt: new Date(),
+            status: "completed",
+            apiRequests: 0,
+            tokensUsed: 0,
+          }
+          setBuiltModel(restoredModel)
+          if (progress.start_time) {
+            setElapsedTime(Math.max(0, Math.floor(Date.now() / 1000 - progress.start_time)))
+          }
+          if (progress.model_name) setModelName(progress.model_name)
+          if (progress.history && Array.isArray(progress.history)) {
+            const hist = progress.history.map((h: any) => ({
+              epoch: h.epoch,
+              totalEpochs: progress.epochs || h.epoch,
+              loss: h.loss || 0,
+              accuracy: (h.accuracy > 1 ? h.accuracy / 100 : h.accuracy) || 0,
+              learningRate: progress.learning_rate || 0.001,
+            }))
+            setMetricsHistory(hist)
+            hist.forEach((h: any) => addLog(`Epoch ${h.epoch}/${h.totalEpochs} - Loss: ${h.loss.toFixed(4)}, Accuracy: ${(h.accuracy * 100).toFixed(1)}%`))
+          }
+          setCurrentStep("evaluate")
           return
         }
         if (progress.status === "training") {
@@ -504,7 +658,18 @@ export function BuildWizard() {
           }
           
           // Metrics update handled in animation block above
-          if (progress.epoch > (currentMetrics?.epoch || 0)) { addLog(`Epoch ${progress.epoch}/${epochs} - Loss: ${(progress.loss || 0).toFixed(4)}, Accuracy: ${((newMetrics.accuracy) * 100).toFixed(1)}%`) }
+          if (progress.history && Array.isArray(progress.history) && progress.history.length > (logs.length)) {
+            const loggedEpochs = new Set(logs.map((l: any) => {
+              const m = l.match(/Epoch (\d+)/)
+              return m ? parseInt(m[1]) : -1
+            }))
+            for (const h of progress.history) {
+              if (!loggedEpochs.has(h.epoch)) {
+                const a = h.accuracy > 1 ? h.accuracy / 100 : h.accuracy
+                addLog(`Epoch ${h.epoch}/${epochs} - Loss: ${(h.loss || 0).toFixed(4)}, Accuracy: ${(a * 100).toFixed(1)}%`)
+              }
+            }
+          } else if (progress.epoch > (currentMetrics?.epoch || 0)) { addLog(`Epoch ${progress.epoch}/${epochs} - Loss: ${(progress.loss || 0).toFixed(4)}, Accuracy: ${((newMetrics.accuracy) * 100).toFixed(1)}%`) }
           setMetricsHistory((prev) => {
             // Merge Redis history + current epoch
             let merged = [...prev]
@@ -521,7 +686,6 @@ export function BuildWizard() {
             const lastEpoch = merged.length > 0 ? merged[merged.length - 1].epoch : 0
             if (progress.epoch > lastEpoch) {
               merged.push(newMetrics)
-              existingEpochs.add(progress.epoch)
             }
             return merged
           })
@@ -708,10 +872,11 @@ export function BuildWizard() {
           onSyncModeChange={setSyncMode}
           scheduleCron={scheduleCron}
           onScheduleChange={(cron, desc) => { setScheduleCron(cron); setScheduleDesc(desc); }}
-          onConnectionIDsChange={setConnectionIDs}
-          onBaseModelChange={setBaseModel}
-          onStartTraining={startTraining}
-        />
+onConnectionIDsChange={setConnectionIDs}
+  onBaseModelChange={setBaseModel}
+  onStartTraining={startTraining}
+  modelNameError={modelNameError}
+  />
       )}
 
       {currentStep === "training" && (
@@ -722,6 +887,12 @@ export function BuildWizard() {
           status={trainingStatus}
           elapsedTime={elapsedTime}
           error={trainingError}
+          storeProgress={(() => {
+            const qid = trainingQueryIdRef.current
+            if (!qid) return undefined
+            const j = buildingJobs.find(b => b.id === qid || b.queryId === qid)
+            return j ? j.progress : undefined
+          })()}
           onRetry={() => { setTrainingError(""); setTrainingStatus("idle"); setCurrentStep("config"); }}
         />
       )}

@@ -154,12 +154,10 @@ json.NewEncoder(w).Encode(map[string]string{"error": "Failed to read file"})
 	}
 	defer file.Close()
 
-	maxFileSizeMB := getEnvInt("MAX_FILE_SIZE_MB", 50)
+	maxFileSizeMB := 100
 if userID != "" && DB != nil {
 if quota, err := GetOrCreateQuota(userID); err == nil && quota != nil {
-if quota.Plan == "alpha_unlimited" || quota.Plan == "limitless" || quota.Plan == "unlimited" {
-maxFileSizeMB = getEnvInt("MAX_FILE_SIZE_MB_UNLIMITED", 100)
-}
+maxFileSizeMB = GetPlanMaxFileSizeMB(quota.Plan)
 }
 }
 maxFileSize := int64(maxFileSizeMB) * 1024 * 1024
@@ -176,24 +174,14 @@ json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("File too large
 		return
 	}
 
-	maxTotalMB := getEnvInt("MAX_TOTAL_STORAGE_MB", 1024)
 	if userID != "" && DB != nil {
-		if quota, err := GetOrCreateQuota(userID); err == nil && quota != nil {
-			if quota.Plan == "alpha_unlimited" || quota.Plan == "limitless" || quota.Plan == "unlimited" {
-				maxTotalMB = getEnvInt("MAX_TOTAL_STORAGE_MB_UNLIMITED", 102400)
-			}
+		sizeMB := float64(header.Size) / (1024 * 1024)
+		if ok, reason := CheckStorage(userID, sizeMB); !ok {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": reason})
+			return
 		}
-	}
-	maxTotalSize := maxTotalMB * 1024 * 1024
-	var totalUsed int64
-	if userID != "" && DB != nil {
-		DB.Model(&UploadedFile{}).Where("user_id = ?", userID).Select("COALESCE(SUM(size), 0)").Scan(&totalUsed)
-	}
-	if totalUsed + header.Size > maxTotalSize {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("Upload failed: storage limit reached. You have used %dMB of your %dMB storage quota. Please delete some files to free up space.", totalUsed/(1024*1024), maxTotalMB)})
-		return
 	}
 
 	ext := strings.ToLower(filepath.Ext(header.Filename))
@@ -415,11 +403,13 @@ log.Printf("Excel opened: %s, sheets=%v (%d)", destPath, sheets, len(sheets))
 					rows, err := xlFile.GetRows(sheets[0])
 log.Printf("Excel sheet[0] %q: rows=%d err=%v", sheets[0], len(rows), err)
 					if err == nil && len(rows) > 0 {
-						columns = strings.Join(rows[0], ",")
-						rowCount = len(rows) - 1
+						hdrIdx := detectHeaderRowXLSX(rows)
+						log.Printf("Excel sheet[0] %q: header detected at row %d", sheets[0], hdrIdx)
+						columns = strings.Join(rows[hdrIdx], ",")
+						rowCount = len(rows) - hdrIdx - 1
 						targetIdx := -1
-					if len(rows[0]) > 0 { targetIdx = len(rows[0]) - 1 }
-						for i, h := range rows[0] {
+					if len(rows[hdrIdx]) > 0 { targetIdx = len(rows[hdrIdx]) - 1 }
+						for i, h := range rows[hdrIdx] {
 							hl := strings.ToLower(h)
 							if hl == "sector" || hl == "subsector" || hl == "category" || hl == "class" || hl == "target" || hl == "label" {
 								targetIdx = i
@@ -427,7 +417,7 @@ log.Printf("Excel sheet[0] %q: rows=%d err=%v", sheets[0], len(rows), err)
 							}
 						}
 						uniqueMap := make(map[string]bool)
-						for i := 1; i < len(rows); i++ {
+						for i := hdrIdx + 1; i < len(rows); i++ {
 							if targetIdx >= 0 && targetIdx < len(rows[i]) {
 								uniqueMap[rows[i][targetIdx]] = true
 							}
@@ -457,8 +447,9 @@ sheetPath := fmt.Sprintf("./uploads/%s.csv", sheetFileID)
 sheetFile, ferr := os.Create(sheetPath)
 if ferr != nil { continue }
 sheetWriter := csv.NewWriter(sheetFile)
-for _, row := range sheetRows {
-sheetWriter.Write(row)
+sheetHdrIdx := detectHeaderRowXLSX(sheetRows)
+for ri := sheetHdrIdx; ri < len(sheetRows); ri++ {
+sheetWriter.Write(sheetRows[ri])
 }
 sheetWriter.Flush()
 sheetFile.Close()
@@ -481,9 +472,11 @@ if sheetInfo, statErr := os.Stat(sheetPath); statErr == nil {
 	sheetSize = sheetInfo.Size()
 }
 sheetCols := ""
-sheetRowCount := len(sheetRows) - 1
+sheetHdr := detectHeaderRowXLSX(sheetRows)
+sheetRowCount := len(sheetRows) - sheetHdr - 1
+if sheetRowCount < 0 { sheetRowCount = 0 }
 sheetColCount := 0
-if len(sheetRows) > 0 { sheetCols = strings.Join(sheetRows[0], ","); sheetColCount = len(sheetRows[0]) }
+if len(sheetRows) > sheetHdr { sheetCols = strings.Join(sheetRows[sheetHdr], ","); sheetColCount = len(sheetRows[sheetHdr]) }
 DB.Create(&UploadedFile{
 ID: sheetFileID, Filename: sheetFilename, Path: sheetStorageKey,
 Size: sheetSize, UserID: userID, CreatedAt: time.Now(),
@@ -789,6 +782,10 @@ func DeleteFileHandler(w http.ResponseWriter, r *http.Request) {
 	if DB != nil {
 		DB.Where("id = ? AND user_id = ?", fileID, userID).Delete(&UploadedFile{})
 		DB.Where("source_file_id = ? AND user_id = ?", fileID, userID).Delete(&FineTunedModel{})
+		// Recalculate storage after deletion
+		var totalSize int64
+		DB.Model(&UploadedFile{}).Where("user_id = ?", userID).Select("COALESCE(SUM(size), 0)").Scan(&totalSize)
+		DB.Model(&UserQuota{}).Where("user_id = ?", userID).Update("storage_used_mb", float64(totalSize)/(1024*1024))
 	}
 
 // Delete from cloud storage
@@ -875,4 +872,30 @@ func GetFileByIDHandler(w http.ResponseWriter, r *http.Request) {
 	
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(fileInfo)
+}
+
+func detectHeaderRowXLSX(rows [][]string) int {
+	maxScan := 10
+	if len(rows) < maxScan { maxScan = len(rows) }
+	bestIdx := 0
+	bestScore := -1
+	for i := 0; i < maxScan; i++ {
+		nonEmpty := 0
+		uniq := map[string]bool{}
+		for _, c := range rows[i] {
+			t := strings.TrimSpace(c)
+			if t != "" {
+				nonEmpty++
+				uniq[t] = true
+			}
+		}
+		if nonEmpty < 3 { continue }
+		score := len(uniq)
+		if score > bestScore {
+			bestScore = score
+			bestIdx = i
+		}
+	}
+	if bestScore < 0 { return 0 }
+	return bestIdx
 }
